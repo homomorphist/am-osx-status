@@ -1,0 +1,8 @@
+/target
+crates/**/target
+.DS_Store
+samples/*
+trace-*
+logs/**
+dump*
+config.toml

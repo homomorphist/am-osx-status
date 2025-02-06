@@ -1,0 +1,18 @@
+[package]
+name = "brainz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+listenbrainz = { path = "./crates/listenbrainz/", optional = true }
+musicbrainz = { path = "./crates/musicbrainz/", optional = true }
+
+[features]
+"listen+raw" = ["listen", "listenbrainz/raw"]
+"listen" = ["dep:listenbrainz"]
+"music" = ["dep:musicbrainz"]
+
+
+raw = ["listenbrainz?/raw"]
+all = ["listen", "music"]
+default = ["all"]

@@ -1,0 +1,15 @@
+[package]
+name = "plist"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0.214", optional = true }
+thiserror = "2.0.10"
+xml = { path = "../xml/" }
+
+[dev-dependencies]
+serde = { version = "1.0.214" }
+
+[features]
+serde = ["dep:serde"]

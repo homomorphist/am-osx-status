@@ -1,0 +1,25 @@
+[package]
+name = "musicdb"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+
+[dependencies]
+aes = "0.8.4"
+byteorder = "1.5.0"
+chrono = "0.4.38"
+ecb = "0.1.2"
+flate2 = "1.0.34"
+plist = { path = "../plist/", features = ["serde"]}
+serde = { version = "1.0.210", features = ["derive"] }
+strum = "0.26.3"
+thiserror = "2.0.10"
+tracing = { version = "0.1.40", optional = true }
+maybe_owned_string = { path = "../maybe_owned_string/", features = ["serde"]}
+mzstatic = { path = "../mzstatic/" }
+strum_macros = "0.26.4"
+
+[features]
+default = []
+tracing = ["dep:tracing"]

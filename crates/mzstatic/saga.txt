@@ -1,0 +1,98 @@
+
+WHAT THE FUCK IS THIS BULLSHIT
+https://is1-ssl.mzstatic.com/image/thumb/SG-MQ-US-035-Image000001/v4/8d/46/70/8d467083-d1f9-a588-7a50-ff916291021f/image/600x600cc.jpg
+WHAT
+Ok
+so at least its just playlists i think
+https://is2-ssl.mzstatic.com/image/thumb/SG-S3-US-Std-Image-000001/v4/4b/57/4a/4b574a76-7ef8-5c16-b3a2-36a275e34851/image/500x500cc.jpg
+Std?????? I found that shit here https://api-docs.viberate.com/#tag/General-Apple-Playlist/paths/~1playlist-apple~1by-channel~1apple~1%7BlinkID%7D/get
+SG-S3-US-Std-Image-000002 from https://developer.apple.com/forums/thread/113351
+
+
+S3 = Amazon S3??
+MQ = AmazonMQ broker ????why whould that be relevant
+wtf isi  SG
+
+regarding SG-S3-US-Std-Image-000002 ;
+tried with 000001 => error "No Saga Asset found for AssetToken 'SG-S3-US-Std-Image-000001/v4/af/[...]/image"
+tried with 000003 => "com.apple.itunes.asset.repository.core.InvalidTokenException: Invalid token: SG-S3-US-Std-Image-000003/v4/af/f2/c9/aff2c94c-ccb5-1187-a744-e61926415d00/image"
+
+needs to match /^SG-./ to encounter issues relating to that
+SG-S3-US-Std-Image-000002 is NOT a permissible `a1` pool
+
+wait. 
+...
+sg..... 
+....
+... SaGa....
+
+
+s3-us-west-2.amazonaws.com 
+// I do Not Know
+https://amillionsteps-sg.s3.eu-west-1.amazonaws.com/wp-content/uploads/2020/02/15133352/terenzio_collina.jpg.
+// i do not know
+s3-us-std-102-prod-contentmover.prod-digitalhub.com.akadns.net
+holy shit
+thats gotta be it or something similar
+i found it here https://isc.sans.edu/diary/My+Catch+Of+4+Months+In+The+Amazon+IP+Address+Space/22129 ????
+oh my god
+digitalhub.com leads to apple.com
+ok
+we found part of it
+and akadns is obv akamai which apple is using for mzstatic
+
+could it also be related to the supposed accelerator directives?? im not sure
+and what the hell is the MQ part. and if that's std there than how is the number known??
+ok we still have a few unanswered questions
+
+ok i found another @ https://www.thebeachcats.com/forums/viewtopic/topic/14766
+theres a bunch of base64 at the end of one of the links
+???? it's like. raw http fucking data
+like U¬x-client-request-id=c1ae03b1-1509-4e4f-a1d7-6f9f1b1dba10&Expires=1357590108&byte-range=58635-606735&AWSAccessKeyId=AKIAIWWR33ECHKPC2LUA&Signature=LDSUghlTGVRDYosKprTF3qGBKAg%3D*HTTP21.1:httpsB+x-amz-dateMon, 17 Dec 2012 19:06:02 GMT
+
+and another (us-std-00001.s3-external-1.amazonaws.comPGET"É/xARSVIwBQk5SXsYBSZlb?x-client-request-id=a3c11d50-a78b-457d-9e49-6accbb86b770&Expires=1384297676&byte-range=1355346-2077568&AWSAccessKeyId=AKIAIWWR33ECHKPC2LUA&Signature=vSVgYEiQgDCYTRJCTrMBX6gpPPY%3D*HTTP21.1:httpB+
+
+ok woah that confirms the numbers
+us-std-00001 
+wait that is missing a zero but idfc
+
+https://is4-ssl.mzstatic.com/image/thumb/SG-MQ-US-032-Image000001/v4/24/a7/db/24a7db6c-052e-f2f3-ba30-eefeaf47c1fe/image/610x610cc.webp
+dawggggggg this doesn't have a dash between it
+so that kinda fucks it up
+
+
+https://ms-us-bnx-109-prod.digitalhub.com/B/AU15
+some guys facebook haha
+https://s3-eu-irl-105-prod.digitalhub.com/(
+Ms-us-mtv-109-prod.digitalhub.com
+ms-us-sjc-111-prod.digitalhub.com
+https://s3-us-nca-115
+s3-us-nca-prod.prod-digitalhub.com.akadns.net
+
+
+do any of thos ehave any meanings man
+Std feels a bit convenient to be the first I discover
+
+
+
+,,,
+
+
+us-std-00001.s3.amazonaws.com
+
+https://subdomainfinder.c99.nl/scans/2024-11-16/digitalhub.com
+
+
+
+
+ok that shit is abandoned now and i dont know what shit they are doing on the inside to make it work
+so i'm done with this
+
+
+
+
+
+
+
+Now that I think about it, the "accelerator directives" definitely have to do with what these are doing.
+The three numbers, and a region. Wasn't really sure before, but it seems really likely now.

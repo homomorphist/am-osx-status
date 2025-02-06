@@ -1,0 +1,15 @@
+[package]
+name = "musicbrainz"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+id = []
+session = []
+artist = []
+track = []
+
+[dependencies]
+serde = "1.0.216"
+maybe_owned_string = { path = "../../../maybe_owned_string", features = ["serde"] }
+shared = { path = "../shared" }

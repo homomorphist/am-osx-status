@@ -1,0 +1,51 @@
+[workspace]
+members = ["crates/*", "crates/brainz/crates/*"]
+
+[package]
+name = "am-osx-status"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+apple-music = "0.11.5"
+async-trait = "0.1.83"
+brainz = { path = "./crates/brainz/" }
+catbox = "0.8.2"
+chrono = "0.4.38"
+clap = { version = "4.5.18", features = ["cargo", "derive"] }
+console-subscriber = "0.4.0"
+discord-presence = { git = "https://github.com/jewlexx/discord-presence", features = ["activity_type"], optional = true, rev = "57e2507c647b573df6d231ba1a90ee83b1f348f1" }
+lastfm = { path = "./crates/lastfm" }
+maybe_owned_string = { path = "./crates/maybe_owned_string/" }
+musicdb = { path = "./crates/musicdb/", features = ["tracing"] }
+mzstatic = { path = "./crates/mzstatic/" }
+reqwest = "0.12.7"
+rusqlite = { version = "0.32.1" }
+serde = { version = "1.0.214", features = ["derive"] }
+serde_json = "1.0.128"
+service-manager = "0.7.1"
+signal-hook = "0.3.17"
+strum = { version = "0.26.3", features = ["derive"] }
+sysinfo = { version = "0.31.4", default-features = false, features = ["component", "system", "user"] }
+termcolor = "1.4.1"
+thiserror = "1.0.64"
+tokio = { version = "1", features = ["full", "tracing"] }
+toml = "0.8.19"
+tracing = "0.1.40"
+tracing-chrome = "0.7.2"
+tracing-subscriber = "0.3.18"
+unicode-normalization = "0.1.24"
+urlencoding = "2.1.3"
+clap-verbosity-flag = { version = "3.0.2", features = ["tracing"], default-features = false }
+libc = "0.2.169"
+bincode = "1.3.3"
+tokio-stream = "0.1.17"
+tokio-util = "0.7.13"
+tokio-serde = { version = "0.9.0", features = ["bincode"] }
+kqueue = "1.0.8"
+
+[features]
+default = ["discord", "listenbrainz", "lastfm"]
+discord = ["dep:discord-presence"]
+listenbrainz = []
+lastfm = []
