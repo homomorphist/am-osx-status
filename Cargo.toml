@@ -24,7 +24,6 @@ rusqlite = { version = "0.32.1" }
 serde = { version = "1.0.214", features = ["derive"] }
 serde_json = "1.0.128"
 service-manager = "0.7.1"
-signal-hook = "0.3.17"
 strum = { version = "0.26.3", features = ["derive"] }
 sysinfo = { version = "0.31.4", default-features = false, features = ["component", "system", "user"] }
 termcolor = "1.4.1"

@@ -1,5 +1,6 @@
 #![allow(unused)]
-use std::{ops::DerefMut, process::ExitCode, sync::{atomic::AtomicBool, Arc}, time::{Duration, Instant}};
+use std::{ops::DerefMut, process::ExitCode, sync::{atomic::{AtomicBool, Ordering}, Arc}, time::{Duration, Instant}};
+use config::{ConfigPathChoice, ConfigRetrievalError};
 use discord_presence::Event;
 use musicdb::MusicDB;
 use tracing::Instrument;
@@ -12,21 +13,85 @@ mod service;
 mod cli;
 mod util;
 
+fn watch_for_termination() -> (
+    Arc<std::sync::atomic::AtomicBool>,
+    std::pin::Pin<Box<impl std::future::Future<Output = tokio::signal::unix::SignalKind>>>
+) {
+    use tokio::signal::unix::{SignalKind, signal};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut flag = Arc::new(AtomicBool::new(false));
+    let mut set = tokio::task::JoinSet::new();
+    for kind in [
+        SignalKind::quit(),
+        SignalKind::hangup(),
+        SignalKind::interrupt(),
+        SignalKind::terminate(),
+    ] {
+        let mut sig = signal(kind).unwrap();
+        let sent = flag.clone();
+        set.spawn(async move {
+            sig.recv().await;
+            sent.store(true, Ordering::Relaxed);
+            kind
+        });
+    }
+    (
+        flag,
+        Box::pin(async move { set.join_next().await.unwrap().unwrap() })
+    )
+}
+
 #[tokio::main(worker_threads = 4)]
 async fn main() -> ExitCode {
     let args = <cli::Cli as clap::Parser>::parse();
+    let debugging = debugging::DebuggingSession::new(&args);
     let mut config = config::Config::get(&args).await;
-    let debugging = debugging::DebuggingSession::new(&config, &args);
+    let (term, pending_term) = watch_for_termination();
+
+    macro_rules! get_config_or_path {
+        () => {
+            match config {
+                Ok(config) => Ok(config),
+                Err(error) => match error {
+                    ConfigRetrievalError::UnknownFs { inner, .. } => util::ferror!("could not read config: {inner}"),
+                    ConfigRetrievalError::DeserializationFailure { inner, .. } => util::ferror!("could not read config: deserialization failure: {inner}"),
+                    ConfigRetrievalError::PermissionDenied(path) => util::ferror!("could not read config: lacking permission to read {}", path.to_string_lossy()),
+                    ConfigRetrievalError::NotFound(path) => { Err(path) }
+                }
+            }
+        }
+    };
+
+    macro_rules! get_config_or_error {
+        () => {
+            get_config_or_path!().unwrap_or_else(|path| util::ferror!("no configuration file @ {}", path.to_string_lossy()))
+        }
+    }
 
     use cli::Command;
     match args.command {
         Command::Start => {
-            let term = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&term)).expect("cannot register sigterm hook");
-            signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&term)).expect("cannot register sigint hook");
+            let config = match get_config_or_path!() {
+                Ok(config) => config,
+                Err(path) => if config::wizard::io::prompt_bool(match path {
+                    ConfigPathChoice::Automatic(..) => "No configuration has been set up! Would you like to use the wizard to build one?",
+                    ConfigPathChoice::Explicit(..) => "No configuration exists at the provided file! Would you like to use the wizard to build it?",
+                    ConfigPathChoice::Environmental(..) => "No configuration exists at the file specified in the environmental variable! Would you like to use the wizard to build it?",
+                }) { config::Config::create_with_wizard(path).await } else {
+                    println!("Proceeding with a temporary default configuration.");
+                    config::Config::default()
+                }
+            };
 
             let backends = status_backend::StatusBackends::new(&config).await;
             let mut context = PollingContext::new(backends, Arc::clone(&term));
+
+            // If we get stuck somewhere in the main loop, we still want a way to exit if the user/system desires.
+            tokio::spawn(async {
+                pending_term.await;
+                tokio::time::sleep(Duration::new(1, 0)).await;
+                std::process::exit(1);
+            });
 
             while !term.load(std::sync::atomic::Ordering::Relaxed) {
                 proc_once(&mut context).await;
@@ -48,24 +113,74 @@ async fn main() -> ExitCode {
             };
         },
         Command::Configure { ref action } => {
-            use cli::{ConfigurationAction, DiscordConfigurationAction};
-            match action {
-                ConfigurationAction::Where => println!("{}", config.path.as_path().to_string_lossy()),
-                ConfigurationAction::Wizard => {
-                    config = config::Config::create_with_wizard(config.path).await;
-                    config.save_to_disk().await;
-                    let service_controller = service::ServiceController::new();
-                    if service_controller.is_program_active() {
-                        // TODO: Watch the configuration file for changes using `kqueue`
-                        println!("Changes have been saved, but will not take effect until the service is restarted");
-                    } else {
-                        println!("Changes have been saved.")
-                    }
+            tokio::spawn(async {
+                pending_term.await;
+                std::process::exit(1);
+            });
 
+            use cli::{ConfigurationAction, DiscordConfigurationAction};
+            use config::{ConfigRetrievalError, ConfigPathChoice};
+
+            fn inform_whether_daemon_will_update(was_watching: bool) {
+                let daemon_exists = service::ServiceController::new().is_program_active();
+                if daemon_exists {
+                    if was_watching {
+                        // TODO: Only send this if they're using the same one that was being modified.
+                        println!("The active service process will automatically adjust itself if it is configured by this file.");
+                    } else {
+                        // TODO: IPC
+                        println!("The active service process is not configured to watch for file changes, it will need to be manually restarted.")
+                    }
+                }
+            }
+
+            match action {
+                ConfigurationAction::Where => {
+                    match config {
+                        Ok(config) => {
+                            println!("{}", config.path.to_string_lossy());
+                            println!("this path was {}", config.path.describe_for_choice_reasoning_suffix());
+                        },
+                        Err(err) => {
+                            use std::borrow::Cow;
+                            let path = err.path();
+                            println!("{}", path.to_string_lossy());
+                            eprintln!("this path was {} but {}", path.describe_for_choice_reasoning_suffix(), match err {
+                                ConfigRetrievalError::DeserializationFailure { .. } => Cow::Borrowed("it couldn't be successfully deserialized"),
+                                ConfigRetrievalError::NotFound { .. } => Cow::Borrowed(if path.was_auto() { "it currently doesn't exist" } else { "it couldn't be found" }),
+                                ConfigRetrievalError::PermissionDenied(_) => Cow::Borrowed("the required permissions to read it are not available"),
+                                ConfigRetrievalError::UnknownFs { inner, .. } => Cow::Owned(format!("an unknown error occurred trying to read it ({})", inner))
+                            })
+                        },
+                    }
+                },
+                ConfigurationAction::Wizard => {
+                    match get_config_or_path!() {
+                        Err(path) => {
+                            println!("Creating configuration file @ {}", path.to_string_lossy());
+                            let config = config::Config::create_with_wizard(path).await;
+                            config.save_to_disk().await;
+                            println!("Successfully saved changes!");
+                        }
+                        Ok(mut config) => {
+                            let was_watching = config.watch_config_file;
+                            let daemon_exists = service::ServiceController::new().is_program_active();
+                            println!("Modifying configuration file @ {}", config.path.to_string_lossy());
+                            config.edit_with_wizard().await;
+                            config.save_to_disk().await;
+                            println!("Successfully saved changes!");
+                            inform_whether_daemon_will_update(was_watching)
+                        },
+                    }
                 },
                 ConfigurationAction::Discord { action } => {
-                    // action
-                    todo!();
+                    let mut config = get_config_or_error!();
+                    match action {
+                        DiscordConfigurationAction::Enable => config.backends.discord = true,
+                        DiscordConfigurationAction::Disable => config.backends.discord = false
+                    };
+                    config.save_to_disk();
+                    inform_whether_daemon_will_update(config.watch_config_file);
                 }
             }
         }

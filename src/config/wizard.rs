@@ -59,12 +59,15 @@ pub mod io {
             {
                 use std::io::BufRead;
                 let mut stdin = std::io::stdin().lock();
-                stdin.read_line(&mut answer).expect("could not process user input");
+                let r = stdin.read_line(&mut answer);
+                dbg!(&answer);
+                r.expect("could not process user input");
             }
 
             if let Some(bool) = str_to_boolish(&answer) { return bool };
             println!(r#"Invalid input! Enter "yes" or "no"."#);
-            println!()
+            println!();
+            answer.clear();
         }
     }
 

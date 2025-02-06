@@ -4,8 +4,9 @@ use maybe_owned_string::MaybeOwnedString;
 
 use crate::util::HOME;
 
+macro_rules! get_path_env_var { () => { "AM_OSX_STATUS_PATH" } }
 pub static PATH: std::sync::OnceLock<ConfigPathChoice> = std::sync::OnceLock::new();
-pub static PATH_ENV_VAR: &str = "AM_OSX_STATUS_PATH";
+pub static PATH_ENV_VAR: &str = get_path_env_var!();
 
 const POST_HOME_DEFAULT_PATH: &str = "Application Support/am-osx-status/config.toml";
 
@@ -49,6 +50,26 @@ impl<'a> ConfigPathChoice<'a> {
             Self::Automatic(buf) => buf.to_string_lossy(),
             Self::Environmental(os_string) => os_string.to_string_lossy()
         }
+    }
+
+    pub const fn describe_for_choice_reasoning_suffix(&self) -> &'static str {
+        match self {
+            Self::Explicit(_) => "explicitly provided",
+            Self::Automatic(_) => "the application default",
+            Self::Environmental(_) => concat!("sourced from the ", get_path_env_var!(), " environmental variable")
+        }
+    }
+
+    pub const fn was_auto(&self) -> bool {
+        matches!(self, Self::Automatic(..))
+    }
+
+    pub const fn was_env(&self) -> bool {
+        matches!(self, Self::Environmental(..))
+    }
+
+    pub const fn was_explicit(&self) -> bool {
+        matches!(self, Self::Explicit(..))
     }
 }
 impl AsRef<Path> for ConfigPathChoice<'_> {

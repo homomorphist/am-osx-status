@@ -9,7 +9,7 @@ pub struct DebuggingSession {
 }
 
 impl DebuggingSession {
-    pub fn new(configuration: &crate::config::Config, args: &crate::cli::Cli) -> Self {
+    pub fn new(args: &crate::cli::Cli) -> Self {
         use tracing_subscriber::{prelude::*, EnvFilter};
 
         let layers;
