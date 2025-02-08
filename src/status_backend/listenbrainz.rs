@@ -1,9 +1,6 @@
-use std::sync::{Arc, LazyLock};
-
-// use listenbrainz::raw::{request::{ListenType, Payload, SubmitListens, TrackMetadata}, Client as ListenBrainzClient};
+use std::sync::Arc;
 use apple_music::Track;
-use maybe_owned_string::{MaybeOwnedStringDeserializeToOwned, MaybeOwnedString};
-use serde::{Serialize, Deserialize};
+use maybe_owned_string::MaybeOwnedStringDeserializeToOwned;
 
 use super::StatusBackend;
 
@@ -66,12 +63,13 @@ impl ListenBrainz {
     }
 
     fn additional_info<'a>(track: &'a Track, app: &'a apple_music::ApplicationData, program: &'a brainz::music::request_client::ProgramInfo<S>) -> brainz::listen::v1::submit_listens::additional_info::AdditionalInfo<'a> {
-        brainz::listen::v1::submit_listens::additional_info::AdditionalInfo {
+        use brainz::listen::v1::submit_listens::additional_info::*;
+        AdditionalInfo {
             duration: Some(core::time::Duration::from_millis((track.duration * 1000.) as u64)),
             track_number: Some(track.track_number as u32),
             submission_client: Some(program),
-            music_service: Some(brainz::listen::v1::submit_listens::additional_info::MusicService::Domain("music.apple.com")),
-            media_player: Some(brainz::listen::v1::submit_listens::additional_info::MediaPlayer {
+            music_service: Some(MusicService::Domain("music.apple.com")),
+            media_player: Some(MediaPlayer {
                 name: "Apple Music",
                 version: app.version.as_deref(),
             }),
@@ -84,10 +82,12 @@ impl StatusBackend for ListenBrainz {
     #[tracing::instrument(level = "debug")]   
     async fn record_as_listened(&self, track: Arc<Track>, app: Arc<apple_music::ApplicationData>) {
         // TODO: catch net error or add to queue. ideally queue persist offline
-        self.client.submit_playing_now(
+        if let Err(error) = self.client.submit_playing_now(
             Self::basic_track_metadata(&track),
             Some(Self::additional_info(&track, &app, self.client.get_program_info()))
-        ).await;
+        ).await {
+            tracing::error!(?error, "listenbrainz mark-listened failure")
+        }
     }
 
     /// - <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html#post--1-submit-listens>
@@ -99,10 +99,12 @@ impl StatusBackend for ListenBrainz {
 
     #[tracing::instrument(level = "debug")]
     async fn set_now_listening(&mut self, track: Arc<Track>, app: Arc<apple_music::ApplicationData>, _: Arc<crate::data_fetching::AdditionalTrackData>) {
-        self.client.submit_playing_now(
+        if let Err(error) = self.client.submit_playing_now(
             Self::basic_track_metadata(&track),
             Some(Self::additional_info(&track, &app, self.client.get_program_info()))
-        ).await;
+        ).await {
+            tracing::error!(?error, "listenbrainz now-listening failure")
+        }
     }
 }
 

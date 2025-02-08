@@ -1,11 +1,4 @@
-#[allow(unused)]
-use std::ffi::OsStr;
-use std::{borrow::Borrow, cell::RefCell, sync::Mutex};
-
-use apple_music::Track;
-use maybe_owned_string::MaybeOwnedString;
-use rusqlite::{params, Connection, OpenFlags, Result};
-use tokio::sync::RwLock;
+use rusqlite::{Connection, OpenFlags, Result};
 
 struct PersistentId(i64);
 impl TryFrom<&str> for PersistentId {
@@ -87,8 +80,6 @@ pub enum StoredArtwork {
 }
 
 use std::sync::LazyLock;
-
-use super::custom_artwork_host::CustomArtworkHost;
 static ARTWORKD_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     crate::util::HOME.as_path().join("Library/Containers/com.apple.AMPArtworkAgent/Data/Documents")
 });

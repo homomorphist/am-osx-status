@@ -1,4 +1,4 @@
-use std::{fmt::Debug, mem::MaybeUninit, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 use discord_presence::models::{ActivityAssets, ActivityType};
 use apple_music::{MediaKind, Track};
 use tokio::sync::Mutex;
@@ -25,8 +25,6 @@ pub enum UpdateError {
     NotConnected
 }
 
-use std::sync::atomic::{AtomicBool, Ordering};
-static EXISTS_ACTIVE: AtomicBool = AtomicBool::new(false);
 const CONNECTION_ATTEMPT_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(3);
 const TRY_AGAIN_DEBOUNCE: tokio::time::Duration = tokio::time::Duration::from_secs(7);
 
@@ -54,7 +52,6 @@ pub struct DiscordPresence {
     state_channel: tokio::sync::broadcast::Sender<DiscordPresenceState>,
     state_update_task_handle: tokio::task::JoinHandle<()>,
     auto_reconnect_task_handle: Option<tokio::task::JoinHandle<()>>,
-    auto_reconnect_messenger: Option<tokio::sync::broadcast::Sender<bool>>,
     has_content: bool
 }
 impl Debug for DiscordPresence {
@@ -79,14 +76,13 @@ impl DiscordPresence {
     }
 
     pub fn disconnected() -> Self {
-        let (tx, rx) = tokio::sync::broadcast::channel(4);
+        let (tx, mut rx) = tokio::sync::broadcast::channel(4);
 
         let state = Arc::new(Mutex::new(DiscordPresenceState::Disconnected));
-        let mut update_rx = tx.subscribe();
-        let mut update_v = state.clone();
+        let update_v = state.clone();
         let state_update_hook = tokio::spawn(async move {
             loop {
-                let state = update_rx.recv().await.expect("channel closed: all senders were dropped");
+                let state = rx.recv().await.expect("channel closed: all senders were dropped");
                 *update_v.try_lock().unwrap() = state;
             }
         });
@@ -97,7 +93,6 @@ impl DiscordPresence {
             state_channel: tx,
             state_update_task_handle: state_update_hook,
             auto_reconnect_task_handle: None,
-            auto_reconnect_messenger: None,
             has_content: false
         }
     }
@@ -110,14 +105,14 @@ impl DiscordPresence {
     /// not `tokio::select!` safe
     #[tracing::instrument]
     pub async fn connect_in_place(&mut self) {
-        let mut client = discord_presence::Client::new(APPLICATION_ID);            
+        let client = discord_presence::Client::new(APPLICATION_ID);            
         if let Some(old_client) = self.client.replace(client) {
             // TODO: i assume this will set fire the tx and thus set state to disconnected, but i haven't tested
             if let Err(error) = old_client.shutdown() {
                 tracing::warn!(?error, "could not shutdown client");
             }
         }
-        let mut client = self.client.as_mut().unwrap();
+        let client = self.client.as_mut().unwrap();
                 
         let mut rx_ready = self.state_channel.subscribe();         
         let tx_ready = self.state_channel.clone();
@@ -142,7 +137,7 @@ impl DiscordPresence {
     }
 
 
-    pub async fn try_connect(mut self, timeout: Duration) -> Result<Self, ConnectError> {
+    pub async fn try_connect(self, timeout: Duration) -> Result<Self, ConnectError> {
         let timeout = tokio::time::sleep(timeout);
         let handle = tokio::spawn(self.connect());
         let abortion_handle = handle.abort_handle();
@@ -190,6 +185,7 @@ impl DiscordPresence {
                 let state = match state {
                     DiscordPresenceState::Ready => rx.recv().await.unwrap(),
                     DiscordPresenceState::Disconnected => {
+                        tracing::debug!("disconnected; polling again in {:.2} seconds", TRY_AGAIN_DEBOUNCE.as_secs_f64());
                         tokio::time::sleep(TRY_AGAIN_DEBOUNCE).await;
                         DiscordPresenceState::Disconnected
                     }
@@ -197,10 +193,12 @@ impl DiscordPresence {
                 match state {
                     DiscordPresenceState::Ready => continue,
                     DiscordPresenceState::Disconnected => {
-                        Self::try_connect_in_place(
+                        if let Err(error) = Self::try_connect_in_place(
                             task_instance.clone(),
                             CONNECTION_ATTEMPT_TIMEOUT
-                        ).await;
+                        ).await {
+                            tracing::debug!(?error, "couldn't connect")
+                        }
                     }
                 }
             }
@@ -274,8 +272,8 @@ impl StatusBackend for DiscordPresence {
                     MediaKind::Unknown => ActivityType::Listening,
                     MediaKind::MusicVideo => ActivityType::Watching,
                 })
-                .details(track.name.clone())
-                .state(track.artist.clone())
+                .details(&track.name)
+                .state(&track.artist)
                 .timestamps(|mut activity| {
                     if let Some(apple_music::PlayerState::Playing) = app.player_state {
                         activity = activity
@@ -307,7 +305,7 @@ impl StatusBackend for DiscordPresence {
                 self.has_content = true;
             },
             Err(error) => {
-                tracing::error!("{:?}", error);
+                tracing::error!(?error, "activity dispatch failure");
             }
         }
     }

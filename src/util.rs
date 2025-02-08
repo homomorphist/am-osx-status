@@ -48,12 +48,6 @@ pub static HOME: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
 
 pub static OWN_PID: LazyLock<libc::pid_t> = LazyLock::new(|| unsafe { libc::getpid() });
 
-macro_rules! const_assert {
-    ($($t: tt)*) => {
-        const _: () = assert!($($t)*); 
-    };
-}
-
 macro_rules! ferror {
     ($($t: tt)*) => {
         {
@@ -63,5 +57,4 @@ macro_rules! ferror {
     }
 }
 
-pub(crate) use const_assert;
 pub(crate) use ferror;

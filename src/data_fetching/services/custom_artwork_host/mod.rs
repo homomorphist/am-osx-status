@@ -1,5 +1,3 @@
-use maybe_owned_string::MaybeOwnedString;
-
 pub mod catbox;
 
 #[derive(thiserror::Error, Debug)]

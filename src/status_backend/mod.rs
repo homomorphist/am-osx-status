@@ -1,5 +1,5 @@
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::Mutex, time::Instant};
+use tokio::sync::Mutex;
 use apple_music::{Track, ApplicationData};
 
 use crate::data_fetching::components::ComponentSolicitation;
@@ -19,17 +19,6 @@ pub trait StatusBackend: core::fmt::Debug + Send + Sync {
     async fn get_additional_data_solicitation(&self) -> ComponentSolicitation {
         ComponentSolicitation::default()
     }
-}
-
-macro_rules! if_any_backend {
-    ($op: tt, $($token: tt)*) => {
-        #[cfg($op(any(
-            feature = "discord",
-            feature = "lastfm",
-            feature = "listenbrainz",
-        )))]
-        { $($token)* }
-    };
 }
 
 pub struct StatusBackends {
@@ -66,7 +55,7 @@ impl StatusBackends {
                     { if let Some(backend) = &self.$property { backends.push(backend.clone()) } }
                 )*
             };
-        };
+        }
 
         add!([
             (discord, "discord"),
@@ -79,7 +68,6 @@ impl StatusBackends {
 
     #[tracing::instrument(level = "debug")]
     pub async fn get_solicitations(&self) -> ComponentSolicitation {
-        use self::StatusBackend;
         let mut solicitation = ComponentSolicitation::default();
         for backend in self.all() {
             // these don't really actually yield for anything
@@ -114,7 +102,7 @@ impl StatusBackends {
         let backends = self.all();
         let mut jobs = Vec::with_capacity(backends.len());
 
-        for mut backend in backends {
+        for backend in backends {
             let track = track.clone();
             let app = app.clone();
             let data = data.clone();

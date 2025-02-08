@@ -1,7 +1,6 @@
-use std::{ffi::OsString, io::stdout, os::unix::process::CommandExt, path::PathBuf, str::FromStr};
-
+use std::{ffi::OsString, str::FromStr};
 use service_manager::*;
-use sysinfo::{get_current_pid, ProcessRefreshKind, RefreshKind, System};
+use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
 pub mod ipc;
 
@@ -35,7 +34,6 @@ pub enum ServiceRestartFailure {
 
 pub struct ServiceController {
     label: ServiceLabel,
-    own_pid: sysinfo::Pid,
     system: sysinfo::System,
     manager: LaunchdServiceManager
 }
@@ -43,28 +41,15 @@ impl ServiceController {
     pub fn new() -> Self {
         Self {
             label: ServiceLabel::from_str(clap::crate_name!()).unwrap(),
-            own_pid: get_current_pid().expect("platform not supported (uh, only MacOS is)."),
             system: System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new())),
             manager: LaunchdServiceManager::user(),
         }
     }
 
-    fn spawn() -> Result<std::process::Child, std::io::Error> {
-        use std::fs::File;
-        let stdout = File::create("stdout.txt").unwrap();
-        let stderr = File::create("stderr.txt").unwrap();
-        std::process::Command::new(std::env::current_exe().expect("cannot get executable path"))
-            .stdout(stdout)
-            .stderr(stderr)
-            .env("RUST_LOG", "trace")
-            .arg("start")
-            .spawn()
-    }
-
     fn get_processes(&self) -> impl Iterator<Item = &sysinfo::Process> {
         self.system
             .processes_by_exact_name(std::ffi::OsStr::new(clap::crate_name!()))
-            .filter(|process| process.pid() != self.own_pid)
+            .filter(|process| process.pid().as_u32() != *crate::util::OWN_PID as u32)
     }
 
     pub fn is_program_active(&self) -> bool {

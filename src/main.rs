@@ -1,7 +1,6 @@
 #![allow(unused)]
-use std::{ops::DerefMut, process::ExitCode, sync::{atomic::{AtomicBool, Ordering}, Arc}, time::{Duration, Instant}};
+use std::{process::ExitCode, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}};
 use config::{ConfigPathChoice, ConfigRetrievalError};
-use discord_presence::Event;
 use musicdb::MusicDB;
 use tracing::Instrument;
 
@@ -19,7 +18,7 @@ fn watch_for_termination() -> (
 ) {
     use tokio::signal::unix::{SignalKind, signal};
     use std::sync::atomic::{AtomicBool, Ordering};
-    let mut flag = Arc::new(AtomicBool::new(false));
+    let flag = Arc::new(AtomicBool::new(false));
     let mut set = tokio::task::JoinSet::new();
     for kind in [
         SignalKind::quit(),
@@ -44,8 +43,8 @@ fn watch_for_termination() -> (
 #[tokio::main(worker_threads = 4)]
 async fn main() -> ExitCode {
     let args = <cli::Cli as clap::Parser>::parse();
-    let debugging = debugging::DebuggingSession::new(&args);
-    let mut config = config::Config::get(&args).await;
+    let config = config::Config::get(&args).await;
+    let _ = debugging::DebuggingSession::new(&args);
     let (term, pending_term) = watch_for_termination();
 
     macro_rules! get_config_or_path {
@@ -60,7 +59,7 @@ async fn main() -> ExitCode {
                 }
             }
         }
-    };
+    }
 
     macro_rules! get_config_or_error {
         () => {
@@ -71,7 +70,7 @@ async fn main() -> ExitCode {
     use cli::Command;
     match args.command {
         Command::Start => {
-            let config = match get_config_or_path!() {
+            let mut config = match get_config_or_path!() {
                 Ok(config) => config,
                 Err(path) => if config::wizard::io::prompt_bool(match path {
                     ConfigPathChoice::Automatic(..) => "No configuration has been set up! Would you like to use the wizard to build one?",
@@ -82,6 +81,8 @@ async fn main() -> ExitCode {
                     config::Config::default()
                 }
             };
+
+            config.setup_side_effects().await;
 
             let backends = status_backend::StatusBackends::new(&config).await;
             let mut context = PollingContext::new(backends, Arc::clone(&term));
@@ -119,7 +120,6 @@ async fn main() -> ExitCode {
             });
 
             use cli::{ConfigurationAction, DiscordConfigurationAction};
-            use config::{ConfigRetrievalError, ConfigPathChoice};
 
             fn inform_whether_daemon_will_update(was_watching: bool) {
                 let daemon_exists = service::ServiceController::new().is_program_active();
@@ -164,7 +164,6 @@ async fn main() -> ExitCode {
                         }
                         Ok(mut config) => {
                             let was_watching = config.watch_config_file;
-                            let daemon_exists = service::ServiceController::new().is_program_active();
                             println!("Modifying configuration file @ {}", config.path.to_string_lossy());
                             config.edit_with_wizard().await;
                             config.save_to_disk().await;
@@ -179,7 +178,7 @@ async fn main() -> ExitCode {
                         DiscordConfigurationAction::Enable => config.backends.discord = true,
                         DiscordConfigurationAction::Disable => config.backends.discord = false
                     };
-                    config.save_to_disk();
+                    config.save_to_disk().await;
                     inform_whether_daemon_will_update(config.watch_config_file);
                 }
             }
@@ -234,7 +233,9 @@ async fn proc_once(context: &mut PollingContext<'_>) {
         PlayerState::Stopped => {
             #[cfg(feature = "discord")]
             if let Some(presence) = context.backends.discord.clone() {
-                presence.lock().await.clear();
+                if let Err(error) = presence.lock().await.clear().await {
+                    tracing::error!(?error, "unable to clear discord status")
+                }
             }
             
             let now: Instant = Instant::now();
@@ -248,7 +249,9 @@ async fn proc_once(context: &mut PollingContext<'_>) {
         PlayerState::Paused => {
             #[cfg(feature = "discord")]
             if let Some(presence) = context.backends.discord.clone() {
-                presence.lock().await.clear();
+                if let Err(error) = presence.lock().await.clear().await {
+                    tracing::error!(?error, "unable to clear discord status")
+                }
             }
             
             context.last_track = None;

@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 use xml::{arena::{vec::{NodeIndex, VecNodeArena}, NodeArena}, cdata::XmlCharacterData, error::CharacterEntityDecodingError, span::Span, Element, Node};
 
 type NA<'a> = xml::arena::vec::VecNodeArena<'a>;

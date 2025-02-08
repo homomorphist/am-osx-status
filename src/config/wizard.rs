@@ -18,24 +18,16 @@ fn str_to_boolish(str: &str) -> Option<bool>  {
 pub mod io {
     use super::*;
     
-    pub fn clear_screen() {
-        use std::io::Write;
-        let mut stdout = std::io::stdout().lock();
-        stdout.write_all(b"\x1b[2J").unwrap();
-        stdout.flush();
-    }
-
-
     pub fn prompt(prompt: &str, initial_capacity: usize) -> String {
         {
             use std::io::Write;
             let mut stdout = std::io::stdout().lock();
             stdout.write_all(prompt.as_bytes()).unwrap();
             stdout.write_all(b"\n=> ").unwrap();
-            stdout.flush();
+            stdout.flush().unwrap();
         }
 
-        let mut str_buf = String::with_capacity(4);
+        let mut str_buf = String::with_capacity(initial_capacity);
         {
             use std::io::BufRead;
             let mut stdin = std::io::stdin().lock();
@@ -53,14 +45,13 @@ pub mod io {
                 let mut stdout = std::io::stdout().lock();
                 stdout.write_all(prompt.as_bytes()).unwrap();
                 stdout.write_all(b" (y/n)\n=> ").unwrap();
-                stdout.flush();
+                stdout.flush().unwrap();
             }
     
             {
                 use std::io::BufRead;
                 let mut stdin = std::io::stdin().lock();
                 let r = stdin.read_line(&mut answer);
-                dbg!(&answer);
                 r.expect("could not process user input");
             }
 
@@ -68,31 +59,6 @@ pub mod io {
             println!(r#"Invalid input! Enter "yes" or "no"."#);
             println!();
             answer.clear();
-        }
-    }
-
-    pub fn prompt_bool_optional(prompt: &str) -> Option<bool> {
-        let mut answer = String::with_capacity(4);
-
-        loop {
-            {
-                use std::io::Write;
-                let mut stdout = std::io::stdout().lock();
-                stdout.write_all(prompt.as_bytes()).unwrap();
-                stdout.write_all(b" (y/n) (press enter to skip) \n=> ").unwrap();
-                stdout.flush();
-            }
-
-            {
-                use std::io::BufRead;
-                let mut stdin = std::io::stdin().lock();
-                stdin.read_line(&mut answer).expect("could not process user input");
-            }
-
-            if answer.trim().is_empty() { return None }
-            if let Some(bool) = str_to_boolish(&answer) { return Some(bool) };
-            println!(r#"Invalid input! Enter "yes", "no", or proceed without selecting an option."#);
-            println!()
         }
     }
 
@@ -141,7 +107,8 @@ pub mod io {
 
     pub async fn interrogate_listenbrainz() -> Option<crate::status_backend::listenbrainz::Config> {
         loop {
-            let token = prompt(r#"Paste your access token (from https://listenbrainz.org/settings/) or type "cancel":"#, 36 /* hyphenated uuid length */ + '\n'.len_utf8());;
+            const HYPHENATED_UUID_LENGTH: usize = 36;
+            let token = prompt(r#"Paste your access token (from https://listenbrainz.org/settings/) or type "cancel":"#, HYPHENATED_UUID_LENGTH + '\n'.len_utf8());
             let token = &token[..token.len().saturating_sub('\n'.len_utf8())];
             if token == "cancel" { break None; }
             match brainz::listen::v1::UserToken::new(token).await {

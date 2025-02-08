@@ -1,11 +1,8 @@
-use std::{borrow::Cow, ffi::OsStr, path::{Path, PathBuf}};
-
-use maybe_owned_string::MaybeOwnedString;
+use std::{borrow::Cow, path::Path};
 
 use crate::util::HOME;
 
 macro_rules! get_path_env_var { () => { "AM_OSX_STATUS_PATH" } }
-pub static PATH: std::sync::OnceLock<ConfigPathChoice> = std::sync::OnceLock::new();
 pub static PATH_ENV_VAR: &str = get_path_env_var!();
 
 const POST_HOME_DEFAULT_PATH: &str = "Application Support/am-osx-status/config.toml";
@@ -62,14 +59,6 @@ impl<'a> ConfigPathChoice<'a> {
 
     pub const fn was_auto(&self) -> bool {
         matches!(self, Self::Automatic(..))
-    }
-
-    pub const fn was_env(&self) -> bool {
-        matches!(self, Self::Environmental(..))
-    }
-
-    pub const fn was_explicit(&self) -> bool {
-        matches!(self, Self::Explicit(..))
     }
 }
 impl AsRef<Path> for ConfigPathChoice<'_> {

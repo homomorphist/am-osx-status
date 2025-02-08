@@ -47,6 +47,8 @@ impl ClientIdentity {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthorizationToken(internal::ThirtyTwoCharacterAsciiString);
 impl AuthorizationToken {
+    /// # Safety
+    /// Must be a thirty-two character ASCII string.
     pub const unsafe fn new_unchecked(str: &str) -> Self {
         Self(internal::ThirtyTwoCharacterAsciiString::new_unchecked(str.as_bytes()))
     }

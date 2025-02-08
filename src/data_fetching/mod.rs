@@ -1,10 +1,6 @@
 pub mod services;
 
-use std::sync::Arc;
-
 use components::{image::TrackImageUrlPack, Component, ComponentSolicitation};
-use maybe_owned_string::MaybeOwnedString;
-use musicdb::Artist;
 use services::{artworkd::{get_artwork, StoredArtwork}, itunes::ITunesStoreSong};
 
 use crate::util::fallback_to_default_and_log_error;

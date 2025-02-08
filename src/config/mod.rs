@@ -1,20 +1,12 @@
-use std::{cell::{Cell, RefCell}, os::fd::{AsRawFd, IntoRawFd}};
-
+use std::os::fd::AsRawFd;
 use kqueue::FilterFlag;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
-
-use crate::{util::{ferror, HOME}};
+use tokio::sync::Mutex;
 
 pub mod wizard;
 mod file;
 pub use file::ConfigPathChoice;
 
-
-enum PathChoice<'a> {
-    Explicit(&'a str),
-    Environmental
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigRetrievalError<'a> {
@@ -93,11 +85,11 @@ impl<'a> Config<'a> {
 
     pub async fn get_fd(&self) -> Option<std::os::fd::RawFd> {
         if self.file_descriptor.lock().await.is_none() {
-            self.file_descriptor.lock().await.insert(match tokio::fs::File::options().open(&self.path).await {
+            *self.file_descriptor.lock().await = match tokio::fs::File::options().open(&self.path).await {
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
                 Err(err) => { println!("error: {:?}", err); return None }
-                Ok(file) => file.into_std().await.into()
-            });
+                Ok(file) => Some(file.into_std().await.into())
+            }
         }
 
         self.file_descriptor.lock().await
@@ -106,7 +98,7 @@ impl<'a> Config<'a> {
     }
 
     pub async fn update_on_file_change(&mut self, enable: bool) {
-        if self.watch_config_file == enable { return }
+        if self.watch_config_file == enable && !(enable && self.file_watcher.is_none()) { return }
         self.watch_config_file = enable;
         if enable {
             let fd = self.get_fd().await.expect("cannot get fd");
@@ -118,6 +110,10 @@ impl<'a> Config<'a> {
         }
     }
 
+    pub async fn setup_side_effects(&mut self) {
+        self.update_on_file_change(self.watch_config_file).await;
+    }
+
     pub async fn edit_with_wizard(&mut self)  {
         self.backends.discord = wizard::io::prompt_bool("Enable Discord Rich Presence?");
         self.backends.lastfm =  wizard::io::prompt_lastfm().await;
@@ -127,7 +123,8 @@ impl<'a> Config<'a> {
     /// NOTE: Will not write to the provided path unless [`Self::save_to_disk`] is called.
     pub async fn create_with_wizard(path: ConfigPathChoice<'a>) -> Self {
         let mut config: Self = Default::default();
-        config.edit_with_wizard();
+        config.edit_with_wizard().await;
+        config.path = path;
         config
     }
 

@@ -1,9 +1,5 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use apple_music::Track;
-use serde::{Deserialize, Serialize};
-
-
-use crate::cli::Cli;
 
 use super::StatusBackend;
 
@@ -74,11 +70,13 @@ impl LastFM {
 impl StatusBackend for LastFM {
     #[tracing::instrument(level = "debug")]
     async fn record_as_listened(&self, track: Arc<Track>, _: Arc<apple_music::ApplicationData>) {
-        self.client.scrobble(&[lastfm::scrobble::Scrobble {
+        if let Err(error) = self.client.scrobble(&[lastfm::scrobble::Scrobble {
             chosen_by_user: None,
             timestamp: chrono::Utc::now(),
             info: Self::track_to_heard(track.as_ref())
-        }]).await;
+        }]).await {
+            tracing::error!(?error, "last.fm mark-listened failure")
+        }
     }
 
     /// - <https://www.last.fm/api/scrobbling#scrobble-requests>
@@ -91,6 +89,8 @@ impl StatusBackend for LastFM {
 
     #[tracing::instrument(level = "debug")]
     async fn set_now_listening(&mut self, track: Arc<Track>, _: Arc<apple_music::ApplicationData>, _: Arc<crate::data_fetching::AdditionalTrackData>) {
-        self.client.set_now_listening(&Self::track_to_heard(track.as_ref())).await;
+        if let Err(error) = self.client.set_now_listening(&Self::track_to_heard(track.as_ref())).await {
+            tracing::error!(?error, "last.fm now-listening dispatch failure")
+        }
     }
 }

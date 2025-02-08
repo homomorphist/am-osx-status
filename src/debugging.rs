@@ -1,16 +1,16 @@
-use tracing_subscriber::filter::FromEnvError;
-
+#[allow(unused)]
 struct DebuggingGuards {
     chrome_tracing: Option<tracing_chrome::FlushGuard>
 }
 
 pub struct DebuggingSession {
+    #[allow(unused)]
     guards: DebuggingGuards
 }
 
 impl DebuggingSession {
     pub fn new(args: &crate::cli::Cli) -> Self {
-        use tracing_subscriber::{prelude::*, EnvFilter};
+        use tracing_subscriber::prelude::*;
 
         let layers;
         let chrome_guard;
@@ -44,7 +44,7 @@ impl DebuggingSession {
 
     /// Get the filter for log output. The `AMXS_LOG`` environmental variable takes priority over CLI arguments.
     fn get_filter(args: &crate::cli::Cli) -> tracing_subscriber::EnvFilter {
-        use tracing_subscriber::{prelude::*, EnvFilter};
+        use tracing_subscriber::EnvFilter;
 
         const ENV: &str = "AMXS_LOG";
         if std::env::var_os(ENV).is_some() {

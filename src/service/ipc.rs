@@ -1,3 +1,4 @@
+#![allow(unused)]
 
 struct Watcher {
 
@@ -117,16 +118,15 @@ impl PacketReceiver {
 
         
         let address = listener.local_addr().expect("no local address for ipc socket");
-        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
         
         tokio::spawn(async move {
             loop {
-                let mut stream = listener.accept().await.expect("unable to accept connection").0;
+                let stream = listener.accept().await.expect("unable to accept connection").0;
                 let tx = tx.clone();
 
                 tokio::spawn(async move {
                     use tokio_stream::StreamExt;
-                    use tokio_serde::*;
                     use tokio_serde::formats::SymmetricalBincode;
                     use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
 
