@@ -69,28 +69,28 @@ impl LastFM {
 #[async_trait::async_trait]
 impl StatusBackend for LastFM {
     #[tracing::instrument(level = "debug")]
-    async fn record_as_listened(&self, track: Arc<Track>, _: Arc<apple_music::ApplicationData>) {
+    async fn record_as_listened(&self, context: super::BackendContext<()>) {
         if let Err(error) = self.client.scrobble(&[lastfm::scrobble::Scrobble {
             chosen_by_user: None,
             timestamp: chrono::Utc::now(),
-            info: Self::track_to_heard(track.as_ref())
+            info: Self::track_to_heard(context.track.as_ref())
         }]).await {
             tracing::error!(?error, "last.fm mark-listened failure")
         }
     }
 
     /// - <https://www.last.fm/api/scrobbling#scrobble-requests>
-    async fn check_eligibility(&self, track: Arc<Track>, listened: Arc<tokio::sync::Mutex<super::Listened>>) -> bool {
-        let length = Duration::from_secs_f64(track.duration);
-        let time_listened = listened.lock().await.total_heard();
+    async fn check_eligibility(&self, context: super::BackendContext<()>) -> bool {
+        let length = Duration::from_secs_f64(context.track.duration);
+        let time_listened = context.listened.lock().await.total_heard();
         if length < THIRTY_SECONDS { return false };
         time_listened >= FOUR_MINUTES ||
         time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
     }
 
     #[tracing::instrument(level = "debug")]
-    async fn set_now_listening(&mut self, track: Arc<Track>, _: Arc<apple_music::ApplicationData>, _: Arc<crate::data_fetching::AdditionalTrackData>) {
-        if let Err(error) = self.client.set_now_listening(&Self::track_to_heard(track.as_ref())).await {
+    async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
+        if let Err(error) = self.client.set_now_listening(&Self::track_to_heard(context.track.as_ref())).await {
             tracing::error!(?error, "last.fm now-listening dispatch failure")
         }
     }

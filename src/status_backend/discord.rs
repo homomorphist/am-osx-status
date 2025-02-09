@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc, time::{Duration, Instant}};
 use discord_presence::models::{payload::Payload, Activity, ActivityAssets, ActivityType};
 use apple_music::{MediaKind, Track};
 use tokio::sync::Mutex;
@@ -53,6 +53,7 @@ pub struct DiscordPresence {
     state_update_task_handle: tokio::task::JoinHandle<()>,
     auto_reconnect_task_handle: Option<tokio::task::JoinHandle<()>>,
     has_content: bool,
+    last_dispatch: Option<Instant>,
     activity: Option<discord_presence::models::Activity>,
     position: f64,
     duration: f64,
@@ -97,6 +98,7 @@ impl DiscordPresence {
             state_update_task_handle: state_update_hook,
             auto_reconnect_task_handle: None,
             has_content: false,
+            last_dispatch: None,
             activity: None,
             position: 0.,
             duration: 0.,
@@ -230,10 +232,11 @@ impl DiscordPresence {
             if has_content {
                 client.clear_activity()?;
                 self.has_content = false;
+                self.last_dispatch = Some(Instant::now())
             }
             Ok(has_content)
         } else if !has_content {
-            Ok(false) // is this a good idea
+            Ok(false)
         } else {
             Err(UpdateError::NotConnected)
         }
@@ -258,6 +261,7 @@ impl DiscordPresence {
         })) {
             Ok(..) => {
                 self.has_content = true;
+                self.last_dispatch = Some(Instant::now())
             },
             Err(error) => {
                 tracing::error!(?error, "activity dispatch failure");
@@ -283,24 +287,38 @@ impl StatusBackend for DiscordPresence {
         solicitation
     }
 
-    async fn record_as_listened(&self, _: Arc<Track>, _: Arc<apple_music::ApplicationData>) {
+    async fn record_as_listened(&self, context: super::BackendContext<()>) {
         // no-op
     }
 
-    async fn check_eligibility(&self, _: Arc<Track>, _: Arc<tokio::sync::Mutex<super::Listened>>) -> bool {
+    async fn check_eligibility(&self, context: super::BackendContext<()>) -> bool {
         false
     }
 
-    async fn update_progress(&mut self, _: Arc<Track>, progress: Arc<tokio::sync::Mutex<super::Listened>>) {
-        self.position = progress.lock().await.current.as_ref().unwrap().get_expected_song_position();
-        self.dispatch().await;
+    #[tracing::instrument(level = "debug")]
+    async fn update_progress(&mut self, context: super::BackendContext<()>) {
+        const STATUS_UPDATE_RATELIMIT_SECONDS: f64 = 15.;
+        let position = context.listened.lock().await.current.as_ref().unwrap().get_expected_song_position();
+        let remaining = context.track.finish - position;
+        // Only bother to dispatch a progress update if it'll last for more than
+        // two thirds of the ratelimit. This means that if we skip to a point in the song
+        // where it'll end in less than 10 seconds, don't send the activity, as that'll
+        // mean the next activity update containing the new song will take longer to take,
+        // which is one that should have priority.
+        if remaining > (STATUS_UPDATE_RATELIMIT_SECONDS / 3. * 2.) {
+            self.position = position;
+            self.dispatch().await;
+        } else {
+            // TODO: Only do this if there is actually another song queued up
+            tracing::debug!("skipping progress dispatch since it'll delay next song dispatch")
+        }
     }
 
     #[tracing::instrument(level = "debug")]
-    async fn set_now_listening(&mut self, track: Arc<Track>, app: Arc<apple_music::ApplicationData>, additional_info: Arc<crate::data_fetching::AdditionalTrackData>) {
-        self.position = app.player_position.unwrap_or_default();
+    async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
+        let super::BackendContext { track, app, listened, data: additional_info, .. } = context;
+        self.position = listened.lock().await.current.as_ref().map(|current| current.get_expected_song_position()).unwrap_or(track.start);
         self.duration = track.duration;
-
         let mut activity = Activity::new()
             ._type(match track.media_kind {
                 MediaKind::Song | 

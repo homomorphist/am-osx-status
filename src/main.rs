@@ -2,7 +2,7 @@
 use std::{process::ExitCode, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}};
 use config::{ConfigPathChoice, ConfigRetrievalError};
 use musicdb::MusicDB;
-use status_backend::Listened;
+use status_backend::{BackendContext, Listened};
 use tokio::sync::Mutex;
 use tracing::Instrument;
 use util::ferror;
@@ -202,7 +202,13 @@ struct PollingContext<'a> {
     pub last_track: Option<Arc<apple_music::Track>>,
     pub listened: Arc<Mutex<Listened>>,
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
-    musicdb: Option<musicdb::MusicDB<'a>>
+    musicdb: Option<musicdb::MusicDB<'a>>,
+    /// The number of polls.
+    /// A value of one means the first poll is ongoing; it's not zero-based because it's incremented at the start of the poll function.
+    polls: u64,
+    /// Sequential `PlayerState::Paused` occurrences.
+    /// Used to detect when the state is *actually* considered paused, since sometimes the paused state is returned during buffer.
+    sequential_pause_states: u64
 }
 impl PollingContext<'_> {
     fn new(backends: status_backend::StatusBackends, terminating: Arc<AtomicBool>) -> Self {
@@ -213,6 +219,8 @@ impl PollingContext<'_> {
             listened: Arc::new(Mutex::new(Listened::new())),
             custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
             musicdb: Some(MusicDB::default()),
+            polls: 0,
+            sequential_pause_states: 0,
         }
     }
 }
@@ -221,7 +229,7 @@ impl PollingContext<'_> {
 async fn proc_once(context: &mut PollingContext<'_>) {
     use apple_music::{AppleMusic, PlayerState, Track};
 
-    // TODO: poll discord presence
+    context.polls += 1;
 
     let app = match tracing::info_span!("app status retrieval").in_scope(AppleMusic::get_application_data) {
         Ok(app) => Arc::new(app),
@@ -235,8 +243,10 @@ async fn proc_once(context: &mut PollingContext<'_>) {
         }
     };
 
+    let state = app.player_state.as_ref().expect("could not retrieve player state");
+    context.sequential_pause_states = if matches!(state, PlayerState::Paused) { 0 } else { context.sequential_pause_states + 1 };
 
-    match app.player_state.as_ref().expect("could not retrieve player state") {
+    match state {
         PlayerState::FastForwarding | PlayerState::Rewinding => unimplemented!(),
         PlayerState::Stopped => {
             #[cfg(feature = "discord")]
@@ -249,19 +259,32 @@ async fn proc_once(context: &mut PollingContext<'_>) {
             context.listened.lock().await.flush_current();
             
             if let Some(previous) = context.last_track.clone() {
-                context.backends.dispatch_track_ended(previous, app.clone(), context.listened.clone()).await;
+                let listened = context.listened.clone();
+                context.listened = Arc::new(Mutex::new(Listened::new()));
                 context.last_track = None;
+                context.backends.dispatch_track_ended(BackendContext {
+                    listened,
+                    track: previous,
+                    app: app.clone(),
+                    data: ().into(),
+                }).await;
             }
         }
         PlayerState::Paused => {
-            #[cfg(feature = "discord")]
-            if let Some(presence) = context.backends.discord.clone() {
-                if let Err(error) = presence.lock().await.clear().await {
-                    tracing::error!(?error, "unable to clear discord status")
-                }
-            }
+            // Three sequential pause states (including this one) are required to consider
+            // the state to actually be paused, as opposed to just buffer.
+            const THRESHOLD_CONSIDER_TRULY_PAUSED: u64 = 3;
 
-            context.listened.lock().await.flush_current();
+            if context.sequential_pause_states >= THRESHOLD_CONSIDER_TRULY_PAUSED {
+                #[cfg(feature = "discord")]
+                if let Some(presence) = context.backends.discord.clone() {
+                    if let Err(error) = presence.lock().await.clear().await {
+                        tracing::error!(?error, "unable to clear discord status")
+                    }
+                }
+
+                context.listened.lock().await.flush_current();
+            }
         },
 
         PlayerState::Playing => {
@@ -276,8 +299,51 @@ async fn proc_once(context: &mut PollingContext<'_>) {
                     }
                 }
             };
+            
+            let previous = context.last_track.as_ref().map(|v: &Arc<Track>| &v.persistent_id);
+            if previous != Some(&track.persistent_id) {
+                tracing::trace!("new track: {:?}", track);
+                
+                use data_fetching::AdditionalTrackData;
+                let solicitation = context.backends.get_solicitations().await;
+                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, &track, context.musicdb.as_ref(), context.custom_artwork_host.as_mut());
+                let additional_data = if let Some(previous) = context.last_track.clone() {
+                    let pending_dispatch = context.backends.dispatch_track_ended(BackendContext {
+                        app: app.clone(),
+                        track: previous,
+                        listened: context.listened.clone(),
+                        data: ().into(),
+                    }).instrument(tracing::trace_span!("song end dispatch"));
 
-            {
+                    async move { 
+                        // Run song-end dispatch concurrently while we fetch the additional data for the next
+                        tokio::join!(
+                            additional_data_pending,
+                            pending_dispatch
+                        )
+                    }.await.0
+                } else {
+                    additional_data_pending.await
+                };
+
+                // We can't trust the `app.player_position` at this stage because there might've been a race condition.
+                let listened = Arc::new(Mutex::new(Listened::new_with_current({
+                    // If this isn't the first song, we can assume it's quite unlikely that the user performed
+                    // a skip to another point in time in the few nanoseconds that occurred, so going with
+                    // the adjusted start time is okay.
+                    if context.polls != 1 {
+                        track.start
+                    } else {
+                        // Otherwise, the user started the program in the middle of listening to a song.
+                        // In that event, `app.player_position` is trustworthy enough.
+                        app.player_position.unwrap_or(track.start)
+                    }
+                })));
+
+                context.listened = listened.clone();
+                context.last_track = Some(track.clone());
+                context.backends.dispatch_track_started(BackendContext { app, listened, track, data: Arc::new(additional_data) }).await;
+            } else {
                 let mut listened = context.listened.lock().await;
                 let position = app.player_position.expect("no position");
                 match listened.current.as_ref() {
@@ -288,36 +354,15 @@ async fn proc_once(context: &mut PollingContext<'_>) {
                             listened.flush_current();
                             listened.set_new_current(position);
                             drop(listened); // give up lock
-                            context.backends.dispatch_current_progress(track.clone(), app.clone(), context.listened.clone()).await;
+                            context.backends.dispatch_current_progress(BackendContext {
+                                track: track.clone(),
+                                app: app.clone(),
+                                data: ().into(),
+                                listened: context.listened.clone()
+                            }).await;
                         }
                     }
                 }
-            }
-
-            let previous = context.last_track.as_ref().map(|v: &Arc<Track>| &v.persistent_id);
-            if previous != Some(&track.persistent_id) {
-                tracing::trace!("new track: {:?}", track);
-                
-                use data_fetching::AdditionalTrackData;
-                let solicitation = context.backends.get_solicitations().await;
-                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, &track, context.musicdb.as_ref(), context.custom_artwork_host.as_mut());
-                let additional_data = if let Some(previous) = context.last_track.clone() {
-                    let pending_dispatch = context.backends.dispatch_track_ended(previous, app.clone(), context.listened.clone());
-                    async move { 
-                        // Run dispatch concurrently while we fetch the additional data for the next
-                        tokio::join!(
-                            additional_data_pending,
-                            pending_dispatch.instrument(tracing::trace_span!("song end dispatch"))
-                        )
-                    }.await.0
-                } else {
-                    additional_data_pending.await
-                };
-
-
-                context.backends.dispatch_track_started(track.clone(), app, Arc::new(additional_data)).await;
-                context.last_track = Some(track);
-                context.listened = Arc::new(Mutex::new(Listened::new()));
             }
         }
     }

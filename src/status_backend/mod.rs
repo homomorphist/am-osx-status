@@ -41,6 +41,12 @@ impl From<CurrentListened> for ListenedChunk {
     }
 }
 impl CurrentListened {
+    pub fn new_with_position(position: f64) -> Self {
+        Self {
+            started_at: Instant::now(),
+            started_at_song_position: position
+        }
+    }
     pub fn get_expected_song_position(&self) -> f64 {
         self.started_at_song_position + Instant::now().duration_since(self.started_at).as_secs_f64()
     }
@@ -54,6 +60,13 @@ pub struct Listened {
 impl Listened {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn new_with_current(position: f64) -> Self {
+        Self {
+            contiguous: vec![],
+            current: Some(CurrentListened::new_with_position(position)),
+        }
     }
 
     fn find_index_for_current(&self, current: &CurrentListened) -> usize {
@@ -71,10 +84,7 @@ impl Listened {
     }
     
     pub fn set_new_current(&mut self, current_song_position: f64) {
-        if self.current.replace(CurrentListened {
-            started_at: Instant::now(),
-            started_at_song_position: current_song_position
-        }).is_some() {
+        if self.current.replace(CurrentListened::new_with_position(current_song_position)).is_some() {
             tracing::warn!("overwrote current before it was flushed")
         }
     }
@@ -128,12 +138,31 @@ impl Listened {
     }
 }
 
+
+#[derive(Debug)]
+pub struct BackendContext<A> {
+    pub track: Arc<Track>,
+    pub app: Arc<ApplicationData>,
+    pub data: Arc<A>,
+    pub listened: Arc<Mutex<Listened>>
+}
+impl<A> Clone for BackendContext<A> {
+    fn clone(&self) -> Self {
+        Self {
+            track: self.track.clone(),
+            app: self.app.clone(),
+            data: self.data.clone(),
+            listened: self.listened.clone(),
+        }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait StatusBackend: core::fmt::Debug + Send + Sync {
-    async fn set_now_listening(&mut self, track: Arc<Track>, app: Arc<ApplicationData>, data: Arc<crate::data_fetching::AdditionalTrackData>);
-    async fn record_as_listened(&self, track: Arc<Track>, app: Arc<ApplicationData>);
-    async fn check_eligibility(&self, track: Arc<Track>, listened: Arc<Mutex<Listened>>) -> bool;
-    async fn update_progress(&mut self, track: Arc<Track>, listened: Arc<Mutex<Listened>>) {}
+    async fn set_now_listening(&mut self, context: BackendContext<crate::data_fetching::AdditionalTrackData>);
+    async fn record_as_listened(&self, context: BackendContext<()>);
+    async fn check_eligibility(&self, context: BackendContext<()>) -> bool;
+    async fn update_progress(&mut self, context: BackendContext<()>) {}
     async fn get_additional_data_solicitation(&self) -> ComponentSolicitation {
         ComponentSolicitation::default()
     }
@@ -196,17 +225,15 @@ impl StatusBackends {
 
     
     #[tracing::instrument(level = "debug")]
-    pub async fn dispatch_track_ended(&self, track: Arc<Track>, app: Arc<ApplicationData>, listened: Arc<Mutex<Listened>>) {
+    pub async fn dispatch_track_ended(&self, context: BackendContext<()>) {
         let backends = self.all();
         let mut jobs = Vec::with_capacity(backends.len());
 
         for backend in backends {
-            let listened = listened.clone();
-            let track = track.clone();
-            let app = app.clone();
+            let context = context.clone();
             jobs.push(tokio::spawn(async move {
-                if backend.lock().await.check_eligibility(track.clone(), listened).await {
-                    backend.lock().await.record_as_listened(track, app).await;
+                if backend.lock().await.check_eligibility(context.clone()).await {
+                    backend.lock().await.record_as_listened(context).await;
                 }
             }));
         }
@@ -217,16 +244,14 @@ impl StatusBackends {
     }
 
     #[tracing::instrument(level = "debug")]
-    pub async fn dispatch_track_started(&self, track: Arc<Track>, app: Arc<ApplicationData>, data: Arc<crate::data_fetching::AdditionalTrackData>) {
+    pub async fn dispatch_track_started(&self, context: BackendContext<crate::data_fetching::AdditionalTrackData>) {
         let backends = self.all();
         let mut jobs = Vec::with_capacity(backends.len());
 
         for backend in backends {
-            let track = track.clone();
-            let app = app.clone();
-            let data = data.clone();
+            let context = context.clone();
             jobs.push(tokio::spawn(async move {
-                backend.lock().await.set_now_listening(track, app, data).await
+                backend.lock().await.set_now_listening(context).await
             }));
         }
 
@@ -236,15 +261,14 @@ impl StatusBackends {
     }
 
     #[tracing::instrument(level = "debug")]
-    pub async fn dispatch_current_progress(&self, track: Arc<Track>, app: Arc<ApplicationData>, listened: Arc<Mutex<Listened>>) {
+    pub async fn dispatch_current_progress(&self, context: BackendContext<()>) {
         let backends = self.all();
         let mut jobs = Vec::with_capacity(backends.len());
 
         for backend in backends {
-            let listened = listened.clone();
-            let track = track.clone();
+            let context = context.clone();
             jobs.push(tokio::spawn(async move {
-                backend.lock().await.update_progress(track, listened).await;
+                backend.lock().await.update_progress(context).await;
             }));
         }
 

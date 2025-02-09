@@ -80,29 +80,29 @@ impl ListenBrainz {
 #[async_trait::async_trait]
 impl StatusBackend for ListenBrainz {
     #[tracing::instrument(level = "debug")]   
-    async fn record_as_listened(&self, track: Arc<Track>, app: Arc<apple_music::ApplicationData>) {
+    async fn record_as_listened(&self, context: super::BackendContext<()>) {
         // TODO: catch net error or add to queue. ideally queue persist offline
         if let Err(error) = self.client.submit_playing_now(
-            Self::basic_track_metadata(&track),
-            Some(Self::additional_info(&track, &app, self.client.get_program_info()))
+            Self::basic_track_metadata(&context.track),
+            Some(Self::additional_info(&context.track, &context.app, self.client.get_program_info()))
         ).await {
             tracing::error!(?error, "listenbrainz mark-listened failure")
         }
     }
 
     /// - <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html#post--1-submit-listens>
-    async fn check_eligibility(&self, track: Arc<Track>, listened: Arc<tokio::sync::Mutex<super::Listened>>) -> bool {
-        let length = core::time::Duration::from_secs_f64(track.duration);
-        let time_listened = listened.lock().await.total_heard();
+    async fn check_eligibility(&self, context: super::BackendContext<()>) -> bool {
+        let length = core::time::Duration::from_secs_f64(context.track.duration);
+        let time_listened = context.listened.lock().await.total_heard();
         time_listened >= FOUR_MINUTES ||
         time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
     }
 
     #[tracing::instrument(level = "debug")]
-    async fn set_now_listening(&mut self, track: Arc<Track>, app: Arc<apple_music::ApplicationData>, _: Arc<crate::data_fetching::AdditionalTrackData>) {
+    async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
         if let Err(error) = self.client.submit_playing_now(
-            Self::basic_track_metadata(&track),
-            Some(Self::additional_info(&track, &app, self.client.get_program_info()))
+            Self::basic_track_metadata(&context.track),
+            Some(Self::additional_info(&context.track, &context.app, self.client.get_program_info()))
         ).await {
             tracing::error!(?error, "listenbrainz now-listening failure")
         }
