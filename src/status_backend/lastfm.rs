@@ -56,7 +56,7 @@ impl LastFM {
 
     fn track_to_heard(track: &Track) -> lastfm::scrobble::HeardTrackInfo<'_> {
         lastfm::scrobble::HeardTrackInfo {
-            artist: &track.artist,
+            artist: track.artist.split(" & ").next().unwrap(),
             track: &track.name,
             album: Some(&track.album),
             album_artist: if track.artist != track.album_artist { Some(&track.album_artist) } else { None },
