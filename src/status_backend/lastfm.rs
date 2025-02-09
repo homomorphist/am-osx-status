@@ -80,10 +80,11 @@ impl StatusBackend for LastFM {
     }
 
     /// - <https://www.last.fm/api/scrobbling#scrobble-requests>
-    async fn check_eligibility(&self, track: Arc<Track>, time_listened: &Duration) -> bool {
+    async fn check_eligibility(&self, track: Arc<Track>, listened: Arc<tokio::sync::Mutex<super::Listened>>) -> bool {
         let length = Duration::from_secs_f64(track.duration);
+        let time_listened = listened.lock().await.total_heard();
         if length < THIRTY_SECONDS { return false };
-        time_listened >= &FOUR_MINUTES ||
+        time_listened >= FOUR_MINUTES ||
         time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
     }
 

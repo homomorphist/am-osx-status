@@ -91,9 +91,10 @@ impl StatusBackend for ListenBrainz {
     }
 
     /// - <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html#post--1-submit-listens>
-    async fn check_eligibility(&self, track: Arc<Track>, time_listened: &core::time::Duration) -> bool {
+    async fn check_eligibility(&self, track: Arc<Track>, listened: Arc<tokio::sync::Mutex<super::Listened>>) -> bool {
         let length = core::time::Duration::from_secs_f64(track.duration);
-        time_listened >= &FOUR_MINUTES ||
+        let time_listened = listened.lock().await.total_heard();
+        time_listened >= FOUR_MINUTES ||
         time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
     }
 

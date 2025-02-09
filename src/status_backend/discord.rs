@@ -1,11 +1,11 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
-use discord_presence::models::{ActivityAssets, ActivityType};
+use discord_presence::models::{payload::Payload, Activity, ActivityAssets, ActivityType};
 use apple_music::{MediaKind, Track};
 use tokio::sync::Mutex;
 
 use crate::{data_fetching::components::{Component, ComponentSolicitation}, util::fallback_to_default_and_log_absence};
 
-use super::StatusBackend;
+use super::{Listened, StatusBackend};
 
 const APPLICATION_ID: u64 = 1286481105410588672; // "Apple Music"
 
@@ -52,7 +52,10 @@ pub struct DiscordPresence {
     state_channel: tokio::sync::broadcast::Sender<DiscordPresenceState>,
     state_update_task_handle: tokio::task::JoinHandle<()>,
     auto_reconnect_task_handle: Option<tokio::task::JoinHandle<()>>,
-    has_content: bool
+    has_content: bool,
+    activity: Option<discord_presence::models::Activity>,
+    position: f64,
+    duration: f64,
 }
 impl Debug for DiscordPresence {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -93,7 +96,10 @@ impl DiscordPresence {
             state_channel: tx,
             state_update_task_handle: state_update_hook,
             auto_reconnect_task_handle: None,
-            has_content: false
+            has_content: false,
+            activity: None,
+            position: 0.,
+            duration: 0.,
         }
     }
 
@@ -232,6 +238,32 @@ impl DiscordPresence {
             Err(UpdateError::NotConnected)
         }
     }
+
+    async fn dispatch(&mut self) {
+        let activity = if let Some(activity) = self.activity.clone() { activity } else {
+            tracing::warn!("cannot dispatch without set activity");
+            return
+        };
+
+        let client = if let Some(client) = self.client.as_mut() { client } else {
+            tracing::warn!("cannot dispatch without client");
+            return
+        };
+
+        match client.set_activity(|_| activity.timestamps(|activity| {
+            let track_started_at = chrono::Utc::now().timestamp() as u64 - self.position as u64;
+            activity
+                .start(track_started_at)
+                .end(track_started_at + self.duration as u64)
+        })) {
+            Ok(..) => {
+                self.has_content = true;
+            },
+            Err(error) => {
+                tracing::error!(?error, "activity dispatch failure");
+            }
+        }
+    }
 }
 impl Drop for DiscordPresence {
     fn drop(&mut self) {
@@ -255,58 +287,44 @@ impl StatusBackend for DiscordPresence {
         // no-op
     }
 
-    async fn check_eligibility(&self, _: Arc<Track>, _: &Duration) -> bool {
+    async fn check_eligibility(&self, _: Arc<Track>, _: Arc<tokio::sync::Mutex<super::Listened>>) -> bool {
         false
+    }
+
+    async fn update_progress(&mut self, _: Arc<Track>, progress: Arc<tokio::sync::Mutex<super::Listened>>) {
+        self.position = progress.lock().await.current.as_ref().unwrap().get_expected_song_position();
+        self.dispatch().await;
     }
 
     #[tracing::instrument(level = "debug")]
     async fn set_now_listening(&mut self, track: Arc<Track>, app: Arc<apple_music::ApplicationData>, additional_info: Arc<crate::data_fetching::AdditionalTrackData>) {
-        let client = get_client_or_early_return!(self);
-        let player_position = fallback_to_default_and_log_absence!(app.player_position, "reading player position") as u64;
-        let track_started_at = (chrono::Utc::now().timestamp_millis() / 1000) as u64 - player_position;
+        self.position = app.player_position.unwrap_or_default();
+        self.duration = track.duration;
 
-        let sent = client.set_activity(|activity| {
-            let mut activity = activity
-                ._type(match track.media_kind {
-                    MediaKind::Song | 
-                    MediaKind::Unknown => ActivityType::Listening,
-                    MediaKind::MusicVideo => ActivityType::Watching,
-                })
-                .details(&track.name)
-                .state(&track.artist)
-                .timestamps(|mut activity| {
-                    if let Some(apple_music::PlayerState::Playing) = app.player_state {
-                        activity = activity
-                            .start(track_started_at)
-                            .end(track_started_at + track.duration as u64)
-                    };
-                    activity
-                })
-                .assets(|_| ActivityAssets {
-                    large_text: Some(track.album.clone()),
-                    large_image: additional_info.images.track.clone(),
-                    small_image: additional_info.images.artist.clone(),
-                    small_text: Some(track.artist.clone())
-                });
+        let mut activity = Activity::new()
+            ._type(match track.media_kind {
+                MediaKind::Song | 
+                MediaKind::Unknown => ActivityType::Listening,
+                MediaKind::MusicVideo => ActivityType::Watching,
+            })
+            .details(&track.name)
+            .state(&track.artist)
+            .assets(|_| ActivityAssets {
+                large_text: Some(track.album.clone()),
+                large_image: additional_info.images.track.clone(),
+                small_image: additional_info.images.artist.clone(),
+                small_text: Some(track.artist.clone())
+            });
 
 
-            if let Some(itunes) = &additional_info.itunes {
-                activity = activity.append_buttons(|button| button
-                    .label("Listen on Apple Music")
-                    .url(itunes.apple_music_url.clone())
-                )
-            }
-
-            activity
-        });
-
-        match sent {
-            Ok(..) => {
-                self.has_content = true;
-            },
-            Err(error) => {
-                tracing::error!(?error, "activity dispatch failure");
-            }
+        if let Some(itunes) = &additional_info.itunes {
+            activity = activity.append_buttons(|button| button
+                .label("Listen on Apple Music")
+                .url(itunes.apple_music_url.clone())
+            )
         }
+
+        self.activity = Some(activity);
+        self.dispatch().await;
     }
 }

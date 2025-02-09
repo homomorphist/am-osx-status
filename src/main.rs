@@ -2,12 +2,15 @@
 use std::{process::ExitCode, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}};
 use config::{ConfigPathChoice, ConfigRetrievalError};
 use musicdb::MusicDB;
+use status_backend::Listened;
+use tokio::sync::Mutex;
 use tracing::Instrument;
 use util::ferror;
 
 mod status_backend;
 mod debugging;
 mod data_fetching;
+mod service;
 mod config;
 mod cli;
 mod util;
@@ -103,6 +106,35 @@ async fn main() -> ExitCode {
                 proc_once(&mut context).await;
             }
         },
+        Command::Service { ref action } => {
+            use cli::ServiceAction;
+            use service::*;
+
+            let manager = service::ServiceController::new();
+            let config = std::ffi::OsString::from(&*match get_config_or_path!() {
+                Ok(config) => config.path,
+                Err(path) => path
+            }.to_string_lossy());
+
+            match action {
+                ServiceAction::Start => {
+                    if let Err(err) = manager.start(config, false) {
+                        ferror!("could not start service: {}", err)
+                    }
+                },
+                ServiceAction::Stop => match manager.stop() {
+                    Ok(killed) => match killed {
+                        0 => eprintln!("No processes were killed. The daemon might not have been functioning correctly."),
+                        1 => println!("The service was stopped and the process was killed."),
+                        n => eprintln!("The service was stopped and {n} processes were killed. Expected one process to be killed; this is likely a bug."),
+                    },
+                    Err(error) => ferror!("could not stop service: {}", error)
+                },
+                ServiceAction::Restart => if let Err(error) = manager.restart(config) {
+                    ferror!("could not restart service: {}", error)
+                }
+            };
+        },
         Command::Configure { ref action } => {
             tokio::spawn(async {
                 pending_term.await;
@@ -168,7 +200,7 @@ struct PollingContext<'a> {
     terminating: Arc<AtomicBool>,
     backends: status_backend::StatusBackends,
     pub last_track: Option<Arc<apple_music::Track>>,
-    pub last_track_started_at: Instant,
+    pub listened: Arc<Mutex<Listened>>,
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
     musicdb: Option<musicdb::MusicDB<'a>>
 }
@@ -178,7 +210,7 @@ impl PollingContext<'_> {
             terminating,
             backends,
             last_track: None,
-            last_track_started_at: Instant::now(),
+            listened: Arc::new(Mutex::new(Listened::new())),
             custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
             musicdb: Some(MusicDB::default()),
         }
@@ -203,6 +235,7 @@ async fn proc_once(context: &mut PollingContext<'_>) {
         }
     };
 
+
     match app.player_state.as_ref().expect("could not retrieve player state") {
         PlayerState::FastForwarding | PlayerState::Rewinding => unimplemented!(),
         PlayerState::Stopped => {
@@ -213,11 +246,10 @@ async fn proc_once(context: &mut PollingContext<'_>) {
                 }
             }
             
-            let now: Instant = Instant::now();
-            let elapsed = now - context.last_track_started_at;
+            context.listened.lock().await.flush_current();
             
             if let Some(previous) = context.last_track.clone() {
-                context.backends.dispatch_track_ended(previous, app.clone(), elapsed).await;
+                context.backends.dispatch_track_ended(previous, app.clone(), context.listened.clone()).await;
                 context.last_track = None;
             }
         }
@@ -228,8 +260,8 @@ async fn proc_once(context: &mut PollingContext<'_>) {
                     tracing::error!(?error, "unable to clear discord status")
                 }
             }
-            
-            context.last_track = None;
+
+            context.listened.lock().await.flush_current();
         },
 
         PlayerState::Playing => {
@@ -245,18 +277,32 @@ async fn proc_once(context: &mut PollingContext<'_>) {
                 }
             };
 
-            
+            {
+                let mut listened = context.listened.lock().await;
+                let position = app.player_position.expect("no position");
+                match listened.current.as_ref() {
+                    None => listened.set_new_current(position),
+                    Some(current) => {
+                        let expected = current.get_expected_song_position();
+                        if (expected - position).abs() >= 2. {
+                            listened.flush_current();
+                            listened.set_new_current(position);
+                            drop(listened); // give up lock
+                            context.backends.dispatch_current_progress(track.clone(), app.clone(), context.listened.clone()).await;
+                        }
+                    }
+                }
+            }
+
             let previous = context.last_track.as_ref().map(|v: &Arc<Track>| &v.persistent_id);
             if previous != Some(&track.persistent_id) {
                 tracing::trace!("new track: {:?}", track);
-                let now = Instant::now();
-                let elapsed = now - context.last_track_started_at;
                 
                 use data_fetching::AdditionalTrackData;
                 let solicitation = context.backends.get_solicitations().await;
                 let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, &track, context.musicdb.as_ref(), context.custom_artwork_host.as_mut());
                 let additional_data = if let Some(previous) = context.last_track.clone() {
-                    let pending_dispatch = context.backends.dispatch_track_ended(previous, app.clone(), elapsed);
+                    let pending_dispatch = context.backends.dispatch_track_ended(previous, app.clone(), context.listened.clone());
                     async move { 
                         // Run dispatch concurrently while we fetch the additional data for the next
                         tokio::join!(
@@ -271,7 +317,7 @@ async fn proc_once(context: &mut PollingContext<'_>) {
 
                 context.backends.dispatch_track_started(track.clone(), app, Arc::new(additional_data)).await;
                 context.last_track = Some(track);
-                context.last_track_started_at = now;
+                context.listened = Arc::new(Mutex::new(Listened::new()));
             }
         }
     }

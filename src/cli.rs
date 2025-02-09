@@ -21,6 +21,11 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Start, stop, or reload the background service.
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction
+    },
     /// Begin watching Apple Music and log information.
     Start,
     /// Configure the application.
