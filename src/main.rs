@@ -9,7 +9,6 @@ mod status_backend;
 mod debugging;
 mod data_fetching;
 mod config;
-mod service;
 mod cli;
 mod util;
 
@@ -103,35 +102,6 @@ async fn main() -> ExitCode {
             while !term.load(std::sync::atomic::Ordering::Relaxed) {
                 proc_once(&mut context).await;
             }
-        }
-        Command::Service { ref action } => {
-            use cli::ServiceAction;
-            use service::*;
-
-            let manager = service::ServiceController::new();
-            let config = std::ffi::OsString::from(&*match get_config_or_path!() {
-                Ok(config) => config.path,
-                Err(path) => path
-            }.to_string_lossy());
-
-            match action {
-                ServiceAction::Start => {
-                    if let Err(err) = manager.start(config, false) {
-                        ferror!("could not start service: {}", err)
-                    }
-                },
-                ServiceAction::Stop => match manager.stop() {
-                    Ok(killed) => match killed {
-                        0 => eprintln!("No processes were killed. The daemon might not have been functioning correctly."),
-                        1 => println!("The service was stopped and the process was killed."),
-                        n => eprintln!("The service was stopped and {n} processes were killed. Expected one process to be killed; this is likely a bug."),
-                    },
-                    Err(error) => ferror!("could not stop service: {}", error)
-                },
-                ServiceAction::Restart => if let Err(error) = manager.restart(config) {
-                    ferror!("could not restart service: {}", error)
-                }
-            };
         },
         Command::Configure { ref action } => {
             tokio::spawn(async {
@@ -140,19 +110,6 @@ async fn main() -> ExitCode {
             });
 
             use cli::{ConfigurationAction, DiscordConfigurationAction};
-
-            fn inform_whether_daemon_will_update(was_watching: bool) {
-                let daemon_exists = service::ServiceController::new().is_program_active();
-                if daemon_exists {
-                    if was_watching {
-                        // TODO: Only send this if they're using the same one that was being modified.
-                        println!("The active service process will automatically adjust itself if it is configured by this file.");
-                    } else {
-                        // TODO: IPC
-                        println!("The active service process is not configured to watch for file changes, it will need to be manually restarted.")
-                    }
-                }
-            }
 
             match action {
                 ConfigurationAction::Where => {
@@ -188,7 +145,6 @@ async fn main() -> ExitCode {
                             config.edit_with_wizard().await;
                             config.save_to_disk().await;
                             println!("Successfully saved changes!");
-                            inform_whether_daemon_will_update(was_watching)
                         },
                     }
                 },
@@ -199,7 +155,6 @@ async fn main() -> ExitCode {
                         DiscordConfigurationAction::Disable => config.backends.discord = false
                     };
                     config.save_to_disk().await;
-                    inform_whether_daemon_will_update(config.watch_config_file);
                 }
             }
         }

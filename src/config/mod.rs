@@ -47,13 +47,10 @@ pub struct Config<'a> {
     file_watcher: Option<kqueue::Watcher>,
     #[serde(default = "ret_true")]
     pub watch_config_file: bool,
-    #[serde(skip_serializing_if = "crate::service::ipc::socket_path::is_default", default = "crate::service::ipc::socket_path::clone_default")]
-    pub ipc_socket_path: std::path::PathBuf,
 }
 impl Default for Config<'_> {
     fn default() -> Self {
         Self {
-            ipc_socket_path: crate::service::ipc::socket_path::DEFAULT.clone(),
             backends: ConfigurableBackends::default(),
             path: ConfigPathChoice::default(),
             watch_config_file: false,
