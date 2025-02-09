@@ -76,7 +76,12 @@ async fn main() -> ExitCode {
                     ConfigPathChoice::Automatic(..) => "No configuration has been set up! Would you like to use the wizard to build one?",
                     ConfigPathChoice::Explicit(..) => "No configuration exists at the provided file! Would you like to use the wizard to build it?",
                     ConfigPathChoice::Environmental(..) => "No configuration exists at the file specified in the environmental variable! Would you like to use the wizard to build it?",
-                }) { config::Config::create_with_wizard(path).await } else {
+                }) {
+                    let config = config::Config::create_with_wizard(path).await;
+                    config.save_to_disk().await;
+                    println!("Configuration file has been saved.");
+                    config
+                } else {
                     println!("Proceeding with a temporary default configuration.");
                     config::Config::default()
                 }
