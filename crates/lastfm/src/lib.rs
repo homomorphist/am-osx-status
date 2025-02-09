@@ -84,13 +84,12 @@ impl<'a> Client<auth::state::Authorized> {
 
     pub async fn set_now_listening(&self, track: &scrobble::HeardTrackInfo<'_>) -> reqwest::Result<String> {
         let response = self.dispatch_authorized(ApiRequest {
-            endpoint: "track.scrobble",
+            endpoint: "track.updateNowPlaying",
             method: reqwest::Method::POST,
             parameters: track.into(),
         }).await?;
 
         let response = response.text().await.unwrap();
-        dbg!(&response);
         
         Ok(response)
     }
