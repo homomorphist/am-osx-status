@@ -16,6 +16,10 @@ fn str_to_boolish(str: &str) -> Option<bool>  {
 }
 
 pub mod io {
+    use lastfm::auth::SessionKeyThroughAuthorizationTokenError;
+
+    use crate::util::ferror;
+
     use super::*;
     
     pub fn prompt(prompt: &str, initial_capacity: usize) -> String {
@@ -88,12 +92,16 @@ pub mod io {
         let auth_url = auth.generate_authorization_url(client);
         println!("Continue after authorizing the application: {}", auth_url);
         if prompt_bool("Have you authorized the application?") {
-            let session_key = auth.generate_session_key(client).await.expect("could not create session key");
-            Some(crate::status_backend::lastfm::Config {
-                enabled: true,
-                identity: (*client).clone(),
-                session_key: Some(session_key)
-            })
+            match auth.generate_session_key(client).await {
+                Ok(key) => Some(crate::status_backend::lastfm::Config {
+                    enabled: true,
+                    identity: (*client).clone(),
+                    session_key: Some(key)
+                }),
+                Err(error) => {
+                    ferror!("couldn't create session key: {}", error);
+                }
+            }
         } else { None }
     }
 
