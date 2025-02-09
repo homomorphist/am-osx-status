@@ -3,6 +3,7 @@ use std::{process::ExitCode, sync::{Arc, atomic::AtomicBool}, time::{Duration, I
 use config::{ConfigPathChoice, ConfigRetrievalError};
 use musicdb::MusicDB;
 use tracing::Instrument;
+use util::ferror;
 
 mod status_backend;
 mod debugging;
@@ -44,7 +45,7 @@ fn watch_for_termination() -> (
 async fn main() -> ExitCode {
     let args = <cli::Cli as clap::Parser>::parse();
     let config = config::Config::get(&args).await;
-    let _ = debugging::DebuggingSession::new(&args);
+    // let _ = debugging::DebuggingSession::new(&args);
     let (term, pending_term) = watch_for_termination();
 
     macro_rules! get_config_or_path {
@@ -103,19 +104,33 @@ async fn main() -> ExitCode {
                 proc_once(&mut context).await;
             }
         }
-        Command::Service { action } => {
+        Command::Service { ref action } => {
             use cli::ServiceAction;
+            use service::*;
 
             let manager = service::ServiceController::new();
+            let config = std::ffi::OsString::from(&*match get_config_or_path!() {
+                Ok(config) => config.path,
+                Err(path) => path
+            }.to_string_lossy());
 
             match action {
-                ServiceAction::Start => manager.start(false).unwrap(),
-                ServiceAction::Stop => match manager.stop().unwrap() {
-                    0 | 1 => (),
-                    n if n > 1 => println!("[!] Killed {} processes", n),
-                    _ => unreachable!()
+                ServiceAction::Start => {
+                    if let Err(err) = manager.start(config, false) {
+                        ferror!("could not start service: {}", err)
+                    }
                 },
-                ServiceAction::Restart => manager.restart().unwrap(),
+                ServiceAction::Stop => match manager.stop() {
+                    Ok(killed) => match killed {
+                        0 => eprintln!("No processes were killed. The daemon might not have been functioning correctly."),
+                        1 => println!("The service was stopped and the process was killed."),
+                        n => eprintln!("The service was stopped and {n} processes were killed. Expected one process to be killed; this is likely a bug."),
+                    },
+                    Err(error) => ferror!("could not stop service: {}", error)
+                },
+                ServiceAction::Restart => if let Err(error) = manager.restart(config) {
+                    ferror!("could not restart service: {}", error)
+                }
             };
         },
         Command::Configure { ref action } => {

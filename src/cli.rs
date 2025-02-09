@@ -9,7 +9,7 @@ pub struct Cli {
     #[arg(short, long = "config", value_name = "PATH", global = true)]
     pub config_file_path: Option<std::path::PathBuf>,
 
-    #[arg(hide = true, long = "run-as-service", default_value = "false")]
+    #[arg(hide = true, long = "ran-as-service", default_value = "false")]
     pub running_as_service: bool,
 
     #[command(flatten)]

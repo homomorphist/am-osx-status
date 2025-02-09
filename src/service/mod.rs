@@ -9,8 +9,8 @@ pub mod ipc;
 pub enum ServiceStartFailure {
     #[error("process is already running")]
     ProcessAlreadyRunning,
-    #[error("could not start the service")]
-    ServiceFailure(#[from] std::io::Error),
+    #[error("unknown io error ({0})")]
+    IoFailure(#[from] std::io::Error),
 }
 
 
@@ -18,8 +18,10 @@ pub enum ServiceStartFailure {
 pub enum ServiceStopFailure {
     #[error("could not kill process")]
     CannotKill,
-    #[error("could not stop the service")]
-    ServiceFailure(#[from] std::io::Error),
+    #[error("service not enabled")]
+    NotEnabled,
+    #[error("unknown io error ({0})")]
+    IoFailure(#[from] std::io::Error),
 }
 
 
@@ -56,7 +58,7 @@ impl ServiceController {
         self.get_processes().next().is_some()
     }
 
-    pub fn start(&self, force: bool) -> Result<(), ServiceStartFailure> {
+    pub fn start(&self, config: impl Into<OsString>, force: bool) -> Result<(), ServiceStartFailure> {
         if !force && self.get_processes().next().is_some() {
             return Err(ServiceStartFailure::ProcessAlreadyRunning)
         }
@@ -64,7 +66,12 @@ impl ServiceController {
         self.manager.install(ServiceInstallCtx {
             label: self.label.clone(),
             program: std::env::current_exe().expect("cannot get own executable path"),
-            args: vec![OsString::from("start")],
+            args: vec![
+                OsString::from("--config"),
+                config.into(),
+                OsString::from("--ran-as-service"),
+                OsString::from("start"),
+            ],
             contents: None,
             username: None,
             working_directory: None,
@@ -72,25 +79,26 @@ impl ServiceController {
             autostart: true, 
         })?;
 
+        self.manager.start(ServiceStartCtx {
+            label: self.label.clone(),
+        })?;
+
         Ok(())
     }
     /// Returns the amount of processes killed.
     pub fn stop(&self) -> Result<u16, ServiceStopFailure> {
-        self.manager.uninstall(ServiceUninstallCtx { label: self.label.clone() })?;
-
-        let mut amount_killed: u16 = 0;
-        for process in self.get_processes() {
-            if !process.kill() {
-                return Err(ServiceStopFailure::CannotKill)
+        if let Err(error) = self.manager.uninstall(ServiceUninstallCtx { label: self.label.clone() }) {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                return Err(ServiceStopFailure::NotEnabled);
             }
-            amount_killed += 1;
-        }
+            return Err(ServiceStopFailure::IoFailure(error))
+        };
 
-        Ok(amount_killed)
+        Ok(1)
     }
-    pub fn restart(&self) -> Result<(), ServiceRestartFailure> {
-        self.stop().map_err(ServiceRestartFailure::Stop).unwrap();
-        self.start(false).map_err(ServiceRestartFailure::Start).unwrap();
+    pub fn restart(&self, config: impl Into<OsString>) -> Result<(), ServiceRestartFailure> {
+        self.stop().map_err(ServiceRestartFailure::Stop)?;
+        self.start(config, false).map_err(ServiceRestartFailure::Start)?;
         Ok(())
     }
 }
