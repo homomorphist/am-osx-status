@@ -47,7 +47,7 @@ fn watch_for_termination() -> (
 async fn main() -> ExitCode {
     let args = <cli::Cli as clap::Parser>::parse();
     let config = config::Config::get(&args).await;
-    // let _ = debugging::DebuggingSession::new(&args);
+    let debugging = debugging::DebuggingSession::new(&args);
     let (term, pending_term) = watch_for_termination();
 
     macro_rules! get_config_or_path {
@@ -98,6 +98,7 @@ async fn main() -> ExitCode {
             // If we get stuck somewhere in the main loop, we still want a way to exit if the user/system desires.
             tokio::spawn(async {
                 pending_term.await;
+                drop(debugging.guards);
                 tokio::time::sleep(Duration::new(1, 0)).await;
                 std::process::exit(1);
             });
@@ -218,20 +219,20 @@ impl PollingContext<'_> {
             last_track: None,
             listened: Arc::new(Mutex::new(Listened::new())),
             custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
-            musicdb: Some(MusicDB::default()),
+            musicdb: Some(tracing::trace_span!("musicdb read").in_scope(MusicDB::default)),
             polls: 0,
             sequential_pause_states: 0,
         }
     }
 }
 
-#[tracing::instrument(skip(context))]
+#[tracing::instrument(skip(context), level = "trace")]
 async fn proc_once(context: &mut PollingContext<'_>) {
     use apple_music::{AppleMusic, PlayerState, Track};
 
     context.polls += 1;
 
-    let app = match tracing::info_span!("app status retrieval").in_scope(AppleMusic::get_application_data) {
+    let app = match tracing::trace_span!("app status retrieval").in_scope(AppleMusic::get_application_data) {
         Ok(app) => Arc::new(app),
         Err(err) => {
             use apple_music::Error;
@@ -288,7 +289,7 @@ async fn proc_once(context: &mut PollingContext<'_>) {
         },
 
         PlayerState::Playing => {
-            let track = match tracing::info_span!("track retrieval").in_scope(AppleMusic::get_current_track) {
+            let track = match tracing::trace_span!("track retrieval").in_scope(AppleMusic::get_current_track) {
                 Ok(track) => Arc::new(track),
                 Err(err) => {
                     use apple_music::Error;

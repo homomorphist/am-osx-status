@@ -27,8 +27,6 @@ fn is_default_program_info(info: &ProgramInfo<MaybeOwnedStringDeserializeToOwned
 
 
 #[derive(serde::Serialize, serde::Deserialize)]
-
-
 pub struct Config {
     pub enabled: bool,
     #[serde(
@@ -39,7 +37,6 @@ pub struct Config {
     pub user_token: Option<brainz::listen::v1::UserToken>,
 }
 
-
 pub struct ListenBrainz {
     client: Arc<brainz::listen::v1::Client<S>>,
 }
@@ -49,7 +46,6 @@ impl core::fmt::Debug for ListenBrainz {
     }
 }
 impl ListenBrainz {
-    #[tracing::instrument]
     pub fn new(program_info: ProgramInfo<MaybeOwnedStringDeserializeToOwned<'static>>, token: brainz::listen::v1::UserToken) -> Self {
         Self { client: Arc::new(brainz::listen::v1::Client::new(program_info, Some(token))) }
     }
@@ -79,7 +75,7 @@ impl ListenBrainz {
 }
 #[async_trait::async_trait]
 impl StatusBackend for ListenBrainz {
-    #[tracing::instrument(level = "debug")]   
+    #[tracing::instrument(skip(self, context), level = "debug")]   
     async fn record_as_listened(&self, context: super::BackendContext<()>) {
         // TODO: catch net error or add to queue. ideally queue persist offline
         if let Err(error) = self.client.submit_playing_now(
@@ -98,7 +94,7 @@ impl StatusBackend for ListenBrainz {
         time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
     }
 
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(skip(self, context), level = "debug")]
     async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
         if let Err(error) = self.client.submit_playing_now(
             Self::basic_track_metadata(&context.track),

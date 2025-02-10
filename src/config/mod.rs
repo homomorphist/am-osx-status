@@ -38,6 +38,7 @@ fn ret_true() -> bool {
 pub struct Config<'a> {
     #[serde(skip)]
     pub path: ConfigPathChoice<'a>,
+    #[serde(default)]
     pub backends: ConfigurableBackends,
 
 
@@ -63,7 +64,7 @@ impl<'a> Config<'a> {
     pub async fn get(args: &'a crate::cli::Cli) -> Result<Self, ConfigRetrievalError<'a>> {
         let path_override = args.config_file_path.as_deref();
         let path = ConfigPathChoice::new(path_override);
-    
+
         match std::fs::read(&path) {
             Err(error) => {
                 use std::io::ErrorKind;
@@ -75,14 +76,20 @@ impl<'a> Config<'a> {
             },
             Ok(data) => {
                 let data = String::from_utf8_lossy(&data[..]);
-                Ok(toml::from_str(&data).map_err(|err| ConfigRetrievalError::DeserializationFailure { inner: err, path })?)
+                match toml::from_str::<Config>(&data) {
+                    Err(inner) => Err(ConfigRetrievalError::DeserializationFailure { inner, path }),
+                    Ok(mut config) => {
+                        config.path = path;
+                        Ok(config)
+                    }
+                }
             }
        }
     }
 
     pub async fn get_fd(&self) -> Option<std::os::fd::RawFd> {
         if self.file_descriptor.lock().await.is_none() {
-            *self.file_descriptor.lock().await = match tokio::fs::File::options().open(&self.path).await {
+            *self.file_descriptor.lock().await = match tokio::fs::File::options().read(true).open(&self.path).await {
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
                 Err(err) => { println!("error: {:?}", err); return None }
                 Ok(file) => Some(file.into_std().await.into())
@@ -99,9 +106,9 @@ impl<'a> Config<'a> {
         self.watch_config_file = enable;
         if enable {
             let fd = self.get_fd().await.expect("cannot get fd");
-            let watcher = self.file_watcher.as_mut().unwrap(); // TODO: make if not present
-            watcher.add_fd(fd, kqueue::EventFilter::EVFILT_WRITE, FilterFlag::empty()).expect("aaa");
-            watcher.watch().expect("aaaa")
+            let watcher = self.file_watcher.get_or_insert_with(|| kqueue::Watcher::new().expect("cannot make watcher"));
+            watcher.add_fd(fd, kqueue::EventFilter::EVFILT_WRITE, FilterFlag::empty()).expect("cannot add file descriptor to watcher");
+            watcher.watch().expect("cannot watch")
         } else {
             drop(self.file_watcher.take())
         }
@@ -140,10 +147,13 @@ impl<'a> Config<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct ConfigurableBackends {
     #[cfg(feature = "discord")]
+    #[cfg_attr(feature = "discord", serde(default = "ret_true"))]
     pub discord: bool,
     #[cfg(feature = "lastfm")]
+    #[cfg_attr(feature = "lastfm", serde(default))]
     pub lastfm: Option<crate::status_backend::lastfm::Config>,
     #[cfg(feature = "listenbrainz")]
+    #[cfg_attr(feature = "listenbrainz", serde(default))]
     pub listenbrainz: Option<crate::status_backend::listenbrainz::Config>
 }
 impl Default for ConfigurableBackends {

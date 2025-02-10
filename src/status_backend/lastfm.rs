@@ -68,7 +68,7 @@ impl LastFM {
 }
 #[async_trait::async_trait]
 impl StatusBackend for LastFM {
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(skip(self, context), level = "debug")]
     async fn record_as_listened(&self, context: super::BackendContext<()>) {
         if let Err(error) = self.client.scrobble(&[lastfm::scrobble::Scrobble {
             chosen_by_user: None,
@@ -88,7 +88,7 @@ impl StatusBackend for LastFM {
         time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
     }
 
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(skip(self, context), level = "debug")]
     async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
         if let Err(error) = self.client.set_now_listening(&Self::track_to_heard(context.track.as_ref())).await {
             tracing::error!(?error, "last.fm now-listening dispatch failure")

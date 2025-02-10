@@ -2,6 +2,7 @@ use std::{fmt::Debug, sync::Arc, time::{Duration, Instant}};
 use discord_presence::models::{payload::Payload, Activity, ActivityAssets, ActivityType};
 use apple_music::{MediaKind, Track};
 use tokio::sync::Mutex;
+use tracing::instrument;
 
 use crate::{data_fetching::components::{Component, ComponentSolicitation}, util::fallback_to_default_and_log_absence};
 
@@ -69,7 +70,7 @@ impl Default for DiscordPresence {
     }
 }
 impl DiscordPresence {
-    #[tracing::instrument]
+    #[tracing::instrument(level = "debug")]
     pub async fn new() -> Self {
         let instance = Self::disconnected();
         let instance = instance.try_connect(CONNECTION_ATTEMPT_TIMEOUT).await;
@@ -111,7 +112,7 @@ impl DiscordPresence {
     }
 
     /// not `tokio::select!` safe
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self), level = "debug")]
     pub async fn connect_in_place(&mut self) {
         let client = discord_presence::Client::new(APPLICATION_ID);            
         if let Some(old_client) = self.client.replace(client) {
@@ -225,7 +226,7 @@ impl DiscordPresence {
 
     /// Returns whether the status was cleared.
     /// (If the status was already empty, it will return false.)
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self), level = "debug")]
     pub async fn clear(&mut self) -> Result<bool, UpdateError> {
         let has_content = self.has_content;
         if let Some(client) = self.client().await {
@@ -242,6 +243,7 @@ impl DiscordPresence {
         }
     }
 
+    #[instrument(skip(self), level = "debug")]
     async fn dispatch(&mut self) {
         let activity = if let Some(activity) = self.activity.clone() { activity } else {
             tracing::warn!("cannot dispatch without set activity");
@@ -295,7 +297,7 @@ impl StatusBackend for DiscordPresence {
         false
     }
 
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(skip(self, context), level = "debug")]
     async fn update_progress(&mut self, context: super::BackendContext<()>) {
         const STATUS_UPDATE_RATELIMIT_SECONDS: f64 = 15.;
         let position = context.listened.lock().await.current.as_ref().unwrap().get_expected_song_position();
@@ -314,7 +316,7 @@ impl StatusBackend for DiscordPresence {
         }
     }
 
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(skip(self, context), level = "debug")]
     async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
         let super::BackendContext { track, app, listened, data: additional_info, .. } = context;
         self.position = listened.lock().await.current.as_ref().map(|current| current.get_expected_song_position()).unwrap_or(track.start);

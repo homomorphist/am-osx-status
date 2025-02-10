@@ -181,11 +181,11 @@ impl core::fmt::Debug for StatusBackends {
         let mut set = &mut f.debug_set();
 
         #[cfg(feature = "discord")]
-        { set = set.entry(&"DiscordPresence") }
+        { if self.discord.is_some() { set = set.entry(&"DiscordPresence") } }
         #[cfg(feature = "lastfm")]
-        { set = set.entry(&"LastFM") }
+        { if self.lastfm.is_some() { set = set.entry(&"LastFM") } }
         #[cfg(feature = "listenbrainz")]
-        { set = set.entry(&"ListenBrainz") }
+        { if self.listenbrainz.is_some() { set = set.entry(&"ListenBrainz") } }
 
         set.finish()
     }
@@ -224,7 +224,7 @@ impl StatusBackends {
     }
 
     
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(skip(context), level = "debug")]
     pub async fn dispatch_track_ended(&self, context: BackendContext<()>) {
         let backends = self.all();
         let mut jobs = Vec::with_capacity(backends.len());
@@ -243,7 +243,7 @@ impl StatusBackends {
         }
     }
 
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(skip(context), level = "debug", fields(track = &context.track.persistent_id))]
     pub async fn dispatch_track_started(&self, context: BackendContext<crate::data_fetching::AdditionalTrackData>) {
         let backends = self.all();
         let mut jobs = Vec::with_capacity(backends.len());
@@ -258,9 +258,10 @@ impl StatusBackends {
         for job in jobs {
             job.await.unwrap();
         }
+
     }
 
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(skip(context), level = "debug")]
     pub async fn dispatch_current_progress(&self, context: BackendContext<()>) {
         let backends = self.all();
         let mut jobs = Vec::with_capacity(backends.len());

@@ -53,6 +53,7 @@ pub enum ConfigurationAction {
     Wizard,
 
     /// Print the location of the configuration file that would be used in the current context.
+    #[clap(visible_alias("which"))]
     Where,
 
     /// Configure the Discord presence.
