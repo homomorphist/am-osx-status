@@ -1,11 +1,11 @@
 #![allow(unused)]
-use std::{process::ExitCode, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}};
+use std::{ops::DerefMut, process::ExitCode, sync::{atomic::AtomicBool, Arc}, time::{Duration, Instant}};
 use config::{ConfigPathChoice, ConfigRetrievalError};
 use musicdb::MusicDB;
 use status_backend::{BackendContext, Listened};
 use tokio::sync::Mutex;
 use tracing::Instrument;
-use util::ferror;
+use util::{ferror, OWN_PID};
 
 mod status_backend;
 mod debugging;
@@ -45,9 +45,9 @@ fn watch_for_termination() -> (
 
 #[tokio::main(worker_threads = 4)]
 async fn main() -> ExitCode {
-    let args = <cli::Cli as clap::Parser>::parse();
-    let config = config::Config::get(&args).await;
-    let debugging = debugging::DebuggingSession::new(&args);
+    let args = Box::leak(Box::new(<cli::Cli as clap::Parser>::parse()));
+    let config = config::Config::get(args).await;
+    let debugging = debugging::DebuggingSession::new(args);
     let (term, pending_term) = watch_for_termination();
 
     macro_rules! get_config_or_path {
@@ -90,21 +90,27 @@ async fn main() -> ExitCode {
                 }
             };
 
-            config.setup_side_effects().await;
-
-            let backends = status_backend::StatusBackends::new(&config).await;
-            let mut context = PollingContext::new(backends, Arc::clone(&term));
+            let context = Arc::new(Mutex::new(PollingContext::from_config(&config, Arc::clone(&term)).await));
+            let config = Arc::new(Mutex::new(config));
+            
+            let listener = if args.running_as_service {
+                Some(service::ipc::listen(
+                    context.clone(),
+                    config.clone()
+                ).await)
+            } else { None };
 
             // If we get stuck somewhere in the main loop, we still want a way to exit if the user/system desires.
             tokio::spawn(async {
                 pending_term.await;
-                drop(debugging.guards);
+                drop(listener); // remove listener socket
+                drop(debugging.guards); // flush logs
                 tokio::time::sleep(Duration::new(1, 0)).await;
                 std::process::exit(1);
             });
 
             while !term.load(std::sync::atomic::Ordering::Relaxed) {
-                proc_once(&mut context).await;
+                proc_once(context.clone()).await;
             }
         },
         Command::Service { ref action } => {
@@ -112,14 +118,18 @@ async fn main() -> ExitCode {
             use service::*;
 
             let manager = service::ServiceController::new();
-            let config = std::ffi::OsString::from(&*match get_config_or_path!() {
-                Ok(config) => config.path,
-                Err(path) => path
-            }.to_string_lossy());
+            // let config_path = std::ffi::OsString::from(&*match get_config_or_path!() {
+            //     Ok(config) => config.path,
+            //     Err(path) => path
+            // }.to_string_lossy());
 
             match action {
                 ServiceAction::Start => {
-                    if let Err(err) = manager.start(config, false) {
+                    let config_path = std::ffi::OsString::from(&*match get_config_or_path!() {
+                        Ok(config) => config.path,
+                        Err(path) => path
+                    }.to_string_lossy());
+                    if let Err(err) = manager.start(config_path, false) {
                         ferror!("could not start service: {}", err)
                     }
                 },
@@ -131,8 +141,17 @@ async fn main() -> ExitCode {
                     },
                     Err(error) => ferror!("could not stop service: {}", error)
                 },
-                ServiceAction::Restart => if let Err(error) = manager.restart(config) {
-                    ferror!("could not restart service: {}", error)
+                ServiceAction::Restart => {
+                    let path = config.unwrap().socket_path;
+                    let mut sender = service::ipc::PacketConnection::from_path(path).await.unwrap();
+                    sender.send(ipc::Packet::Hello(ipc::packets::Hello {
+                        version: 0,
+                        process: *OWN_PID,
+                    })).await.unwrap();
+                    sender.send(ipc::Packet::ReloadConfiguration).await.unwrap();
+                    // if let Err(error) = manager.restart(config) {
+                    //     // ferror!("could not restart service: {}", error)       
+                    // }
                 }
             };
         },
@@ -173,7 +192,6 @@ async fn main() -> ExitCode {
                             println!("Successfully saved changes!");
                         }
                         Ok(mut config) => {
-                            let was_watching = config.watch_config_file;
                             println!("Modifying configuration file @ {}", config.path.to_string_lossy());
                             config.edit_with_wizard().await;
                             config.save_to_disk().await;
@@ -212,10 +230,10 @@ struct PollingContext<'a> {
     sequential_pause_states: u64
 }
 impl PollingContext<'_> {
-    fn new(backends: status_backend::StatusBackends, terminating: Arc<AtomicBool>) -> Self {
+    async fn from_config(config: &config::Config<'_>, terminating: Arc<AtomicBool>) -> Self {
         Self {
             terminating,
-            backends,
+            backends: status_backend::StatusBackends::new(config).await,
             last_track: None,
             listened: Arc::new(Mutex::new(Listened::new())),
             custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
@@ -224,13 +242,22 @@ impl PollingContext<'_> {
             sequential_pause_states: 0,
         }
     }
+
+    async fn reload_from_config(&mut self, config: &config::Config<'_>) {
+        for backend in self.backends.all() {
+        }
+
+        let backends = status_backend::StatusBackends::new(config).await;
+        self.backends = backends;
+    }   
 }
 
 #[tracing::instrument(skip(context), level = "trace")]
-async fn proc_once(context: &mut PollingContext<'_>) {
+async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
+    let mut guard = context.lock().await;
+    let context = guard.deref_mut();
+    
     use apple_music::{AppleMusic, PlayerState, Track};
-
-    context.polls += 1;
 
     let app = match tracing::trace_span!("app status retrieval").in_scope(AppleMusic::get_application_data) {
         Ok(app) => Arc::new(app),

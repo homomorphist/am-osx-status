@@ -15,7 +15,11 @@ impl DebuggingSession {
         let mut chrome_guard = None;
 
         if cfg!(debug_assertions) {
-            layers.push(console_subscriber::spawn().boxed());
+            layers.push({
+                console_subscriber::ConsoleLayer::builder()
+                    .spawn()
+                    .boxed()
+            });
             layers.push({
                 tracing_subscriber::fmt::layer()
                     .with_span_events({

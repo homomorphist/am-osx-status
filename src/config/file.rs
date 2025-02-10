@@ -5,10 +5,10 @@ use crate::util::HOME;
 macro_rules! get_path_env_var { () => { "AM_OSX_STATUS_PATH" } }
 pub static PATH_ENV_VAR: &str = get_path_env_var!();
 
-const POST_HOME_DEFAULT_PATH: &str = "Application Support/am-osx-status/config.toml";
+const POST_HOME_DEFAULT_PATH: &str = "Library/Application Support/am-osx-status/config.toml";
 
 /// How the user specified (or did not specify) the configuration file path.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ConfigPathChoice<'a> {
     /// Explicitly provided by a flag in the CLI.
     /// This has the highest priority, and overrides the environmental variable and default path.

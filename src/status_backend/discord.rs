@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc, time::{Duration, Instant}};
+use std::{fmt::Debug, sync::{Arc, Weak}, time::{Duration, Instant}};
 use discord_presence::models::{payload::Payload, Activity, ActivityAssets, ActivityType};
 use apple_music::{MediaKind, Track};
 use tokio::sync::Mutex;
@@ -134,7 +134,7 @@ impl DiscordPresence {
             tx_disconnect.send(DiscordPresenceState::Disconnected).unwrap();
         }).persist();
         client.on_error(|err| {
-            tracing::warn!("{:?}", &err);
+            tracing::warn!("discord client error {:?}", &err);
         }).persist();
         client.start();
 
@@ -173,8 +173,8 @@ impl DiscordPresence {
     }
 
 
-    pub async fn enable_auto_reconnect(instance: Arc<Mutex<Self>>) {
-        let mut rx = {
+    pub async fn enable_auto_reconnect(instance: Weak<Mutex<Self>>) {
+        let mut rx = if let Some(instance) = instance.upgrade() {
             let lock = instance.lock().await;
 
             if let Some(old_handle) = &lock.auto_reconnect_task_handle {
@@ -182,15 +182,18 @@ impl DiscordPresence {
             };
             
             lock.state_channel.subscribe()
-        };
-        
-        let task_instance: Arc<Mutex<DiscordPresence>> = instance.clone();
+        } else { return };
+
+        let sent = instance.clone();
 
         let auto_reconnect_task_handle = tokio::spawn(async move {
             // If it's ready, wait for that to change, and then if it disconnects, reconnect. Repeat.
             // If it's disconnected, wait a bit before trying again. Repeat.
             loop {
-                let state = { *task_instance.clone().lock().await.state.lock().await };
+                let state = if let Some(task) = sent.upgrade() {
+                    *task.lock().await.state.lock().await
+                } else { break };
+
                 let state = match state {
                     DiscordPresenceState::Ready => rx.recv().await.unwrap(),
                     DiscordPresenceState::Disconnected => {
@@ -199,21 +202,26 @@ impl DiscordPresence {
                         DiscordPresenceState::Disconnected
                     }
                 };
+
                 match state {
                     DiscordPresenceState::Ready => continue,
                     DiscordPresenceState::Disconnected => {
-                        if let Err(error) = Self::try_connect_in_place(
-                            task_instance.clone(),
-                            CONNECTION_ATTEMPT_TIMEOUT
-                        ).await {
-                            tracing::debug!(?error, "couldn't connect")
-                        }
+                        if let Some(instance) = sent.upgrade() {
+                            if let Err(error) = Self::try_connect_in_place(
+                                instance,
+                                CONNECTION_ATTEMPT_TIMEOUT
+                            ).await {
+                                tracing::debug!(?error, "couldn't connect")
+                            }
+                        } else { break }
                     }
                 }
             }
         });
 
-        instance.lock().await.auto_reconnect_task_handle = Some(auto_reconnect_task_handle);
+        if let Some(instance) = instance.upgrade() {
+            instance.lock().await.auto_reconnect_task_handle = Some(auto_reconnect_task_handle);
+        }
     }
 
 
@@ -276,6 +284,10 @@ impl Drop for DiscordPresence {
         self.state_update_task_handle.abort();
         if let Some(handle) = self.auto_reconnect_task_handle.as_ref() {
             handle.abort();
+        }
+        if let Some(mut client) = self.client.take() {
+            let _ = client.clear_activity();
+            let _ = client.shutdown();
         }
     }
 }

@@ -278,7 +278,7 @@ impl StatusBackends {
         }
     }
 
-    pub async fn new(config: &crate::config::Config<'_>) -> StatusBackends {
+    pub async fn new(config: &crate::config::Config<'_>) -> StatusBackends {        
         #[cfg(feature = "lastfm")]
         use crate::status_backend::lastfm::*;
 
@@ -311,7 +311,8 @@ impl StatusBackends {
         #[cfg(feature = "discord")]
         let discord = if config.backends.discord {
             let wrapped = Arc::new(Mutex::new(DiscordPresence::new().await));
-            DiscordPresence::enable_auto_reconnect(wrapped.clone()).await;
+            let weak = Arc::downgrade(&wrapped);
+            DiscordPresence::enable_auto_reconnect(weak).await;
             Some(wrapped)
         } else { None };
 
