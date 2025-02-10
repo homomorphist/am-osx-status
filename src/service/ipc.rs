@@ -100,10 +100,27 @@ impl core::fmt::Display for DuplicateReceiverError {
 const IPC_VERSION: usize = 0;
 
 pub mod packets {
+    use crate::util::OWN_PID;
+
+    use super::IPC_VERSION;
+
     #[derive(serde::Serialize, serde::Deserialize, Debug)]
     pub struct Hello {
         pub version: usize,
         pub process: libc::pid_t
+    }
+    impl Hello {
+        pub fn new() -> Self {
+            Hello {
+                version: IPC_VERSION,
+                process: *OWN_PID
+            }
+        }
+    }
+    impl From<Hello> for super::Packet {
+        fn from(val: Hello) -> Self {
+            super::Packet::Hello(val)
+        }
     }
 }
 
@@ -112,6 +129,11 @@ pub mod packets {
 pub enum Packet {
     Hello(packets::Hello) = 0,
     ReloadConfiguration = 1,
+}
+impl Packet {
+    pub fn hello() -> Self {
+        packets::Hello::new().into()
+    }
 }
 
 pub struct Listener {
@@ -201,8 +223,8 @@ impl PacketConnection {
         self.incoming.next().await.transpose()
     }
 
-    pub async fn send(&mut self, packet: Packet) -> Result<(), std::io::Error> {
-        self.outgoing.send(packet).await?;
+    pub async fn send(&mut self, packet: impl Into<Packet>) -> Result<(), std::io::Error> {
+        self.outgoing.send(packet.into()).await?;
         Ok(())
     }
 }

@@ -64,6 +64,15 @@ async fn main() -> ExitCode {
         }
     }
 
+    macro_rules! get_config_os_string {
+        () => {
+            std::ffi::OsString::from(&*match get_config_or_path!() {
+                Ok(config) => config.path,
+                Err(path) => path
+            }.to_string_lossy())
+        };
+    }
+
     macro_rules! get_config_or_error {
         () => {
             get_config_or_path!().unwrap_or_else(|path| util::ferror!("no configuration file @ {}", path.to_string_lossy()))
@@ -117,41 +126,24 @@ async fn main() -> ExitCode {
             use cli::ServiceAction;
             use service::*;
 
-            let manager = service::ServiceController::new();
-            // let config_path = std::ffi::OsString::from(&*match get_config_or_path!() {
-            //     Ok(config) => config.path,
-            //     Err(path) => path
-            // }.to_string_lossy());
+            let controller = service::ServiceController::new();
 
             match action {
-                ServiceAction::Start => {
-                    let config_path = std::ffi::OsString::from(&*match get_config_or_path!() {
-                        Ok(config) => config.path,
-                        Err(path) => path
-                    }.to_string_lossy());
-                    if let Err(err) = manager.start(config_path, false) {
-                        ferror!("could not start service: {}", err)
-                    }
+                ServiceAction::Start => if let Err(err) = controller.start(get_config_os_string!(), false) {
+                    ferror!("could not start service: {}", err)
+                }
+                ServiceAction::Stop => if let Err(err) = controller.stop() {
+                    ferror!("couldn't stop service: {}", err)
                 },
-                ServiceAction::Stop => match manager.stop() {
-                    Ok(killed) => match killed {
-                        0 => eprintln!("No processes were killed. The daemon might not have been functioning correctly."),
-                        1 => println!("The service was stopped and the process was killed."),
-                        n => eprintln!("The service was stopped and {n} processes were killed. Expected one process to be killed; this is likely a bug."),
-                    },
-                    Err(error) => ferror!("could not stop service: {}", error)
+                ServiceAction::Restart => if let Err(err) = controller.restart(get_config_os_string!()) {
+                    ferror!("couldn't restart service: {}", err)
                 },
-                ServiceAction::Restart => {
-                    let path = config.unwrap().socket_path;
-                    let mut sender = service::ipc::PacketConnection::from_path(path).await.unwrap();
-                    sender.send(ipc::Packet::Hello(ipc::packets::Hello {
-                        version: 0,
-                        process: *OWN_PID,
-                    })).await.unwrap();
-                    sender.send(ipc::Packet::ReloadConfiguration).await.unwrap();
-                    // if let Err(error) = manager.restart(config) {
-                    //     // ferror!("could not restart service: {}", error)       
-                    // }
+                ServiceAction::Reload => {
+                    use ipc::{Packet, PacketConnection};
+                    let path = get_config_or_error!().socket_path;
+                    let mut connection = PacketConnection::from_path(path).await.unwrap_or_else(|err| ferror!("could not establish ipc connection: {}", err));
+                    connection.send(Packet::hello()).await.unwrap();
+                    connection.send(Packet::ReloadConfiguration).await.unwrap();
                 }
             };
         },
@@ -256,7 +248,7 @@ impl PollingContext<'_> {
 async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
     let mut guard = context.lock().await;
     let context = guard.deref_mut();
-    
+
     use apple_music::{AppleMusic, PlayerState, Track};
 
     let app = match tracing::trace_span!("app status retrieval").in_scope(AppleMusic::get_application_data) {
