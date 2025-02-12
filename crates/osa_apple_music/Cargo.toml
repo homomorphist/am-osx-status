@@ -1,0 +1,13 @@
+[package]
+name = "osa_apple_music"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+chrono = { version = "0.4.39", features = ["serde"] }
+osascript = { path = "../osascript" }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.138"
+serde_with = "3.12.0"
+tokio = { version = "1.43.0", features = ["full"] }
+unescape = "0.1.0"
