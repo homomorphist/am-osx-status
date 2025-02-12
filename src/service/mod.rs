@@ -16,8 +16,6 @@ pub enum ServiceStartFailure {
 
 #[derive(thiserror::Error, Debug)]
 pub enum ServiceStopFailure {
-    #[error("could not kill process")]
-    CannotKill,
     #[error("service not enabled")]
     NotEnabled,
     #[error("unknown io error ({0})")]
@@ -67,9 +65,9 @@ impl ServiceController {
             label: self.label.clone(),
             program: std::env::current_exe().expect("cannot get own executable path"),
             args: vec![
+                OsString::from("--ran-as-service"),
                 OsString::from("--config"),
                 config.into(),
-                OsString::from("--ran-as-service"),
                 OsString::from("start"),
             ],
             contents: None,
@@ -85,16 +83,14 @@ impl ServiceController {
 
         Ok(())
     }
-    /// Returns the amount of processes killed.
-    pub fn stop(&self) -> Result<u16, ServiceStopFailure> {
+    pub fn stop(&self) -> Result<(), ServiceStopFailure> {
         if let Err(error) = self.manager.uninstall(ServiceUninstallCtx { label: self.label.clone() }) {
             if error.kind() == std::io::ErrorKind::NotFound {
                 return Err(ServiceStopFailure::NotEnabled);
             }
             return Err(ServiceStopFailure::IoFailure(error))
         };
-
-        Ok(1)
+        Ok(())
     }
     pub fn restart(&self, config: impl Into<OsString>) -> Result<(), ServiceRestartFailure> {
         self.stop().map_err(ServiceRestartFailure::Stop)?;

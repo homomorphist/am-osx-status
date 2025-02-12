@@ -62,6 +62,7 @@ dependencies = [
  "clap-verbosity-flag",
  "console-subscriber",
  "discord-presence",
+ "futures-util",
  "kqueue",
  "lastfm",
  "libc",

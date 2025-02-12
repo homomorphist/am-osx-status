@@ -28,4 +28,3 @@ Configurable[^1] and relatively lightweight.
 - (Bug) Ensure time is synchronized after skipping while listening.
 - (Bug) Handle Discord closing / opening while open.
 - Some sort of TUI?
-- Configuration wizard allows skipping to retain previous configuration.

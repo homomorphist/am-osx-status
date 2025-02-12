@@ -21,6 +21,11 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Start, stop, or reload the background service.
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction
+    },
     /// Begin watching Apple Music and log information.
     Start,
     /// Configure the application.
@@ -38,8 +43,10 @@ pub enum ServiceAction {
     Start,
     /// Stop the background service.
     Stop,
-    /// Restart the background service.
-    Restart
+    /// Fully restart the background service.
+    Restart,
+    /// Reload the background service's configuration. (This may result in some funky behavior.)
+    Reload
 }
 
 #[derive(Subcommand)]
@@ -47,7 +54,8 @@ pub enum ConfigurationAction {
     /// Run the configuration wizard. This will clear any existing settings.
     Wizard,
 
-    /// Print the location of the configuration file that would be used in the current context.
+    /// Print the location of the configuration file that would be used in the current context, and why it's being used.
+    #[clap(visible_alias("which"))]
     Where,
 
     /// Configure the Discord presence.
@@ -57,13 +65,13 @@ pub enum ConfigurationAction {
     },
 }
 
-// TODO: Configure format?
 #[derive(Subcommand)]
 pub enum DiscordConfigurationAction {
     /// Enable the Discord presence.
     Enable,
-    /// Disable the Discord presence.
-    Disable,    
-    // TODO: Change details about how the presence works.
-}
 
+    /// Disable the Discord presence.
+    Disable,
+
+    // TODO: A way of changing the way the presence appears.
+}

@@ -63,7 +63,7 @@ pub struct ApplicationData {
     pub volume: u8,
 
     /// The position of the current track in seconds.
-    pub position: Option<u32>,
+    pub position: Option<f32>,
 }
 impl ApplicationData {
     pub(crate) fn fix(mut self) -> Self {

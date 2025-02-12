@@ -4,9 +4,15 @@ struct Watcher {
 
 }
 
-use std::{os::fd::AsFd, sync::LazyLock};
+use std::{os::fd::AsFd, pin::Pin, sync::Arc, sync::LazyLock};
+use core::{num::NonZero, sync::atomic::{AtomicUsize, Ordering}};
 
-use tokio::io::AsyncWriteExt;
+use futures_util::SinkExt;
+use tokio_stream::StreamExt;
+use tokio_serde::{formats::SymmetricalBincode, Framed, SymmetricallyFramed};
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
+use tokio::{sync::Mutex, io::AsyncWriteExt, net::{unix::{OwnedReadHalf, OwnedWriteHalf, SocketAddr}, UnixListener, UnixStream}};
+
 
 use crate::util;
 
@@ -22,7 +28,7 @@ macro_rules! def_serde_compatibly_omissible_config_default {
 }
 
 def_serde_compatibly_omissible_config_default!(socket_path, <std::path::PathBuf> {
-    crate::util::HOME.join("Application Support/am-osx-status/ipc")
+    crate::util::HOME.join("Library/Application Support/am-osx-status/ipc")
 });
 
 
@@ -32,7 +38,6 @@ mod s {
     pub struct Local; impl super::PacketIdCounterSource for Local {}
 }
 
-use core::{num::NonZero, sync::atomic::{AtomicUsize, Ordering}};
 
 
 static PACKET_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -94,69 +99,171 @@ impl core::fmt::Display for DuplicateReceiverError {
 
 const IPC_VERSION: usize = 0;
 
-#[derive(serde::Serialize, serde::Deserialize)]
+pub mod packets {
+    use crate::util::OWN_PID;
+
+    use super::IPC_VERSION;
+
+    #[derive(serde::Serialize, serde::Deserialize, Debug)]
+    pub struct Hello {
+        pub version: usize,
+        pub process: libc::pid_t
+    }
+    impl Hello {
+        pub fn new() -> Self {
+            Hello {
+                version: IPC_VERSION,
+                process: *OWN_PID
+            }
+        }
+    }
+    impl From<Hello> for super::Packet {
+        fn from(val: Hello) -> Self {
+            super::Packet::Hello(val)
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[repr(u16)]
 pub enum Packet {
-    Hello { version: usize } = 0,
-    Restart,
+    Hello(packets::Hello) = 0,
+    ReloadConfiguration = 1,
+}
+impl Packet {
+    pub fn hello() -> Self {
+        packets::Hello::new().into()
+    }
 }
 
-
-pub struct PacketReceiver {
-    address: tokio::net::unix::SocketAddr,
+pub struct Listener {
+    address: SocketAddr,
     closed: bool,
-    rx: tokio::sync::mpsc::Receiver<Packet>
+    new_connection: tokio::sync::mpsc::Receiver<UnixStream>
 }
-impl PacketReceiver {
+impl Listener {
     pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self, DuplicateReceiverError> {
-        let listener = match tokio::net::UnixListener::bind(path) {
+        let listener = match UnixListener::bind(path) {
             Ok(listener) => Ok(listener),
             Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => Err(DuplicateReceiverError),
             Err(err) => panic!("cannot create receiver: {:?}", err)
         }?;
 
-
-        
         let address = listener.local_addr().expect("no local address for ipc socket");
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         
         tokio::spawn(async move {
             loop {
-                let stream = listener.accept().await.expect("unable to accept connection").0;
-                let tx = tx.clone();
-
-                tokio::spawn(async move {
-                    use tokio_stream::StreamExt;
-                    use tokio_serde::formats::SymmetricalBincode;
-                    use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
-
-                    let framed = FramedRead::new(stream, LengthDelimitedCodec::new());
-                    let mut deserialized = tokio_serde::SymmetricallyFramed::new(
-                        framed,
-                        SymmetricalBincode::<Packet>::default(),
-                    );
-
-                    // TODO: Handle deserialization failure
-                    while let Some(packet) = deserialized.try_next().await.unwrap() {
-                        tx.send(packet).await.expect("receiver closed");
-                    }
-                });
+                tx.send(listener.accept().await.expect("unable to accept connection").0).await.unwrap();
             }
         });
         
         Ok(Self {
             address,
             closed: false,
-            rx
+            new_connection: rx
         })
     }
-    pub async fn next(&mut self) -> Packet {
-        self.rx.recv().await.expect("channel closed")
+    async fn next_connection(&mut self) -> PacketConnection {
+        PacketConnection::from_stream(self.new_connection.recv().await.expect("channel closed")).await
     }
-    fn shutdown(&mut self) {
+    pub fn shutdown(&mut self) {
         if self.closed { return }
         let path = self.address.as_pathname().expect("ipc socket is unnamed");
         std::fs::remove_file(path).expect("cannot remove IPC socket");
         self.closed = true;
     }
 }
+impl Drop for Listener {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+#[derive(Debug)]
+pub struct PacketConnection {
+    outgoing: Framed<
+        FramedWrite<
+            OwnedWriteHalf,
+            LengthDelimitedCodec
+        >,
+        Packet,
+        Packet,
+        SymmetricalBincode<Packet>
+    >,
+
+    incoming: Framed<
+        FramedRead<
+            OwnedReadHalf,
+            LengthDelimitedCodec
+        >,
+        Packet,
+        Packet,
+        SymmetricalBincode<Packet>
+    >
+}
+impl PacketConnection {
+    pub async fn from_path(path: impl AsRef<std::path::Path>) -> Result<Self, std::io::Error> {
+        Ok(Self::from_stream(tokio::net::UnixStream::connect(path).await?).await)
+    }
+
+    pub async fn from_stream(stream: UnixStream) -> Self {
+        let (read, write) = stream.into_split();
+
+        let framed_write = FramedWrite::new(write, LengthDelimitedCodec::new());
+        let framed_read = FramedRead::new(read, LengthDelimitedCodec::new());
+
+        let mut outgoing = SymmetricallyFramed::new(framed_write, SymmetricalBincode::<Packet>::default());
+        let mut incoming = SymmetricallyFramed::new(framed_read, SymmetricalBincode::<Packet>::default());
+
+        Self { outgoing, incoming }
+    }
+
+    pub async fn recv(&mut self) -> Result<Option<Packet>, std::io::Error> {
+        self.incoming.next().await.transpose()
+    }
+
+    pub async fn send(&mut self, packet: impl Into<Packet>) -> Result<(), std::io::Error> {
+        self.outgoing.send(packet.into()).await?;
+        Ok(())
+    }
+}
+
+pub async fn listen(
+    context: Arc<Mutex<crate::PollingContext<'static>>>,
+    config: Arc<Mutex<crate::config::Config<'static>>>
+) -> Arc<Mutex<Listener>> {
+    let mut listener = Listener::new({ config.clone().lock().await.socket_path.to_owned() }).unwrap();
+    let listener = Arc::new(Mutex::new(listener));
+    let listener_sent = listener.clone();
+    let config = config.clone();
+
+    tokio::spawn(async move {
+        loop {
+            let mut connection = { listener_sent.lock().await }.next_connection().await;
+            let context = context.clone();
+            let config = config.clone();
+           
+            tokio::spawn(async move {
+                let hello = connection.recv().await.unwrap().expect("no hello!?");
+                let hello = if let Packet::Hello(hello) = hello { hello } else { panic!("wanted hello first") };
+
+                loop {
+                    while let Some(packet) = connection.recv().await.expect("shit") {
+                        match packet {
+                            Packet::Hello(..) => panic!("no double hello"),
+                            Packet::ReloadConfiguration => {
+                                let mut config = config.lock().await;
+                                config.reload_from_disk().await.expect("could not update config");
+                                context.lock().await.reload_from_config(&config).await;
+                            }
+                        }
+                    }
+                }
+            });
+        };
+    });
+
+    listener
+}
+

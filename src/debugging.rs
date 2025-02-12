@@ -1,11 +1,10 @@
 #[allow(unused)]
-struct DebuggingGuards {
+pub struct DebuggingGuards {
     chrome_tracing: Option<tracing_chrome::FlushGuard>
 }
 
 pub struct DebuggingSession {
-    #[allow(unused)]
-    guards: DebuggingGuards
+    pub guards: DebuggingGuards
 }
 
 impl DebuggingSession {
@@ -15,14 +14,26 @@ impl DebuggingSession {
         let mut layers = Vec::with_capacity(3);
         let mut chrome_guard = None;
 
-        if cfg!(debug_assertions) {
-            layers.push(console_subscriber::spawn().boxed());
-            layers.push(tracing_subscriber::fmt::layer().boxed());
-            if !args.running_as_service {
-                let (chrome_layer, chrome_guard_unraised) = tracing_chrome::ChromeLayerBuilder::new().build();
-                chrome_guard = Some(chrome_guard_unraised);
-                layers.push(chrome_layer.boxed());
-            }
+        if cfg!(debug_assertions) && !args.running_as_service {
+            layers.push({
+                tracing_subscriber::fmt::layer()
+                .with_span_events({
+                    tracing_subscriber::fmt::format::FmtSpan::NEW |
+                    tracing_subscriber::fmt::format::FmtSpan::CLOSE
+                })
+                .boxed()
+            });
+            layers.push({
+                console_subscriber::ConsoleLayer::builder()
+                    .spawn()
+                    .boxed()
+            });
+            let (chrome_layer, chrome_guard_unraised) = tracing_chrome::ChromeLayerBuilder::new()
+                .include_locations(false)
+                .include_args(true)
+                .build();
+            chrome_guard = Some(chrome_guard_unraised);
+            layers.push(chrome_layer.boxed());
         }
 
         tracing_subscriber::registry()

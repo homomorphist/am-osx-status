@@ -34,28 +34,26 @@ fn ret_true() -> bool {
     true
 }
 
+
 #[derive(Serialize, Deserialize)]
 pub struct Config<'a> {
     #[serde(skip)]
     pub path: ConfigPathChoice<'a>,
+    #[serde(default)]
     pub backends: ConfigurableBackends,
 
-
-    #[serde(skip)]
-    file_descriptor: Mutex<Option<std::os::fd::OwnedFd>>,
-    #[serde(skip)]
-    file_watcher: Option<kqueue::Watcher>,
-    #[serde(default = "ret_true")]
-    pub watch_config_file: bool,
+    #[serde(
+        default             = "crate::service::ipc::socket_path::clone_default",
+        skip_serializing_if = "crate::service::ipc::socket_path::is_default",
+    )]
+    pub socket_path: std::path::PathBuf
 }
 impl Default for Config<'_> {
     fn default() -> Self {
         Self {
-            backends: ConfigurableBackends::default(),
-            path: ConfigPathChoice::default(),
-            watch_config_file: false,
-            file_descriptor: None.into(),
-            file_watcher: None,
+            path: Default::default(),
+            backends: Default::default(),
+            socket_path: crate::service::ipc::socket_path::clone_default(),
         }
     }
 }
@@ -63,7 +61,10 @@ impl<'a> Config<'a> {
     pub async fn get(args: &'a crate::cli::Cli) -> Result<Self, ConfigRetrievalError<'a>> {
         let path_override = args.config_file_path.as_deref();
         let path = ConfigPathChoice::new(path_override);
-    
+        Self::from_path(path).await
+    }
+
+    pub async fn from_path(path: ConfigPathChoice<'a>) -> Result<Self, ConfigRetrievalError<'a>> {
         match std::fs::read(&path) {
             Err(error) => {
                 use std::io::ErrorKind;
@@ -75,40 +76,15 @@ impl<'a> Config<'a> {
             },
             Ok(data) => {
                 let data = String::from_utf8_lossy(&data[..]);
-                Ok(toml::from_str(&data).map_err(|err| ConfigRetrievalError::DeserializationFailure { inner: err, path })?)
+                match toml::from_str::<Config>(&data) {
+                    Err(inner) => Err(ConfigRetrievalError::DeserializationFailure { inner, path }),
+                    Ok(mut config) => {
+                        config.path = path;
+                        Ok(config)
+                    }
+                }
             }
        }
-    }
-
-    pub async fn get_fd(&self) -> Option<std::os::fd::RawFd> {
-        if self.file_descriptor.lock().await.is_none() {
-            *self.file_descriptor.lock().await = match tokio::fs::File::options().open(&self.path).await {
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
-                Err(err) => { println!("error: {:?}", err); return None }
-                Ok(file) => Some(file.into_std().await.into())
-            }
-        }
-
-        self.file_descriptor.lock().await
-            .as_ref()
-            .map(|v| v.as_raw_fd())
-    }
-
-    pub async fn update_on_file_change(&mut self, enable: bool) {
-        if self.watch_config_file == enable && !(enable && self.file_watcher.is_none()) { return }
-        self.watch_config_file = enable;
-        if enable {
-            let fd = self.get_fd().await.expect("cannot get fd");
-            let watcher = self.file_watcher.as_mut().unwrap(); // TODO: make if not present
-            watcher.add_fd(fd, kqueue::EventFilter::EVFILT_WRITE, FilterFlag::empty()).expect("aaa");
-            watcher.watch().expect("aaaa")
-        } else {
-            drop(self.file_watcher.take())
-        }
-    }
-
-    pub async fn setup_side_effects(&mut self) {
-        self.update_on_file_change(self.watch_config_file).await;
     }
 
     pub async fn edit_with_wizard(&mut self)  {
@@ -129,6 +105,11 @@ impl<'a> Config<'a> {
         toml::ser::to_string(self).expect("could not serialize constructed configuration")
     }
 
+    pub async fn reload_from_disk(&mut self) -> Result<(), ConfigRetrievalError<'a>> {
+        let new = Self::from_path(self.path.clone()).await?;;
+        *self = new;
+        Ok(())
+    }
     pub async fn save_to_disk(&self) {
         let path = self.path.as_path();
         tokio::fs::create_dir_all(path.parent().expect("cannot write to root...?")).await.expect("could not create configuration directory");
@@ -140,10 +121,13 @@ impl<'a> Config<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct ConfigurableBackends {
     #[cfg(feature = "discord")]
+    #[cfg_attr(feature = "discord", serde(default = "ret_true"))]
     pub discord: bool,
     #[cfg(feature = "lastfm")]
+    #[cfg_attr(feature = "lastfm", serde(default))]
     pub lastfm: Option<crate::status_backend::lastfm::Config>,
     #[cfg(feature = "listenbrainz")]
+    #[cfg_attr(feature = "listenbrainz", serde(default))]
     pub listenbrainz: Option<crate::status_backend::listenbrainz::Config>
 }
 impl Default for ConfigurableBackends {

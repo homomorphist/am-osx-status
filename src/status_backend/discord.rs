@@ -1,10 +1,11 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
-use discord_presence::models::{ActivityAssets, ActivityType};
+use std::{fmt::Debug, sync::{Arc, Weak}, time::{Duration, Instant}};
+use discord_presence::models::{payload::Payload, Activity, ActivityAssets, ActivityType};
 use tokio::sync::Mutex;
+use tracing::instrument;
 
 use crate::{data_fetching::components::{Component, ComponentSolicitation}, util::fallback_to_default_and_log_absence};
 
-use super::StatusBackend;
+use super::{Listened, StatusBackend};
 
 const APPLICATION_ID: u64 = 1286481105410588672; // "Apple Music"
 
@@ -51,7 +52,11 @@ pub struct DiscordPresence {
     state_channel: tokio::sync::broadcast::Sender<DiscordPresenceState>,
     state_update_task_handle: tokio::task::JoinHandle<()>,
     auto_reconnect_task_handle: Option<tokio::task::JoinHandle<()>>,
-    has_content: bool
+    has_content: bool,
+    last_dispatch: Option<Instant>,
+    activity: Option<discord_presence::models::Activity>,
+    position: f32,
+    duration: f32,
 }
 impl Debug for DiscordPresence {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -64,7 +69,7 @@ impl Default for DiscordPresence {
     }
 }
 impl DiscordPresence {
-    #[tracing::instrument]
+    #[tracing::instrument(level = "debug")]
     pub async fn new() -> Self {
         let instance = Self::disconnected();
         let instance = instance.try_connect(CONNECTION_ATTEMPT_TIMEOUT).await;
@@ -92,7 +97,11 @@ impl DiscordPresence {
             state_channel: tx,
             state_update_task_handle: state_update_hook,
             auto_reconnect_task_handle: None,
-            has_content: false
+            has_content: false,
+            last_dispatch: None,
+            activity: None,
+            position: 0.,
+            duration: 0.,
         }
     }
 
@@ -102,7 +111,7 @@ impl DiscordPresence {
     }
 
     /// not `tokio::select!` safe
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self), level = "debug")]
     pub async fn connect_in_place(&mut self) {
         let client = discord_presence::Client::new(APPLICATION_ID);            
         if let Some(old_client) = self.client.replace(client) {
@@ -124,7 +133,7 @@ impl DiscordPresence {
             tx_disconnect.send(DiscordPresenceState::Disconnected).unwrap();
         }).persist();
         client.on_error(|err| {
-            tracing::warn!("{:?}", &err);
+            tracing::warn!("discord client error {:?}", &err);
         }).persist();
         client.start();
 
@@ -163,8 +172,8 @@ impl DiscordPresence {
     }
 
 
-    pub async fn enable_auto_reconnect(instance: Arc<Mutex<Self>>) {
-        let mut rx = {
+    pub async fn enable_auto_reconnect(instance: Weak<Mutex<Self>>) {
+        let mut rx = if let Some(instance) = instance.upgrade() {
             let lock = instance.lock().await;
 
             if let Some(old_handle) = &lock.auto_reconnect_task_handle {
@@ -172,15 +181,18 @@ impl DiscordPresence {
             };
             
             lock.state_channel.subscribe()
-        };
-        
-        let task_instance: Arc<Mutex<DiscordPresence>> = instance.clone();
+        } else { return };
+
+        let sent = instance.clone();
 
         let auto_reconnect_task_handle = tokio::spawn(async move {
             // If it's ready, wait for that to change, and then if it disconnects, reconnect. Repeat.
             // If it's disconnected, wait a bit before trying again. Repeat.
             loop {
-                let state = { *task_instance.clone().lock().await.state.lock().await };
+                let state = if let Some(task) = sent.upgrade() {
+                    *task.lock().await.state.lock().await
+                } else { break };
+
                 let state = match state {
                     DiscordPresenceState::Ready => rx.recv().await.unwrap(),
                     DiscordPresenceState::Disconnected => {
@@ -189,21 +201,26 @@ impl DiscordPresence {
                         DiscordPresenceState::Disconnected
                     }
                 };
+
                 match state {
                     DiscordPresenceState::Ready => continue,
                     DiscordPresenceState::Disconnected => {
-                        if let Err(error) = Self::try_connect_in_place(
-                            task_instance.clone(),
-                            CONNECTION_ATTEMPT_TIMEOUT
-                        ).await {
-                            tracing::debug!(?error, "couldn't connect")
-                        }
+                        if let Some(instance) = sent.upgrade() {
+                            if let Err(error) = Self::try_connect_in_place(
+                                instance,
+                                CONNECTION_ATTEMPT_TIMEOUT
+                            ).await {
+                                tracing::debug!(?error, "couldn't connect")
+                            }
+                        } else { break }
                     }
                 }
             }
         });
 
-        instance.lock().await.auto_reconnect_task_handle = Some(auto_reconnect_task_handle);
+        if let Some(instance) = instance.upgrade() {
+            instance.lock().await.auto_reconnect_task_handle = Some(auto_reconnect_task_handle);
+        }
     }
 
 
@@ -216,19 +233,48 @@ impl DiscordPresence {
 
     /// Returns whether the status was cleared.
     /// (If the status was already empty, it will return false.)
-    #[tracing::instrument]
+    #[tracing::instrument(skip(self), level = "debug")]
     pub async fn clear(&mut self) -> Result<bool, UpdateError> {
         let has_content = self.has_content;
         if let Some(client) = self.client().await {
             if has_content {
                 client.clear_activity()?;
                 self.has_content = false;
+                self.last_dispatch = Some(Instant::now())
             }
             Ok(has_content)
         } else if !has_content {
-            Ok(false) // is this a good idea
+            Ok(false)
         } else {
             Err(UpdateError::NotConnected)
+        }
+    }
+
+    #[instrument(skip(self), level = "debug")]
+    async fn dispatch(&mut self) {
+        let activity = if let Some(activity) = self.activity.clone() { activity } else {
+            tracing::warn!("cannot dispatch without set activity");
+            return
+        };
+
+        let client = if let Some(client) = self.client.as_mut() { client } else {
+            tracing::warn!("cannot dispatch without client");
+            return
+        };
+
+        match client.set_activity(|_| activity.timestamps(|activity| {
+            let track_started_at = chrono::Utc::now().timestamp() as u64 - self.position as u64;
+            activity
+                .start(track_started_at)
+                .end(track_started_at + self.duration as u64)
+        })) {
+            Ok(..) => {
+                self.has_content = true;
+                self.last_dispatch = Some(Instant::now())
+            },
+            Err(error) => {
+                tracing::error!(?error, "activity dispatch failure");
+            }
         }
     }
 }
@@ -237,6 +283,10 @@ impl Drop for DiscordPresence {
         self.state_update_task_handle.abort();
         if let Some(handle) = self.auto_reconnect_task_handle.as_ref() {
             handle.abort();
+        }
+        if let Some(mut client) = self.client.take() {
+            let _ = client.clear_activity();
+            let _ = client.shutdown();
         }
     }
 }
@@ -250,65 +300,63 @@ impl StatusBackend for DiscordPresence {
         solicitation
     }
 
-    async fn record_as_listened(&self, _: Arc<osa_apple_music::track::Track>, _: Arc<osa_apple_music::application::ApplicationData>) {
+    async fn record_as_listened(&self, context: super::BackendContext<()>) {
         // no-op
     }
 
-    async fn check_eligibility(&self, _: Arc<osa_apple_music::track::Track>, _: &Duration) -> bool {
+    async fn check_eligibility(&self, context: super::BackendContext<()>) -> bool {
         false
     }
 
-    #[tracing::instrument(level = "debug")]
-    async fn set_now_listening(&mut self, track: Arc<osa_apple_music::track::Track>, app: Arc<osa_apple_music::application::ApplicationData>, additional_info: Arc<crate::data_fetching::AdditionalTrackData>) {
-        let client = get_client_or_early_return!(self);
-        let player_position = fallback_to_default_and_log_absence!(app.position, "reading player position") as u64;
-        let track_started_at = (chrono::Utc::now().timestamp_millis() / 1000) as u64 - player_position;
-
-        let sent = client.set_activity(|activity| {
-            use osa_apple_music::track::MediaKind;
-            let mut activity = activity
-                ._type(match track.media_kind {
-                    MediaKind::Song | 
-                    MediaKind::Unknown => ActivityType::Listening,
-                    MediaKind::MusicVideo => ActivityType::Watching,
-                })
-                .details(&track.name)
-                .state(&track.artist.clone().unwrap_or_default())
-                .timestamps(|mut activity| {
-                    if app.state == osa_apple_music::application::PlayerState::Playing {
-                        if let Some(duration) = track.duration {
-                            activity = activity
-                                .start(track_started_at)
-                                .end(track_started_at + duration as u64);
-                        }
-                    };
-                    activity
-                })
-                .assets(|_| ActivityAssets {
-                    large_text: Some(track.album.name.clone().unwrap_or_default()),
-                    large_image: additional_info.images.track.clone(),
-                    small_image: additional_info.images.artist.clone(),
-                    small_text: Some(track.artist.clone().unwrap_or_default())
-                });
-
-
-            if let Some(itunes) = &additional_info.itunes {
-                activity = activity.append_buttons(|button| button
-                    .label("Listen on Apple Music")
-                    .url(itunes.apple_music_url.clone())
-                )
-            }
-
-            activity
-        });
-
-        match sent {
-            Ok(..) => {
-                self.has_content = true;
-            },
-            Err(error) => {
-                tracing::error!(?error, "activity dispatch failure");
-            }
+    #[tracing::instrument(skip(self, context), level = "debug")]
+    async fn update_progress(&mut self, context: super::BackendContext<()>) {
+        const STATUS_UPDATE_RATELIMIT_SECONDS: f32 = 15.;
+        let position = context.listened.lock().await.current.as_ref().unwrap().get_expected_song_position();
+        let remaining = if let Some(end) = context.track.playable_range.as_ref().map(|r| r.end).or(context.track.duration) { end - position } else { return };
+        // Only bother to dispatch a progress update if it'll last for more than
+        // two thirds of the ratelimit. This means that if we skip to a point in the song
+        // where it'll end in less than 10 seconds, don't send the activity, as that'll
+        // mean the next activity update containing the new song will take longer to take,
+        // which is one that should have priority.
+        if remaining > (STATUS_UPDATE_RATELIMIT_SECONDS / 3. * 2.) {
+            self.position = position;
+            self.dispatch().await;
+        } else {
+            // TODO: Only do this if there is actually another song queued up
+            tracing::debug!("skipping progress dispatch since it'll delay next song dispatch")
         }
+    }
+
+    #[tracing::instrument(skip(self, context), level = "debug")]
+    async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
+        use osa_apple_music::track::MediaKind;
+        let super::BackendContext { track, app, listened, data: additional_info, .. } = context;
+        self.position = listened.lock().await.current.as_ref().map(|current| current.get_expected_song_position()).unwrap_or(track.playable_range.as_ref().map(|r| r.start).unwrap_or(0.));
+        self.duration = if let Some(duration) = track.duration.as_ref() { *duration } else { return };
+        let mut activity = Activity::new()
+            ._type(match track.media_kind {
+                MediaKind::Song | 
+                MediaKind::Unknown => ActivityType::Listening,
+                MediaKind::MusicVideo => ActivityType::Watching,
+            })
+            .details(&track.name)
+            .state(track.artist.clone().unwrap_or("Unknown Artist".to_owned()))
+            .assets(|_| ActivityAssets {
+                large_text: Some(track.album.name.clone().unwrap()),
+                large_image: additional_info.images.track.clone(),
+                small_image: additional_info.images.artist.clone(),
+                small_text: Some(track.artist.clone().unwrap())
+            });
+
+
+        if let Some(itunes) = &additional_info.itunes {
+            activity = activity.append_buttons(|button| button
+                .label("Listen on Apple Music")
+                .url(itunes.apple_music_url.clone())
+            )
+        }
+
+        self.activity = Some(activity);
+        self.dispatch().await;
     }
 }

@@ -26,8 +26,6 @@ fn is_default_program_info(info: &ProgramInfo<MaybeOwnedStringDeserializeToOwned
 
 
 #[derive(serde::Serialize, serde::Deserialize)]
-
-
 pub struct Config {
     pub enabled: bool,
     #[serde(
@@ -38,7 +36,6 @@ pub struct Config {
     pub user_token: Option<brainz::listen::v1::UserToken>,
 }
 
-
 pub struct ListenBrainz {
     client: Arc<brainz::listen::v1::Client<S>>,
 }
@@ -48,23 +45,22 @@ impl core::fmt::Debug for ListenBrainz {
     }
 }
 impl ListenBrainz {
-    #[tracing::instrument]
     pub fn new(program_info: ProgramInfo<MaybeOwnedStringDeserializeToOwned<'static>>, token: brainz::listen::v1::UserToken) -> Self {
         Self { client: Arc::new(brainz::listen::v1::Client::new(program_info, Some(token))) }
     }
 
     fn basic_track_metadata(track: &osa_apple_music::track::Track) -> brainz::listen::v1::submit_listens::BasicTrackMetadata<'_> {
         brainz::listen::v1::submit_listens::BasicTrackMetadata {
-            artist: &track.artist.as_ref().map(String::as_str).unwrap_or("Unknown Artist"),
+            artist: track.artist.as_deref().unwrap_or("Unknown Artist"),
             track: &track.name,
-            release: track.album.name.as_ref().map(String::as_str)
+            release: track.album.name.as_deref()
         }
     }
 
     fn additional_info<'a>(track: &'a osa_apple_music::track::Track, app: &'a osa_apple_music::application::ApplicationData, program: &'a brainz::music::request_client::ProgramInfo<S>) -> brainz::listen::v1::submit_listens::additional_info::AdditionalInfo<'a> {
         use brainz::listen::v1::submit_listens::additional_info::*;
         AdditionalInfo {
-            duration: track.duration.map(|d| core::time::Duration::from_secs_f32(d)),
+            duration: track.duration.map(core::time::Duration::from_secs_f32),
             track_number: track.track_number.map(|n| n.get() as u32),
             submission_client: Some(program),
             music_service: Some(MusicService::Domain("music.apple.com")),
@@ -78,31 +74,32 @@ impl ListenBrainz {
 }
 #[async_trait::async_trait]
 impl StatusBackend for ListenBrainz {
-    #[tracing::instrument(level = "debug")]   
-    async fn record_as_listened(&self, track: Arc<osa_apple_music::track::Track>, app: Arc<osa_apple_music::application::ApplicationData>) {
+    #[tracing::instrument(skip(self, context), level = "debug")]   
+    async fn record_as_listened(&self, context: super::BackendContext<()>) {
         // TODO: catch net error or add to queue. ideally queue persist offline
         if let Err(error) = self.client.submit_playing_now(
-            Self::basic_track_metadata(&track),
-            Some(Self::additional_info(&track, &app, self.client.get_program_info()))
+            Self::basic_track_metadata(&context.track),
+            Some(Self::additional_info(&context.track, &context.app, self.client.get_program_info()))
         ).await {
             tracing::error!(?error, "listenbrainz mark-listened failure")
         }
     }
 
     /// - <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html#post--1-submit-listens>
-    async fn check_eligibility(&self, track: Arc<osa_apple_music::track::Track>, time_listened: &core::time::Duration) -> bool {
-        if let Some(duration) = track.duration {
+    async fn check_eligibility(&self, context: super::BackendContext<()>) -> bool {
+        if let Some(duration) = context.track.duration {
             let length = core::time::Duration::from_secs_f32(duration);
-            time_listened >= &FOUR_MINUTES ||
-            time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
+            let time_listened = context.listened.lock().await.total_heard();
+            time_listened >= FOUR_MINUTES ||
+            time_listened.as_secs_f32() >= (length.as_secs_f32() / 2.)
         } else { false }
     }
 
-    #[tracing::instrument(level = "debug")]
-    async fn set_now_listening(&mut self, track: Arc<osa_apple_music::track::Track>, app: Arc<osa_apple_music::application::ApplicationData>, _: Arc<crate::data_fetching::AdditionalTrackData>) {
+    #[tracing::instrument(skip(self, context), level = "debug")]
+    async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
         if let Err(error) = self.client.submit_playing_now(
-            Self::basic_track_metadata(&track),
-            Some(Self::additional_info(&track, &app, self.client.get_program_info()))
+            Self::basic_track_metadata(&context.track),
+            Some(Self::additional_info(&context.track, &context.app, self.client.get_program_info()))
         ).await {
             tracing::error!(?error, "listenbrainz now-listening failure")
         }
