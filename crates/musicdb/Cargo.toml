@@ -16,10 +16,16 @@ serde = { version = "1.0.210", features = ["derive"] }
 strum = "0.26.3"
 thiserror = "2.0.10"
 tracing = { version = "0.1.40", optional = true }
-maybe_owned_string = { path = "../maybe_owned_string/", features = ["serde"]}
+maybe_owned_string = { path = "../maybe_owned_string/", features = ["serde"] }
 mzstatic = { path = "../mzstatic/" }
 strum_macros = "0.26.4"
+clap = { version = "4.5.29", optional = true, features = ["derive"] }
 
 [features]
-default = []
 tracing = ["dep:tracing"]
+cli = ["dep:clap"]
+
+[[bin]]
+name = "cli"
+path = "src/main.rs"
+required-features = ["cli"]
