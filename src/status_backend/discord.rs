@@ -53,10 +53,9 @@ pub struct DiscordPresence {
     state_update_task_handle: tokio::task::JoinHandle<()>,
     auto_reconnect_task_handle: Option<tokio::task::JoinHandle<()>>,
     has_content: bool,
-    last_dispatch: Option<Instant>,
     activity: Option<discord_presence::models::Activity>,
-    position: f32,
-    duration: f32,
+    position: Option<f32>,
+    duration: Option<f32>,
 }
 impl Debug for DiscordPresence {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -98,10 +97,9 @@ impl DiscordPresence {
             state_update_task_handle: state_update_hook,
             auto_reconnect_task_handle: None,
             has_content: false,
-            last_dispatch: None,
             activity: None,
-            position: 0.,
-            duration: 0.,
+            position: None,
+            duration: None,
         }
     }
 
@@ -240,7 +238,6 @@ impl DiscordPresence {
             if has_content {
                 client.clear_activity()?;
                 self.has_content = false;
-                self.last_dispatch = Some(Instant::now())
             }
             Ok(has_content)
         } else if !has_content {
@@ -262,20 +259,37 @@ impl DiscordPresence {
             return
         };
 
-        match client.set_activity(|_| activity.timestamps(|activity| {
-            let track_started_at = chrono::Utc::now().timestamp() as u64 - self.position as u64;
+        match client.set_activity(|_| activity.timestamps(|mut activity| {
+            if let Some(position) = self.position {
+                let start = chrono::Utc::now().timestamp() as u64 - position as u64;
+                activity = activity.start(start);
+                if let Some(duration) = self.duration {
+                    activity = activity.end(start + duration as u64);
+                }
+            } 
             activity
-                .start(track_started_at)
-                .end(track_started_at + self.duration as u64)
         })) {
             Ok(..) => {
                 self.has_content = true;
-                self.last_dispatch = Some(Instant::now())
             },
             Err(error) => {
                 tracing::error!(?error, "activity dispatch failure");
             }
         }
+    }
+
+    /// Because of the ratelimit on Discord's end, it's sometimes not worth dispatching a length change
+    /// if the track is about to change, as it'll delay the status update containing the new track.
+    /// 
+    /// This also updates the duration and position fields based on the new context.
+    async fn should_dispatch_progress_update(&mut self, context: &super::BackendContext<()>) -> bool {
+        const STATUS_UPDATE_RATELIMIT_SECONDS: f32 = 15.;
+        self.duration = context.track.duration;
+        self.position = context.listened.lock().await.current.as_ref().map(|c| c.get_expected_song_position());
+        let duration = if let Some(duration) = self.duration { duration } else { return true };
+        let position = if let Some(position) = self.position { position } else { return true };
+        let remaining = duration - position;
+        remaining > (STATUS_UPDATE_RATELIMIT_SECONDS / 3. * 2.)
     }
 }
 impl Drop for DiscordPresence {
@@ -310,16 +324,7 @@ impl StatusBackend for DiscordPresence {
 
     #[tracing::instrument(skip(self, context), level = "debug")]
     async fn update_progress(&mut self, context: super::BackendContext<()>) {
-        const STATUS_UPDATE_RATELIMIT_SECONDS: f32 = 15.;
-        let position = context.listened.lock().await.current.as_ref().unwrap().get_expected_song_position();
-        let remaining = if let Some(end) = context.track.playable_range.as_ref().map(|r| r.end).or(context.track.duration) { end - position } else { return };
-        // Only bother to dispatch a progress update if it'll last for more than
-        // two thirds of the ratelimit. This means that if we skip to a point in the song
-        // where it'll end in less than 10 seconds, don't send the activity, as that'll
-        // mean the next activity update containing the new song will take longer to take,
-        // which is one that should have priority.
-        if remaining > (STATUS_UPDATE_RATELIMIT_SECONDS / 3. * 2.) {
-            self.position = position;
+        if self.should_dispatch_progress_update(&context).await {
             self.dispatch().await;
         } else {
             // TODO: Only do this if there is actually another song queued up
@@ -331,8 +336,8 @@ impl StatusBackend for DiscordPresence {
     async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
         use osa_apple_music::track::MediaKind;
         let super::BackendContext { track, app, listened, data: additional_info, .. } = context;
-        self.position = listened.lock().await.current.as_ref().map(|current| current.get_expected_song_position()).unwrap_or(track.playable_range.as_ref().map(|r| r.start).unwrap_or(0.));
-        self.duration = if let Some(duration) = track.duration.as_ref() { *duration } else { return };
+        self.position = listened.lock().await.current.as_ref().map(|position| position.get_expected_song_position());
+        self.duration = track.duration;
         let mut activity = Activity::new()
             ._type(match track.media_kind {
                 MediaKind::Song | 
@@ -342,10 +347,10 @@ impl StatusBackend for DiscordPresence {
             .details(&track.name)
             .state(track.artist.clone().unwrap_or("Unknown Artist".to_owned()))
             .assets(|_| ActivityAssets {
-                large_text: Some(track.album.name.clone().unwrap()),
+                large_text: track.album.name.clone(),
                 large_image: additional_info.images.track.clone(),
                 small_image: additional_info.images.artist.clone(),
-                small_text: Some(track.artist.clone().unwrap())
+                small_text: track.artist.clone(),
             });
 
 

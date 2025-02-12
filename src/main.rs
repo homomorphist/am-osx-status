@@ -266,7 +266,7 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
                 SessionEvaluationError::DeserializationFailure(_) => tracing::error!("failed to deserialize application data"),
                 SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract application data"),
                 SessionEvaluationError::SessionFailure(_) |
-                SessionEvaluationError::SingleEvaluationFailure(_) => tracing::error!("failed to retrieve application data")
+                SessionEvaluationError::IoFailure(_) => tracing::error!("failed to retrieve application data")
             }
             return;
         }
@@ -315,10 +315,10 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
         },
 
         PlayerState::Playing => {
-            let track = match tracing::trace_span!("track retrieval").in_scope(|| context.jxa.now_playing()).await {
+            let track = match context.jxa.now_playing().instrument(tracing::trace_span!("track retrieval")).await {
                 Ok(Some(track)) => Arc::new(track),
-                Ok(None) => { dbg!("no track found"); return },
-                Err(err) => { dbg!(err); return }
+                Ok(None) => return,
+                Err(err) => { tracing::error!(?err, "failed to retrieve track"); return; }
             };
 
             let previous = context.last_track.as_ref().map(|v: &Arc<osa_apple_music::Track>| &v.persistent_id);
@@ -347,26 +347,12 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
                     additional_data_pending.await
                 };
 
-                // We can't trust the `app.player_position` at this stage because there might've been a race condition.
-                let listened = Arc::new(Mutex::new(Listened::new_with_current({
-                    // If this isn't the first song, we can assume it's quite unlikely that the user performed
-                    // a skip to another point in time in the few nanoseconds that occurred, so going with
-                    // the adjusted start time is okay.
-                    if context.polls != 1 {
-                        track.playable_range.as_ref().map(|range| range.start).or(app.position).unwrap_or(0.)
-                    } else {
-                        // Otherwise, the user started the program in the middle of listening to a song.
-                        // In that event, `app.player_position` is trustworthy enough.
-                        app.position.or(track.playable_range.as_ref().map(|range| range.start)).unwrap_or(0.)
-                    }
-                } as f32)));
-
+                let listened = Arc::new(Mutex::new(Listened::new_with_current(app.position.or(track.playable_range.as_ref().map(|r| r.start)).unwrap_or(0.))));
                 context.listened = listened.clone();
                 context.last_track = Some(track.clone());
                 context.backends.dispatch_track_started(BackendContext { app, listened, track, data: Arc::new(additional_data) }).await;
-            } else {
+            } else if let Some(position) = app.position {
                 let mut listened = context.listened.lock().await;
-                let position = app.position.expect("no position");
                 match listened.current.as_ref() {
                     None => listened.set_new_current(position),
                     Some(current) => {

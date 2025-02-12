@@ -82,6 +82,8 @@ impl StatusBackend for ListenBrainz {
             if let Err(error) = self.client.submit_playing_now(track_data, Some(additional_info)).await {
                 tracing::error!(?error, "listenbrainz mark-listened failure")
             }
+        } else {
+            tracing::warn!("listenbrainz mark-listened dispatch skipped; track is missing required data (artist name)")
         }
     }
 
@@ -104,6 +106,8 @@ impl StatusBackend for ListenBrainz {
             if let Err(error) = self.client.submit_listen(track_data, started_listening_at, Some(additional_info)).await {
                 tracing::error!(?error, "listenbrainz now-listening failure")
             }
+        } else {
+            tracing::warn!("listenbrainz now-listening dispatch skipped; track is missing required data (artist name)")
         }
     }
 }

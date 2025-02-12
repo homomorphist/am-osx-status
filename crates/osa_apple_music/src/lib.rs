@@ -8,24 +8,24 @@ pub use track::Track;
 pub mod error {
     #[derive(Debug, thiserror::Error)]
     pub enum SessionEvaluationError {
-        #[error("{0}")]
+        #[error("couldn't deserialize value: {0}")]
         DeserializationFailure(#[from] serde_json::Error),
         #[error("couldn't extract output")]
         ValueExtractionFailure { output: osascript::session::ReplOutput },
-        #[error("{0}")]
+        #[error("internal osascript session failure: {0}")]
         SessionFailure(#[from] osascript::session::SessionError),
-        #[error("{0}")]
-        SingleEvaluationFailure(#[from] tokio::io::Error),
+        #[error("io failure: {0}")]
+        IoFailure(#[from] tokio::io::Error),
     }
 
     #[derive(Debug, thiserror::Error)]
     pub enum SingleEvaluationError {
-        #[error("{0}")]
+        #[error("couldn't deserialize failure: {0}")]
         DeserializationFailure(#[from] serde_json::Error),
         #[error("couldn't extract output")]
         ValueExtractionFailure { output: osascript::session::ReplOutput },
-        #[error("{0}")]
-        IoError(#[from] tokio::io::Error),
+        #[error("io failure: {0}")]
+        IoFailure(#[from] tokio::io::Error),
     }
     
     

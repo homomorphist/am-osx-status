@@ -79,7 +79,7 @@ impl ApplicationData {
     pub async fn fetch() -> Result<Self, crate::error::SingleEvaluationError> {
         osascript::run("JSON.stringify(Application(\"Music\").properties())", osascript::Language::JavaScript)
             .await
-            .map_err(crate::error::SingleEvaluationError::IoError)
+            .map_err(crate::error::SingleEvaluationError::IoFailure)
             .and_then(|output| Ok(serde_json::from_str(&output.stdout()).map(ApplicationData::fix)?))
     }
 }

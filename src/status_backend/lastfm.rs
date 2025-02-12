@@ -54,28 +54,33 @@ impl LastFM {
         Self { client: Arc::new(client) }
     }
 
-    fn track_to_heard(track: &osa_apple_music::track::Track) -> lastfm::scrobble::HeardTrackInfo<'_> {
-        lastfm::scrobble::HeardTrackInfo {
-            artist: track.artist.as_ref().map(|s| s.split(" & ").next().unwrap()).unwrap_or("Unknown Artist"),
+    /// Returns `None` if the track is missing required data (the artist or track name).
+    fn track_to_heard(track: &osa_apple_music::track::Track) -> Option<lastfm::scrobble::HeardTrackInfo<'_>> {
+        Some(lastfm::scrobble::HeardTrackInfo {
+            artist: track.artist.as_ref().map(|s| s.split(" & ").next().unwrap())?,
             track: &track.name,
             album: track.album.name.as_deref(),
             album_artist: if track.album.artist.as_ref().is_some_and(|aa| Some(aa) != track.artist.as_ref()) { Some(track.album.artist.as_ref().unwrap()) } else { None },
             duration_in_seconds: track.duration.map(|d| d as u32),
             track_number: track.track_number.map(|n| n.get() as u32),
             mbid: None
-        }
+        })
     }
 }
 #[async_trait::async_trait]
 impl StatusBackend for LastFM {
     #[tracing::instrument(skip(self, context), level = "debug")]
     async fn record_as_listened(&self, context: super::BackendContext<()>) {
-        if let Err(error) = self.client.scrobble(&[lastfm::scrobble::Scrobble {
-            chosen_by_user: None,
-            timestamp: chrono::Utc::now(),
-            info: Self::track_to_heard(context.track.as_ref())
-        }]).await {
-            tracing::error!(?error, "last.fm mark-listened failure")
+        if let Some(info) = Self::track_to_heard(context.track.as_ref()) {
+            if let Err(error) = self.client.scrobble(&[lastfm::scrobble::Scrobble {
+                chosen_by_user: None,
+                timestamp: chrono::Utc::now(),
+                info
+            }]).await {
+                tracing::error!(?error, "last.fm mark-listened failure")
+            }
+        } else {
+            tracing::warn!("scrobble skipped; track is missing required data (artist name)")
         }
     }
 
@@ -92,8 +97,12 @@ impl StatusBackend for LastFM {
 
     #[tracing::instrument(skip(self, context), level = "debug")]
     async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
-        if let Err(error) = self.client.set_now_listening(&Self::track_to_heard(context.track.as_ref())).await {
-            tracing::error!(?error, "last.fm now-listening dispatch failure")
+        if let Some(info) = Self::track_to_heard(context.track.as_ref()) {
+            if let Err(error) = self.client.set_now_listening(&info).await {
+                tracing::error!(?error, "last.fm now-listening dispatch failure")
+            }
+        } else {
+            tracing::warn!("last.fm now-listening dispatch skipped; track is missing required data (artist name)")
         }
     }
 }
