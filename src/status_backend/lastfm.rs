@@ -1,9 +1,10 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc};
+use chrono::TimeDelta;
 
-use super::StatusBackend;
+use super::{StatusBackend, TimeDeltaExtension as _};
 
-const FOUR_MINUTES: Duration = Duration::from_secs(4 * 60);
-const THIRTY_SECONDS: Duration = Duration::from_secs(30);
+const FOUR_MINUTES: TimeDelta = TimeDelta::new(4 * 60, 0).unwrap();
+const THIRTY_SECONDS: TimeDelta = TimeDelta::new(30, 0).unwrap();
 
 use std::sync::LazyLock;
 use lastfm::auth::ClientIdentity;
@@ -81,7 +82,7 @@ impl StatusBackend for LastFM {
     /// - <https://www.last.fm/api/scrobbling#scrobble-requests>
     async fn check_eligibility(&self, context: super::BackendContext<()>) -> bool {
         if let Some(duration) = context.track.duration {
-            let length = Duration::from_secs_f32(duration);
+            let length = TimeDelta::from_secs_f32(duration);
             let time_listened = context.listened.lock().await.total_heard();
             if length < THIRTY_SECONDS { return false };
             time_listened >= FOUR_MINUTES ||

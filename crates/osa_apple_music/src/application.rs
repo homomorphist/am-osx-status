@@ -63,6 +63,7 @@ pub struct ApplicationData {
     pub volume: u8,
 
     /// The position of the current track in seconds.
+    #[serde(rename = "playerPosition")]
     pub position: Option<f32>,
 }
 impl ApplicationData {
@@ -79,6 +80,6 @@ impl ApplicationData {
         osascript::run("JSON.stringify(Application(\"Music\").properties())", osascript::Language::JavaScript)
             .await
             .map_err(crate::error::SingleEvaluationError::IoError)
-            .and_then(|output| { Ok(serde_json::from_str(&output.stdout()).map(ApplicationData::fix)?) })
+            .and_then(|output| Ok(serde_json::from_str(&output.stdout()).map(ApplicationData::fix)?))
     }
 }

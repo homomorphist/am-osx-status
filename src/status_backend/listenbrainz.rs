@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use maybe_owned_string::MaybeOwnedStringDeserializeToOwned;
 
-use super::StatusBackend;
+use super::{StatusBackend, TimeDeltaExtension as _};
 
-const FOUR_MINUTES: core::time::Duration = core::time::Duration::from_secs(4 * 60);
+const FOUR_MINUTES: chrono::TimeDelta = chrono::TimeDelta::new(4 * 60, 0).unwrap();
 
-use brainz::music::request_client::ProgramInfo;
+use brainz::{listen::v1::submit_listens::additional_info, music::request_client::ProgramInfo};
 
 type S = MaybeOwnedStringDeserializeToOwned<'static>;
 type P = ProgramInfo<S>;
@@ -49,12 +49,12 @@ impl ListenBrainz {
         Self { client: Arc::new(brainz::listen::v1::Client::new(program_info, Some(token))) }
     }
 
-    fn basic_track_metadata(track: &osa_apple_music::track::Track) -> brainz::listen::v1::submit_listens::BasicTrackMetadata<'_> {
-        brainz::listen::v1::submit_listens::BasicTrackMetadata {
-            artist: track.artist.as_deref().unwrap_or("Unknown Artist"),
+    fn basic_track_metadata(track: &osa_apple_music::track::Track) -> Option<brainz::listen::v1::submit_listens::BasicTrackMetadata<'_>> {
+        Some(brainz::listen::v1::submit_listens::BasicTrackMetadata {
+            artist: track.artist.as_deref()?,
             track: &track.name,
             release: track.album.name.as_deref()
-        }
+        })
     }
 
     fn additional_info<'a>(track: &'a osa_apple_music::track::Track, app: &'a osa_apple_music::application::ApplicationData, program: &'a brainz::music::request_client::ProgramInfo<S>) -> brainz::listen::v1::submit_listens::additional_info::AdditionalInfo<'a> {
@@ -76,12 +76,12 @@ impl ListenBrainz {
 impl StatusBackend for ListenBrainz {
     #[tracing::instrument(skip(self, context), level = "debug")]   
     async fn record_as_listened(&self, context: super::BackendContext<()>) {
-        // TODO: catch net error or add to queue. ideally queue persist offline
-        if let Err(error) = self.client.submit_playing_now(
-            Self::basic_track_metadata(&context.track),
-            Some(Self::additional_info(&context.track, &context.app, self.client.get_program_info()))
-        ).await {
-            tracing::error!(?error, "listenbrainz mark-listened failure")
+        if let Some(track_data) = Self::basic_track_metadata(&context.track) {
+            let additional_info = Self::additional_info(&context.track, &context.app, self.client.get_program_info());
+            // TODO: catch network errors and add to a queue.
+            if let Err(error) = self.client.submit_playing_now(track_data, Some(additional_info)).await {
+                tracing::error!(?error, "listenbrainz mark-listened failure")
+            }
         }
     }
 
@@ -97,11 +97,13 @@ impl StatusBackend for ListenBrainz {
 
     #[tracing::instrument(skip(self, context), level = "debug")]
     async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
-        if let Err(error) = self.client.submit_playing_now(
-            Self::basic_track_metadata(&context.track),
-            Some(Self::additional_info(&context.track, &context.app, self.client.get_program_info()))
-        ).await {
-            tracing::error!(?error, "listenbrainz now-listening failure")
+        // TODO: catch network errors and add to a queue.
+        if let Some(track_data) = Self::basic_track_metadata(&context.track) {
+            let additional_info = Self::additional_info(&context.track, &context.app, self.client.get_program_info());
+            let started_listening_at = if let Some(at) = context.listened.lock().await.started_at() { at } else { tracing::error!("no start duration for current listening"); return };
+            if let Err(error) = self.client.submit_listen(track_data, started_listening_at, Some(additional_info)).await {
+                tracing::error!(?error, "listenbrainz now-listening failure")
+            }
         }
     }
 }

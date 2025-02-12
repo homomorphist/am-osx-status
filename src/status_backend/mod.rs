@@ -3,6 +3,39 @@ use tokio::sync::Mutex;
 
 use crate::data_fetching::components::ComponentSolicitation;
 
+use chrono::TimeDelta;
+type DateTime = chrono::DateTime<chrono::Utc>;
+
+
+trait TimeDeltaExtension {
+    fn from_secs_f32(secs: f32) -> Self;
+    fn as_secs_f32(&self) -> f32;
+    fn as_secs_f64(&self) -> f64;
+}
+impl TimeDeltaExtension for TimeDelta {
+    fn from_secs_f32(secs: f32) -> Self {
+        let seconds = secs.trunc() as i64;
+        let nanoseconds = (secs.fract() * 1e9) as u32;
+        TimeDelta::new(seconds, nanoseconds).expect("bad duration")
+    }
+    fn as_secs_f32(&self) -> f32 {
+        self.num_microseconds().expect("duration overflow") as f32 / 1e6
+    }
+    fn as_secs_f64(&self) -> f64 {
+        self.num_microseconds().expect("duration overflow") as f64 / 1e6
+    }
+}
+
+// const fn extract_delta_seconds_f32(delta: chrono::TimeDelta) -> f32 {
+//     delta.num_microseconds().expect("duration overflow") as f32 / 1e6
+// }
+
+// fn delta_to_duration(delta: chrono::TimeDelta) -> Duration {
+//     let u64: u64 = delta.num_microseconds().expect("duration overflow").try_into().expect("duration is negative");
+//     Duration::from_micros(u64)}
+// }
+
+
 #[cfg(feature = "listenbrainz")]
 pub mod listenbrainz;
 #[cfg(feature = "lastfm")]
@@ -13,14 +46,14 @@ pub mod discord;
 #[derive(Debug)]
 pub struct ListenedChunk {
     started_at_song_position: f32, // seconds
-    started_at: Instant,
-    duration: Duration 
+    started_at: DateTime,
+    duration: chrono::TimeDelta 
 }
 impl ListenedChunk {
-    pub fn ended_at(&self) -> Instant {
-        self.started_at.checked_add(self.duration).unwrap()
+    pub fn ended_at(&self) -> DateTime {
+        self.started_at.checked_add_signed(self.duration).expect("date out of range")
     }
-    pub const fn ended_at_song_position(&self) -> f32 {
+    pub fn ended_at_song_position(&self) -> f32 {
         self.started_at_song_position + self.duration.as_secs_f32()
     }
 }
@@ -28,26 +61,26 @@ impl ListenedChunk {
 #[derive(Debug, Clone)]
 pub struct CurrentListened {
     started_at_song_position: f32, // seconds
-    started_at: Instant,
+    started_at: DateTime,
 }
 impl From<CurrentListened> for ListenedChunk {
     fn from(value: CurrentListened) -> Self {
         ListenedChunk {
             started_at: value.started_at,
             started_at_song_position: value.started_at_song_position,
-            duration: Instant::now().duration_since(value.started_at)
+            duration: chrono::Utc::now().signed_duration_since(value.started_at),
         }
     }
 }
 impl CurrentListened {
     pub fn new_with_position(position: f32) -> Self {
         Self {
-            started_at: Instant::now(),
+            started_at: chrono::Utc::now(),
             started_at_song_position: position
         }
     }
     pub fn get_expected_song_position(&self) -> f32 {
-        self.started_at_song_position + Instant::now().duration_since(self.started_at).as_secs_f32()
+        self.started_at_song_position + chrono::Utc::now().signed_duration_since(self.started_at).as_secs_f32()
     }
 }
 
@@ -66,6 +99,10 @@ impl Listened {
             contiguous: vec![],
             current: Some(CurrentListened::new_with_position(position)),
         }
+    }
+
+    pub fn started_at(&self) -> Option<DateTime> {
+        self.current.as_ref().map(|c| c.started_at)
     }
 
     fn find_index_for_current(&self, current: &CurrentListened) -> usize {
@@ -88,14 +125,14 @@ impl Listened {
         }
     }
     
-    pub fn total_heard_unique(&self) -> Duration {
+    pub fn total_heard_unique(&self) -> chrono::TimeDelta {
         if self.contiguous.is_empty() {
             return self.current.as_ref()
-                .map(|current| Instant::now().duration_since(current.started_at))
+                .map(|current| chrono::Utc::now().signed_duration_since(current.started_at))
                 .unwrap_or_default()
         }
         
-        let mut total = Duration::new(0, 0);
+        let mut total = chrono::TimeDelta::zero();
         let mut last_end_position = 0.0;
 
         let current = self.current.clone().map(|current| (
@@ -117,7 +154,9 @@ impl Listened {
             let chunk_end = chunk.ended_at_song_position();
 
             if chunk_end > last_end_position {
-                total += Duration::from_secs_f32(chunk_end - chunk_start.max(last_end_position));
+                let len = chunk_end - chunk_start.max(last_end_position);
+                
+                total += chrono::TimeDelta::new(len.trunc() as i64, (len.fract() * 1e6) as u32).expect("bad duration");
                 last_end_position = chunk_end;
             }
         }
@@ -125,12 +164,12 @@ impl Listened {
         total
     }
 
-    pub fn total_heard(&self) -> Duration {
+    pub fn total_heard(&self) -> chrono::TimeDelta {
         self.contiguous.iter()
             .map(|d| d.duration)
             .fold(
                 self.current.as_ref()
-                    .map(|c| Instant::now().duration_since(c.started_at))
+                    .map(|c| chrono::Utc::now().signed_duration_since(c.started_at))
                     .unwrap_or_default(),
                 |a, b| a + b
             )

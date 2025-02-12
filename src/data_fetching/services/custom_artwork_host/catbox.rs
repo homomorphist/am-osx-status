@@ -34,8 +34,8 @@ impl CatboxHost {
     fn key_for_track(track: &osa_apple_music::track::Track) -> String {
         // no consistent access to album persistent id (musicdb support may be disabled); merge unique-ish details
         format!("{}:{}",
-            track.artist.as_ref().map(String::as_str).unwrap_or_default(),
-            track.album.name.as_ref().map(String::as_str).unwrap_or_default()
+            track.artist.as_deref().unwrap_or("Unknown Artist"),
+            track.album.name.as_deref().unwrap_or("Unknown Album")
         )
     }
 

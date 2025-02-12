@@ -16,6 +16,8 @@ mod config;
 mod cli;
 mod util;
 
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
+
 fn watch_for_termination() -> (
     Arc<std::sync::atomic::AtomicBool>,
     std::pin::Pin<Box<impl std::future::Future<Output = tokio::signal::unix::SignalKind>>>
@@ -119,8 +121,12 @@ async fn main() -> ExitCode {
                 std::process::exit(1);
             });
 
+
+            let mut interval = tokio::time::interval(POLL_INTERVAL);
+
             while !term.load(std::sync::atomic::Ordering::Relaxed) {
                 proc_once(context.clone()).await;
+                interval.tick().await;
             }
         },
         Command::Service { ref action } => {

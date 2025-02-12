@@ -58,10 +58,7 @@ impl Session {
 
     pub async fn now_playing(&mut self) -> Result<Option<crate::Track>, error::SessionEvaluationError> {
         match self.run_and_prepare_json("JSON.stringify(Application(\"Music\").currentTrack().properties())").await {
-            Ok(json) => {
-                println!("{}", &json);
-                serde_json::from_str(&json).map_err(error::SessionEvaluationError::DeserializationFailure).map(Some)
-            },
+            Ok(json) => serde_json::from_str(&json).map_err(error::SessionEvaluationError::DeserializationFailure).map(Some),
             Err(error::SessionEvaluationError::ValueExtractionFailure { output }) if output.raw.get_inner() == b"!! Error: Error: Can't get object." => Ok(None),
             Err(error) => Err(error),
         }
