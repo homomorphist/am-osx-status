@@ -1,6 +1,7 @@
 #![allow(unused)]
 use std::{process::ExitCode, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}};
 use config::{ConfigPathChoice, ConfigRetrievalError};
+use data_fetching::services::apple_music;
 use musicdb::MusicDB;
 use tracing::Instrument;
 use util::ferror;
@@ -90,7 +91,7 @@ async fn main() -> ExitCode {
             config.setup_side_effects().await;
 
             let backends = status_backend::StatusBackends::new(&config).await;
-            let mut context = PollingContext::new(backends, Arc::clone(&term));
+            let mut context = PollingContext::new(backends, Arc::clone(&term)).await;
 
             // If we get stuck somewhere in the main loop, we still want a way to exit if the user/system desires.
             tokio::spawn(async {
@@ -167,13 +168,14 @@ async fn main() -> ExitCode {
 struct PollingContext<'a> {
     terminating: Arc<AtomicBool>,
     backends: status_backend::StatusBackends,
-    pub last_track: Option<Arc<apple_music::Track>>,
+    pub last_track: Option<Arc<osa_apple_music::track::Track>>,
     pub last_track_started_at: Instant,
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
-    musicdb: Option<musicdb::MusicDB<'a>>
+    musicdb: Option<musicdb::MusicDB<'a>>,
+    jxa: osa_apple_music::Session,
 }
 impl PollingContext<'_> {
-    fn new(backends: status_backend::StatusBackends, terminating: Arc<AtomicBool>) -> Self {
+    async fn new(backends: status_backend::StatusBackends, terminating: Arc<AtomicBool>) -> Self {
         Self {
             terminating,
             backends,
@@ -181,29 +183,31 @@ impl PollingContext<'_> {
             last_track_started_at: Instant::now(),
             custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
             musicdb: Some(MusicDB::default()),
+            jxa: osa_apple_music::Session::new().await.expect("failed to create `osa_apple_music` session")
         }
     }
 }
 
 #[tracing::instrument(skip(context))]
 async fn proc_once(context: &mut PollingContext<'_>) {
-    use apple_music::{AppleMusic, PlayerState, Track};
-
     // TODO: poll discord presence
 
-    let app = match tracing::info_span!("app status retrieval").in_scope(AppleMusic::get_application_data) {
+    let app = match tracing::info_span!("app status retrieval").in_scope(|| context.jxa.application()).await {
         Ok(app) => Arc::new(app),
         Err(err) => {
-            use apple_music::Error;
-            match &err {
-                Error::DeserializationFailed if context.terminating.load(std::sync::atomic::Ordering::Relaxed) => { return } // child killed before us
-                Error::DeserializationFailed | Error::NoData | Error::AppCommandFailed => { tracing::error!("{:?}", &err); return },
-                Error::NotPlaying => { return }
+            use osa_apple_music::error::SessionEvaluationError;
+            match err {
+                SessionEvaluationError::DeserializationFailure(_) => tracing::error!("failed to deserialize application data"),
+                SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract application data"),
+                SessionEvaluationError::SessionFailure(_) |
+                SessionEvaluationError::SingleEvaluationFailure(_) => tracing::error!("failed to retrieve application data")
             }
+            return;
         }
     };
 
-    match app.player_state.as_ref().expect("could not retrieve player state") {
+    use osa_apple_music::application::PlayerState;
+    match app.state {
         PlayerState::FastForwarding | PlayerState::Rewinding => unimplemented!(),
         PlayerState::Stopped => {
             #[cfg(feature = "discord")]
@@ -233,20 +237,13 @@ async fn proc_once(context: &mut PollingContext<'_>) {
         },
 
         PlayerState::Playing => {
-            let track = match tracing::info_span!("track retrieval").in_scope(AppleMusic::get_current_track) {
-                Ok(track) => Arc::new(track),
-                Err(err) => {
-                    use apple_music::Error;
-                    match &err {
-                        Error::DeserializationFailed if context.terminating.load(std::sync::atomic::Ordering::Relaxed) => { return } // child killed before us
-                        Error::DeserializationFailed | Error::NoData | Error::AppCommandFailed => { tracing::error!("{:?}", &err); return },
-                        Error::NotPlaying => { return }
-                    }
-                }
+            let track = match tracing::info_span!("track retrieval").in_scope(|| context.jxa.now_playing()).await {
+                Ok(Some(track)) => Arc::new(track),
+                Ok(None) => { dbg!("no track found"); return },
+                Err(err) => { dbg!(err); return }
             };
 
-            
-            let previous = context.last_track.as_ref().map(|v: &Arc<Track>| &v.persistent_id);
+            let previous = context.last_track.as_ref().map(|v: &Arc<osa_apple_music::Track>| &v.persistent_id);
             if previous != Some(&track.persistent_id) {
                 tracing::trace!("new track: {:?}", track);
                 let now = Instant::now();
@@ -254,7 +251,7 @@ async fn proc_once(context: &mut PollingContext<'_>) {
                 
                 use data_fetching::AdditionalTrackData;
                 let solicitation = context.backends.get_solicitations().await;
-                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, &track, context.musicdb.as_ref(), context.custom_artwork_host.as_mut());
+                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, track.as_ref(), context.musicdb.as_ref(), context.custom_artwork_host.as_mut());
                 let additional_data = if let Some(previous) = context.last_track.clone() {
                     let pending_dispatch = context.backends.dispatch_track_ended(previous, app.clone(), elapsed);
                     async move { 

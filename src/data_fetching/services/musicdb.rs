@@ -1,4 +1,3 @@
-use apple_music::Track;
 use musicdb::MusicDB;
 
 use super::artworkd::StoredArtwork; // todo: not import from there // <-- wtf did i mean when i typed that
@@ -12,7 +11,7 @@ pub enum MusicDbTrackArtworkRetrievalFailure {
 }
 
 // Ok(None) = track exists but no artwork
-pub fn get_track_artwork(musicdb: &MusicDB, track: &Track) -> Result<Option<StoredArtwork>, MusicDbTrackArtworkRetrievalFailure> {
+pub fn get_track_artwork(musicdb: &MusicDB, track: &osa_apple_music::track::Track) -> Result<Option<StoredArtwork>, MusicDbTrackArtworkRetrievalFailure> {
     let db = musicdb.get_view();
     let id = AsRef::<str>::as_ref(&track.persistent_id).try_into()?;
     let track = db.tracks.get(&id).ok_or(MusicDbTrackArtworkRetrievalFailure::NoTrackWithId)?;

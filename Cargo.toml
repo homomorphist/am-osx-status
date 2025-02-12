@@ -7,7 +7,6 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-apple-music = "0.11.5"
 async-trait = "0.1.83"
 brainz = { path = "./crates/brainz/" }
 catbox = "0.8.2"
@@ -42,6 +41,7 @@ tokio-stream = "0.1.17"
 tokio-util = "0.7.13"
 tokio-serde = { version = "0.9.0", features = ["bincode"] }
 kqueue = "1.0.8"
+osa_apple_music = { path = "./crates/osa_apple_music" }
 
 [features]
 default = ["discord", "listenbrainz", "lastfm"]

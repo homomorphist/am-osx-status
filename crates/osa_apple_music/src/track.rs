@@ -1,9 +1,11 @@
 #![allow(unused)]
 
+type Time = chrono::DateTime<chrono::Utc>;
+
 use std::{default, num::NonZeroU8};
 
 use serde_with::*;
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
 
 macro_rules! non_zero_conv {
     ($(($ty: ty, $ident: ident) $(,)?)*) => {
@@ -26,10 +28,57 @@ non_zero_conv!(
     (u16, u16_ZeroAsNone)
 );
 
+rating::def_rating!({}, Rating);
+impl<T> PartialEq<T> for Rating where T: AsRef<Rating> {
+    fn eq(&self, other: &T) -> bool {
+        self == other.as_ref()
+    }
+}
+
+pub(crate) mod rating {
+    use super::*;
+
+    #[macro_export]
+    macro_rules! def_rating {
+        ({ $(#[$meta: meta])* }, $ident: ident) =>  {
+            #[derive(Debug, Deserialize, PartialEq)]
+            $(#[$meta])*
+            pub enum $ident {
+                User(u8),
+                Computed(u8)
+            }
+        };
+        ({ $(#[$meta: meta])* }, $ident: ident, equivalent => $into: ident) => {
+            def_rating!({ $(#[$meta])* }, $ident);
+            impl From<$ident> for $into {
+                fn from(value: $ident) -> $into {
+                    unsafe { core::mem::transmute(value) }
+                }
+            }
+            impl From<$into> for $ident {
+                fn from(value: $into) -> $ident {
+                    unsafe { core::mem::transmute(value) }
+                }
+            }
+            impl AsRef<$into> for $ident {
+                fn as_ref(&self) -> &$into {
+                    unsafe { core::mem::transmute(self) }
+                }
+            }
+        }
+    }
+
+    pub use def_rating;
+
+    def_rating!({
+        /// The rating of a track's album.
+        #[serde(tag = "albumRatingKind", content = "albumRating", rename_all = "lowercase")]
+    }, ForTrackAlbum, equivalent => Rating);
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")] // with space delimiters
-enum TrackCloudStatus {
+pub enum TrackCloudStatus {
     /// The cloud status of this track is unknown / ineligible.
     Unknown,
     Purchased,
@@ -53,7 +102,7 @@ enum TrackCloudStatus {
 }
 
 #[derive(Debug, Deserialize)]
-struct TrackDownloader {
+pub struct TrackDownloader {
     /// The Apple ID of the person who downloaded this track.
     #[serde(rename = "downloaderAppleID")]
     apple_id: String,
@@ -63,7 +112,7 @@ struct TrackDownloader {
 }
 
 #[derive(Debug, Deserialize)]
-struct TrackPurchaser {
+pub struct TrackPurchaser {
     /// The Apple ID of the person who purchased this track.
     #[serde(rename = "purchaserAppleID")]
     apple_id: String,
@@ -74,17 +123,16 @@ struct TrackPurchaser {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum MediaKind {
+pub enum MediaKind {
     Song,
     #[serde(rename = "music video")]
     MusicVideo,
-
     Unknown
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EpisodeDetails {
+pub struct EpisodeDetails {
     /// The episode ID of the track.
     #[serde(rename = "episodeID")]
     pub episode_id: String,
@@ -95,15 +143,14 @@ struct EpisodeDetails {
 
 
 #[derive(Debug, Deserialize)]
-#[serde(bound = "D: Deserialize<'de>")]
-struct PlayedInfo<D> {
+pub struct PlayedInfo {
     /// Number of times this track has been played.
     #[serde(rename = "playedCount")]
     times: u32,
 
     /// The date and time this track was last played.
     #[serde(rename = "playedDate")]
-    last: Option<D>,
+    last: Option<Time>,
 
     /// Whether this track has never been played before.
     #[serde(rename = "unplayed")]
@@ -111,19 +158,18 @@ struct PlayedInfo<D> {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(bound = "D: Deserialize<'de>")]
-struct SkippedInfo<D> {
+pub struct SkippedInfo {
     /// Number of times this track has been skipped.
     #[serde(rename = "skippedCount")]
     times: u32,
 
     /// The date and time this track was last skipped.
     #[serde(rename = "skippedDate")]
-    last: Option<D>,
+    last: Option<Time>,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize, Default, Clone)]
-struct MovementInfo {
+pub struct MovementInfo {
     /// The name of the movement.
     #[serde(rename = "movement")]
     name: String,
@@ -138,7 +184,6 @@ serde_with::serde_conv!(
     Option<MovementInfo>,
     |v: &(Option<MovementInfo>)| v.clone().unwrap_or_default(),
     |value: MovementInfo| -> Result<_, std::convert::Infallible> {
-        dbg!(&value);
        if value.name.is_empty() {
             Ok(None)
         } else {
@@ -151,7 +196,7 @@ serde_with::serde_conv!(
 #[serde_as]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SortingOverrides {
+pub struct SortingOverrides {
     /// Override string to use for the track when sorting by album
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(rename = "sortAlbum")]
@@ -185,7 +230,7 @@ struct SortingOverrides {
 
 
 #[derive(Debug, Deserialize)]
-struct PlayableRange {
+pub struct PlayableRange {
     /// The start of the playable region, in seconds. Defaults to zero.
     pub start: f32,
 
@@ -195,7 +240,7 @@ struct PlayableRange {
 }
 
 #[derive(Debug, Deserialize)]
-enum EqualizerPreset {
+pub enum EqualizerPreset {
     Acoustic,
     Classical,
     Dance,
@@ -262,8 +307,8 @@ impl core::str::FromStr for EqualizerPreset {
 
 #[serde_as]
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase", bound = "D: Deserialize<'de>")] 
-struct BasicTrack<D> {
+#[serde(rename_all = "camelCase")]
+pub struct BasicTrack {
     /// The library's persistent ID for the track.
     /// This is a 16-character uppercase hexadecimal string.
     #[serde(rename = "persistentID")]
@@ -323,7 +368,7 @@ struct BasicTrack<D> {
 
     /// The date the track was added to the library.
     /// Unavailable if, for example, a song were favorited without being "added".
-    pub date_added: Option<D>, // TODO: 
+    pub date_added: Option<Time>,
 
     /// The description of the track.
     #[serde_as(as = "NoneAsEmptyString")]
@@ -390,7 +435,7 @@ struct BasicTrack<D> {
 
     // TODO: What does "modification" actually mean?
     /// The date at which this track was last modified.
-    pub modification_date: Option<D>,
+    pub modification_date: Option<Time>,
 
     /// The name and index of this movement in the work, if applicable.
     #[serde(flatten)]
@@ -399,7 +444,7 @@ struct BasicTrack<D> {
 
     /// The details on how many times and when this track was last played.
     #[serde(flatten)]
-    pub played: PlayedInfo<D>,
+    pub played: PlayedInfo,
 
     /// Who, if anybody, "purchased" this track.
     /// Purchasing, in this case, can also mean just downloading for offline usage.
@@ -409,10 +454,10 @@ struct BasicTrack<D> {
 
     /// The rating on the track.
     #[serde(flatten)]
-    pub rating: Option<crate::Rating>,
+    pub rating: Option<Rating>,
 
     /// The release date of this track.
-    pub release_date: Option<D>,
+    pub release_date: Option<Time>,
     
     /// The sample rate of the track, in hertz.
     /// Not available on audio streams.
@@ -427,7 +472,7 @@ struct BasicTrack<D> {
 
     /// The details on how many times and when this track was last skipped.
     #[serde(flatten)]
-    pub skipped: SkippedInfo<D>,
+    pub skipped: SkippedInfo,
 
     // ?
     /// The show name of the track/
@@ -474,16 +519,15 @@ struct BasicTrack<D> {
 
 #[serde_as]
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase", bound = "D: Deserialize<'de>")]
-struct NetworkStreamTrack<D> {
+pub struct NetworkStreamTrack {
     /// The track details.
     #[serde(flatten)]
-    pub track: BasicTrack<D>,
+    pub track: BasicTrack,
     /// The address of the network stream.
     pub address: String,
 }
-impl<D> core::ops::Deref for NetworkStreamTrack<D> {
-    type Target = BasicTrack<D>;
+impl core::ops::Deref for NetworkStreamTrack {
+    type Target = BasicTrack;
     fn deref(&self) -> &Self::Target {
         &self.track
     }
@@ -492,16 +536,15 @@ impl<D> core::ops::Deref for NetworkStreamTrack<D> {
 
 #[serde_as]
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase", bound = "D: Deserialize<'de>")]
-struct LocalTrack<D> {
+pub struct LocalTrack {
     /// The track details.
     #[serde(flatten)]
-    pub track: BasicTrack<D>,
+    pub track: BasicTrack,
     /// The address of the network stream.
     pub address: String,
 }
-impl<D> core::ops::Deref for LocalTrack<D> {
-    type Target = BasicTrack<D>;
+impl core::ops::Deref for LocalTrack {
+    type Target = BasicTrack;
     fn deref(&self) -> &Self::Target {
         &self.track
     }
@@ -509,29 +552,42 @@ impl<D> core::ops::Deref for LocalTrack<D> {
 
 #[derive(Deserialize, Debug)]
 #[serde(untagged)] // it doesn't wanna let me tag for whatever reason
-enum TrackVariant<D> {
-    #[serde(rename = "fileTrack")]
-    NetworkStream(NetworkStreamTrack<D>),
-    #[serde(rename = "urlTrack")]
-    Local(LocalTrack<D>),
-    #[serde(rename = "sharedTrack")]
-    Shared(BasicTrack<D>),
+pub enum Track {
+    // #[serde(rename = "fileTrack")]
+    NetworkStream(NetworkStreamTrack),
+    // #[serde(rename = "urlTrack")]
+    Local(LocalTrack),
+    // #[serde(rename = "sharedTrack")]
+    Shared(BasicTrack),
 }
-impl<D> core::ops::Deref for TrackVariant<D> {
-    type Target = BasicTrack<D>;
+impl core::ops::Deref for Track {
+    type Target = BasicTrack;
     fn deref(&self) -> &Self::Target {
         match self {
-            TrackVariant::NetworkStream(v) => &v.track,
-            TrackVariant::Local(v) => &v.track,
-            TrackVariant::Shared(v) => v,
+            Track::NetworkStream(v) => &v.track,
+            Track::Local(v) => &v.track,
+            Track::Shared(v) => v,
         }
+    }
+}
+impl Track {
+    /// Fetches and returns the currently playing song.
+    /// If you find yourself doing this repeatedly, consider using [`Session`](crate::Session) instead.
+    pub async fn get_now_playing() -> Result<Self, crate::error::SingleEvaluationError> {
+        osascript::run("JSON.stringify(Application(\"Music\").currentTrack().properties())", osascript::Language::JavaScript)
+            .await
+            .map_err(crate::error::SingleEvaluationError::IoError)
+            .and_then(|output| {
+                dbg!(&output);
+                Ok(serde_json::from_str(&output.stdout())?)
+            })
     }
 }
 
 #[serde_as]
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct TrackAlbum {
+pub struct TrackAlbum {
     /// The name of the album that this track is in.
     #[serde(rename = "album")]
     #[serde_as(as = "NoneAsEmptyString")]
@@ -552,7 +608,7 @@ struct TrackAlbum {
     
     /// The rating of the album for this track (0 to 100)
     #[serde(rename = "albumRating", flatten)]
-    pub rating: Option<crate::rating::ForTrackAlbum>,
+    pub rating: Option<rating::ForTrackAlbum>,
 
     /// The number of movements in the work
     pub movement_count: u16,
@@ -571,7 +627,6 @@ struct TrackAlbum {
 
 #[cfg(test)]
 mod tests {
-    use crate::Rating;
     use super::*;
     
     #[test]
@@ -601,34 +656,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "must be explicitly run"]
-    async fn test_real()  {
-        type Date = chrono::DateTime<chrono::Utc>;
-        use osascript::{Session, ReplOutput};
-        let mut session = Session::javascript().await.expect("cannot create");
-        let result = session.run("JSON.stringify(Application(\"Music\").selection()[0].properties())").await.unwrap();
-        dbg!(result.raw.as_lossy_str());
-        let result = result.guess().unwrap();
-        let result = &result[1..result.len()-1]; // remove quotes
-        let result = unescape::unescape(result).unwrap();
-        println!("{}", result);
-        let result: TrackVariant<Date> = serde_json::from_str(&result).unwrap();
-        println!("{:#?}", result);
-    }
-
-    #[tokio::test]
-    #[ignore = "must be explicitly run"]
-    async fn tesdt_real()  {
-        type Date = chrono::DateTime<chrono::Utc>;
-        use osascript::{Session, ReplOutput};
-        let mut session = Session::javascript().await.expect("cannot create");
-        let result = session.run("JSON.stringify(Application(\"Music\").properties())").await.unwrap();
-        dbg!(result.raw.as_lossy_str());
-        let result = result.guess().unwrap();
-        let result = &result[1..result.len()-1]; // remove quotes
-        let result = unescape::unescape(result).unwrap();
-        println!("{}", result);
-
+    #[ignore = "must be manually run with the correct environment setup"]
+    async fn test_real_world()  {
+        let track = Track::get_now_playing().await;
+        println!("{:#?}", track);
+        assert!(track.is_ok());
     }
 }
-

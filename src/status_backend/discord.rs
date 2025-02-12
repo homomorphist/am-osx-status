@@ -1,6 +1,5 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use discord_presence::models::{ActivityAssets, ActivityType};
-use apple_music::{MediaKind, Track};
 use tokio::sync::Mutex;
 
 use crate::{data_fetching::components::{Component, ComponentSolicitation}, util::fallback_to_default_and_log_absence};
@@ -251,21 +250,22 @@ impl StatusBackend for DiscordPresence {
         solicitation
     }
 
-    async fn record_as_listened(&self, _: Arc<Track>, _: Arc<apple_music::ApplicationData>) {
+    async fn record_as_listened(&self, _: Arc<osa_apple_music::track::Track>, _: Arc<osa_apple_music::application::ApplicationData>) {
         // no-op
     }
 
-    async fn check_eligibility(&self, _: Arc<Track>, _: &Duration) -> bool {
+    async fn check_eligibility(&self, _: Arc<osa_apple_music::track::Track>, _: &Duration) -> bool {
         false
     }
 
     #[tracing::instrument(level = "debug")]
-    async fn set_now_listening(&mut self, track: Arc<Track>, app: Arc<apple_music::ApplicationData>, additional_info: Arc<crate::data_fetching::AdditionalTrackData>) {
+    async fn set_now_listening(&mut self, track: Arc<osa_apple_music::track::Track>, app: Arc<osa_apple_music::application::ApplicationData>, additional_info: Arc<crate::data_fetching::AdditionalTrackData>) {
         let client = get_client_or_early_return!(self);
-        let player_position = fallback_to_default_and_log_absence!(app.player_position, "reading player position") as u64;
+        let player_position = fallback_to_default_and_log_absence!(app.position, "reading player position") as u64;
         let track_started_at = (chrono::Utc::now().timestamp_millis() / 1000) as u64 - player_position;
 
         let sent = client.set_activity(|activity| {
+            use osa_apple_music::track::MediaKind;
             let mut activity = activity
                 ._type(match track.media_kind {
                     MediaKind::Song | 
@@ -273,20 +273,22 @@ impl StatusBackend for DiscordPresence {
                     MediaKind::MusicVideo => ActivityType::Watching,
                 })
                 .details(&track.name)
-                .state(&track.artist)
+                .state(&track.artist.clone().unwrap_or_default())
                 .timestamps(|mut activity| {
-                    if let Some(apple_music::PlayerState::Playing) = app.player_state {
-                        activity = activity
-                            .start(track_started_at)
-                            .end(track_started_at + track.duration as u64)
+                    if app.state == osa_apple_music::application::PlayerState::Playing {
+                        if let Some(duration) = track.duration {
+                            activity = activity
+                                .start(track_started_at)
+                                .end(track_started_at + duration as u64);
+                        }
                     };
                     activity
                 })
                 .assets(|_| ActivityAssets {
-                    large_text: Some(track.album.clone()),
+                    large_text: Some(track.album.name.clone().unwrap_or_default()),
                     large_image: additional_info.images.track.clone(),
                     small_image: additional_info.images.artist.clone(),
-                    small_text: Some(track.artist.clone())
+                    small_text: Some(track.artist.clone().unwrap_or_default())
                 });
 
 

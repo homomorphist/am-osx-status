@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use apple_music::Track;
 use maybe_owned_string::MaybeOwnedStringDeserializeToOwned;
 
 use super::StatusBackend;
@@ -54,24 +53,24 @@ impl ListenBrainz {
         Self { client: Arc::new(brainz::listen::v1::Client::new(program_info, Some(token))) }
     }
 
-    fn basic_track_metadata(track: &Track) -> brainz::listen::v1::submit_listens::BasicTrackMetadata<'_> {
+    fn basic_track_metadata(track: &osa_apple_music::track::Track) -> brainz::listen::v1::submit_listens::BasicTrackMetadata<'_> {
         brainz::listen::v1::submit_listens::BasicTrackMetadata {
-            artist: &track.artist,
+            artist: &track.artist.as_ref().map(String::as_str).unwrap_or("Unknown Artist"),
             track: &track.name,
-            release: Some(&track.album)
+            release: track.album.name.as_ref().map(String::as_str)
         }
     }
 
-    fn additional_info<'a>(track: &'a Track, app: &'a apple_music::ApplicationData, program: &'a brainz::music::request_client::ProgramInfo<S>) -> brainz::listen::v1::submit_listens::additional_info::AdditionalInfo<'a> {
+    fn additional_info<'a>(track: &'a osa_apple_music::track::Track, app: &'a osa_apple_music::application::ApplicationData, program: &'a brainz::music::request_client::ProgramInfo<S>) -> brainz::listen::v1::submit_listens::additional_info::AdditionalInfo<'a> {
         use brainz::listen::v1::submit_listens::additional_info::*;
         AdditionalInfo {
-            duration: Some(core::time::Duration::from_millis((track.duration * 1000.) as u64)),
-            track_number: Some(track.track_number as u32),
+            duration: track.duration.map(|d| core::time::Duration::from_secs_f32(d)),
+            track_number: track.track_number.map(|n| n.get() as u32),
             submission_client: Some(program),
             music_service: Some(MusicService::Domain("music.apple.com")),
             media_player: Some(MediaPlayer {
                 name: "Apple Music",
-                version: app.version.as_deref(),
+                version: Some(&app.version)
             }),
             ..Default::default()
         }
@@ -80,7 +79,7 @@ impl ListenBrainz {
 #[async_trait::async_trait]
 impl StatusBackend for ListenBrainz {
     #[tracing::instrument(level = "debug")]   
-    async fn record_as_listened(&self, track: Arc<Track>, app: Arc<apple_music::ApplicationData>) {
+    async fn record_as_listened(&self, track: Arc<osa_apple_music::track::Track>, app: Arc<osa_apple_music::application::ApplicationData>) {
         // TODO: catch net error or add to queue. ideally queue persist offline
         if let Err(error) = self.client.submit_playing_now(
             Self::basic_track_metadata(&track),
@@ -91,14 +90,16 @@ impl StatusBackend for ListenBrainz {
     }
 
     /// - <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html#post--1-submit-listens>
-    async fn check_eligibility(&self, track: Arc<Track>, time_listened: &core::time::Duration) -> bool {
-        let length = core::time::Duration::from_secs_f64(track.duration);
-        time_listened >= &FOUR_MINUTES ||
-        time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
+    async fn check_eligibility(&self, track: Arc<osa_apple_music::track::Track>, time_listened: &core::time::Duration) -> bool {
+        if let Some(duration) = track.duration {
+            let length = core::time::Duration::from_secs_f32(duration);
+            time_listened >= &FOUR_MINUTES ||
+            time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
+        } else { false }
     }
 
     #[tracing::instrument(level = "debug")]
-    async fn set_now_listening(&mut self, track: Arc<Track>, app: Arc<apple_music::ApplicationData>, _: Arc<crate::data_fetching::AdditionalTrackData>) {
+    async fn set_now_listening(&mut self, track: Arc<osa_apple_music::track::Track>, app: Arc<osa_apple_music::application::ApplicationData>, _: Arc<crate::data_fetching::AdditionalTrackData>) {
         if let Err(error) = self.client.submit_playing_now(
             Self::basic_track_metadata(&track),
             Some(Self::additional_info(&track, &app, self.client.get_program_info()))

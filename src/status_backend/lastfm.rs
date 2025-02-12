@@ -1,5 +1,4 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
-use apple_music::Track;
 
 use super::StatusBackend;
 
@@ -54,14 +53,14 @@ impl LastFM {
         Self { client: Arc::new(client) }
     }
 
-    fn track_to_heard(track: &Track) -> lastfm::scrobble::HeardTrackInfo<'_> {
+    fn track_to_heard(track: &osa_apple_music::track::Track) -> lastfm::scrobble::HeardTrackInfo<'_> {
         lastfm::scrobble::HeardTrackInfo {
-            artist: &track.artist,
+            artist: &track.artist.as_ref().map(String::as_str).unwrap_or("Unknown Artist"), // will get rejected but ¯\_(ツ)_/¯
             track: &track.name,
-            album: Some(&track.album),
-            album_artist: if track.artist != track.album_artist { Some(&track.album_artist) } else { None },
-            duration_in_seconds: Some(track.duration as u32),
-            track_number: Some(track.track_number as u32),
+            album: track.album.name.as_ref().map(String::as_str),
+            album_artist: if track.album.artist.as_ref().is_some_and(|aa| Some(aa) != track.artist.as_ref()) { Some(track.album.artist.as_ref().unwrap()) } else { None },
+            duration_in_seconds: track.duration.map(|d| d as u32),
+            track_number: track.track_number.map(|n| n.get() as u32),
             mbid: None
         }
     }
@@ -69,7 +68,7 @@ impl LastFM {
 #[async_trait::async_trait]
 impl StatusBackend for LastFM {
     #[tracing::instrument(level = "debug")]
-    async fn record_as_listened(&self, track: Arc<Track>, _: Arc<apple_music::ApplicationData>) {
+    async fn record_as_listened(&self, track: Arc<osa_apple_music::track::Track>, _: Arc<osa_apple_music::application::ApplicationData>) {
         if let Err(error) = self.client.scrobble(&[lastfm::scrobble::Scrobble {
             chosen_by_user: None,
             timestamp: chrono::Utc::now(),
@@ -80,15 +79,17 @@ impl StatusBackend for LastFM {
     }
 
     /// - <https://www.last.fm/api/scrobbling#scrobble-requests>
-    async fn check_eligibility(&self, track: Arc<Track>, time_listened: &Duration) -> bool {
-        let length = Duration::from_secs_f64(track.duration);
-        if length < THIRTY_SECONDS { return false };
-        time_listened >= &FOUR_MINUTES ||
-        time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
+    async fn check_eligibility(&self, track: Arc<osa_apple_music::track::Track>, time_listened: &Duration) -> bool {
+        if let Some(duration) = track.duration {
+            let length = Duration::from_secs_f32(duration);
+            if length < THIRTY_SECONDS { return false };
+            time_listened >= &FOUR_MINUTES ||
+            time_listened.as_secs_f64() >= (length.as_secs_f64() / 2.)
+        } else { false }
     }
 
     #[tracing::instrument(level = "debug")]
-    async fn set_now_listening(&mut self, track: Arc<Track>, _: Arc<apple_music::ApplicationData>, _: Arc<crate::data_fetching::AdditionalTrackData>) {
+    async fn set_now_listening(&mut self, track: Arc<osa_apple_music::track::Track>, _: Arc<osa_apple_music::application::ApplicationData>, _: Arc<crate::data_fetching::AdditionalTrackData>) {
         if let Err(error) = self.client.set_now_listening(&Self::track_to_heard(track.as_ref())).await {
             tracing::error!(?error, "last.fm now-listening dispatch failure")
         }

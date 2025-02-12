@@ -1,6 +1,5 @@
 use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
-use apple_music::{Track, ApplicationData};
 
 use crate::data_fetching::components::ComponentSolicitation;
 
@@ -13,9 +12,9 @@ pub mod discord;
 
 #[async_trait::async_trait]
 pub trait StatusBackend: core::fmt::Debug + Send + Sync {
-    async fn set_now_listening(&mut self, track: Arc<Track>, app: Arc<ApplicationData>, data: Arc<crate::data_fetching::AdditionalTrackData>);
-    async fn record_as_listened(&self, track: Arc<Track>, app: Arc<ApplicationData>);
-    async fn check_eligibility(&self, track: Arc<Track>, time_listened: &Duration) -> bool;
+    async fn set_now_listening(&mut self, track: Arc<osa_apple_music::track::Track>, app: Arc<osa_apple_music::application::ApplicationData>, data: Arc<crate::data_fetching::AdditionalTrackData>);
+    async fn record_as_listened(&self, track: Arc<osa_apple_music::track::Track>, app: Arc<osa_apple_music::application::ApplicationData>);
+    async fn check_eligibility(&self, track: Arc<osa_apple_music::track::Track>, time_listened: &Duration) -> bool;
     async fn get_additional_data_solicitation(&self) -> ComponentSolicitation {
         ComponentSolicitation::default()
     }
@@ -78,7 +77,7 @@ impl StatusBackends {
 
     
     #[tracing::instrument(level = "debug")]
-    pub async fn dispatch_track_ended(&self, track: Arc<Track>, app: Arc<ApplicationData>, elapsed: Duration) {
+    pub async fn dispatch_track_ended(&self, track: Arc<osa_apple_music::track::Track>, app: Arc<osa_apple_music::application::ApplicationData>, elapsed: Duration) {
         let backends = self.all();
         let mut jobs = Vec::with_capacity(backends.len());
 
@@ -98,7 +97,7 @@ impl StatusBackends {
     }
 
     #[tracing::instrument(level = "debug")]
-    pub async fn dispatch_track_started(&self, track: Arc<Track>, app: Arc<ApplicationData>, data: Arc<crate::data_fetching::AdditionalTrackData>) {
+    pub async fn dispatch_track_started(&self, track: Arc<osa_apple_music::track::Track>, app: Arc<osa_apple_music::application::ApplicationData>, data: Arc<crate::data_fetching::AdditionalTrackData>) {
         let backends = self.all();
         let mut jobs = Vec::with_capacity(backends.len());
 

@@ -10,7 +10,7 @@ struct Entry {
 pub struct CatboxHost(HashMap</* album key */ String, Entry>);
 #[async_trait::async_trait]
 impl super::CustomArtworkHost for CatboxHost {
-    async fn get_for_track(&self, track: &apple_music::Track) -> Result<Option<String>, super::RetrievalError> {
+    async fn get_for_track(&self, track: &osa_apple_music::track::Track) -> Result<Option<String>, super::RetrievalError> {
         // do i really gotta clone here ??
         if let Some(entry) = self.0.get(&Self::key_for_track(track)) {
             const EXTERNAL_ACCESS_DELAY: chrono::Duration = chrono::Duration::seconds(5);
@@ -19,7 +19,7 @@ impl super::CustomArtworkHost for CatboxHost {
         } else { Ok(None) }
     }
     
-    async fn upload_for_track(&mut self, track: &apple_music::Track, path: &str) -> Result<String, super::UploadError> {
+    async fn upload_for_track(&mut self, track: &osa_apple_music::track::Track, path: &str) -> Result<String, super::UploadError> {
         const EXPIRES_IN_HOURS: u8 = 1;
         let url = ::catbox::litter::upload(path, EXPIRES_IN_HOURS).await.map_err(|error| {
             tracing::error!(error);
@@ -31,9 +31,12 @@ impl super::CustomArtworkHost for CatboxHost {
     }
 }
 impl CatboxHost {
-    fn key_for_track(track: &apple_music::Track) -> String {
+    fn key_for_track(track: &osa_apple_music::track::Track) -> String {
         // no consistent access to album persistent id (musicdb support may be disabled); merge unique-ish details
-        format!("{}:{}", track.artist, track.album)
+        format!("{}:{}",
+            track.artist.as_ref().map(String::as_str).unwrap_or_default(),
+            track.album.name.as_ref().map(String::as_str).unwrap_or_default()
+        )
     }
 
     pub fn new() -> Self {
