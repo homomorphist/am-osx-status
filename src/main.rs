@@ -122,11 +122,12 @@ async fn main() -> ExitCode {
             });
 
 
-            // let mut interval = tokio::time::interval(POLL_INTERVAL);
+            let mut interval = tokio::time::interval(POLL_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             while !term.load(std::sync::atomic::Ordering::Relaxed) {
                 proc_once(context.clone()).await;
-                // interval.tick().await;
+                interval.tick().await;
             }
         },
         Command::Service { ref action } => {
