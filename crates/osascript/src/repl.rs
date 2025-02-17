@@ -136,7 +136,7 @@ impl Session {
         if Self::will_input_require_multiline(value).map_err(|_| Error::FailedToTestForMultiline)? {
             return Err(Error::InterpretedAsMultiline { preemptive: true })
         }
-;
+
         self.writeline(value).await?;
 
         if !value.is_empty() {

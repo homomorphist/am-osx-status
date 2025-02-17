@@ -56,27 +56,8 @@ impl<'a> Utf16Str<'a> {
         })
     }
     
-    #[allow(clippy::match_overlapping_arm)] // makes it simpler
     pub fn utf8_byte_len(&self) -> usize {
-        // TODO: test this better
-        let mut sum = 0;
-        let mut skip = false;
-        let mut hi = false;
-        for n in self.bytes.iter() {
-            if skip {
-                skip = false;
-                continue;
-            }
-
-            sum += match n {
-                (0..=0x007F) => 1,
-                (0x0080..=0x07FF) => 2,
-                (0x0800..=0xDBFF) => { hi = true; continue }
-                (0xDC00..=0xDFFF) => if hi { hi = false; skip = true; 4 } else { unreachable!("low surrogate without high; validity was already checked earlier")  }
-                (0x0800..=0xFFFF) => 3,
-            }
-        }
-        sum
+        self.chars().map(|char| char.len_utf8()).sum()
     }
 }
 impl PartialEq<&str> for Utf16Str<'_> {

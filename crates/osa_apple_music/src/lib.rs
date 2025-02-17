@@ -4,7 +4,6 @@ pub mod track;
 pub use application::ApplicationData;
 pub use tokio::io::{AsyncWriteExt, AsyncReadExt, AsyncBufReadExt};
 pub use track::Track;
-use unaligned_u16::utf16;
 
 const SERVER_JS: &str = include_str!("../non-rust/server.js");
 

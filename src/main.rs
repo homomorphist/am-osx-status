@@ -270,8 +270,8 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
         Err(err) => {
             use osa_apple_music::error::SessionEvaluationError;
             match err {
-                SessionEvaluationError::IoFailure(_) => tracing::error!("failed to retrieve application data"),
-                SessionEvaluationError::SessionFailure(_) |
+                SessionEvaluationError::IoFailure(err) => tracing::error!(?err, "failed to retrieve application data"),
+                SessionEvaluationError::SessionFailure(err) => tracing::error!(?err, "failed to extract application data"),
                 SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract application data"),
                 SessionEvaluationError::DeserializationFailure(err) => {
                     if !(err.classify() == serde_json::error::Category::Eof && context.terminating.load(std::sync::atomic::Ordering::Relaxed)) {
@@ -332,8 +332,8 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
                 Err(err) => {
                     use osa_apple_music::error::SessionEvaluationError;
                     match err {
-                        SessionEvaluationError::IoFailure(_) => tracing::error!("failed to retrieve track data"),
-                        SessionEvaluationError::SessionFailure(_) |
+                        SessionEvaluationError::IoFailure(err) => tracing::error!(?err, "failed to retrieve track data"),
+                        SessionEvaluationError::SessionFailure(err) => tracing::error!(?err, "failed to retrieve track data"),
                         SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract track data"),
                         SessionEvaluationError::DeserializationFailure(err) => {
                             if !(err.classify() == serde_json::error::Category::Eof && context.terminating.load(std::sync::atomic::Ordering::Relaxed)) {
@@ -353,9 +353,9 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
                 return;
             }
 
-            let previous = context.last_track.as_ref().map(|v: &Arc<osa_apple_music::Track>| &v.persistent_id);
+            let previous = context.last_track.as_ref().map(|v| &v.persistent_id);
             if previous != Some(&track.persistent_id) {
-                tracing::trace!("new track: {:?}", track);
+                tracing::trace!(?track, "new track");
                 
                 use data_fetching::AdditionalTrackData;
                 let solicitation = context.backends.get_solicitations().await;
