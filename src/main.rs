@@ -345,6 +345,14 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
                 }
             };
 
+            // buffering / loading intermissions
+            if track.kind.is_none() && (
+                track.name == "Connecting…" ||
+                track.name.ends_with("Station")
+            ) {
+                return;
+            }
+
             let previous = context.last_track.as_ref().map(|v: &Arc<osa_apple_music::Track>| &v.persistent_id);
             if previous != Some(&track.persistent_id) {
                 tracing::trace!("new track: {:?}", track);
