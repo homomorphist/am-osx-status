@@ -3,7 +3,6 @@
 use std::{collections::HashMap, fmt::Debug, hash::Hash, io::{Cursor, Read, Seek, SeekFrom}, marker::PhantomData, ops::Deref, path::Path, pin::Pin, ptr::null};
 use byteorder::{LittleEndian, ReadBytesExt};
 
-pub mod utf16;
 pub mod boma;
 pub mod units;
 mod version;
@@ -12,8 +11,8 @@ use flate2::read;
 use mzstatic::image::MzStaticImage;
 use maybe_owned_string::MaybeOwnedString;
 use serde::Deserialize;
-use utf16::Utf16Str;
 use version::AppleMusicVersion;
+use unaligned_u16::utf16::Utf16Str;
 
 const ENCRYPTION_KEY: &[u8] = b"BHUILuilfghuila3";
 #[cfg(not(feature = "tracing"))]
@@ -680,7 +679,7 @@ pub enum TrackReadError {
     #[error("missing required boma: {0:?}")]
     LackingBoma(BomaSubtype),
     #[error("invalid utf-16 string: {0}")]
-    InvalidUtf16(utf16::error::InvalidUtf16)
+    InvalidUtf16(unaligned_u16::utf16::error::InvalidUtf16)
     // #[cfg_attr(feature = "serde", error("plist deserialization error: {0}"))]
     // #[cfg(feature = "serde")] Deserialization(#[from] plist::Error),
 }

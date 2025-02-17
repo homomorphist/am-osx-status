@@ -4,8 +4,8 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 
 
 use byteorder::{LittleEndian, ReadBytesExt};
+use unaligned_u16::utf16::Utf16Str;
 
-use crate::utf16::Utf16Str;
 use crate::version::AppleMusicVersion;
 use crate::{CollectionMember, Reader};
 
@@ -252,7 +252,7 @@ pub enum BomaUtf16Error<'a> {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("invalid utf-16 string: {0}")]
-    InvalidUtf16(crate::utf16::error::InvalidUtf16, &'a [u8])
+    InvalidUtf16(unaligned_u16::utf16::error::InvalidUtf16, &'a [u8])
 }
 
 
