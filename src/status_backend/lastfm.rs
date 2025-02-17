@@ -39,6 +39,17 @@ pub struct Config {
     pub session_key: Option<lastfm::auth::SessionKey>
 }
 
+fn clean_album(mut str: &str) -> &str {
+    for suffix in [
+        " - Single",
+        " - EP",
+    ] {
+        if str.ends_with(suffix) {
+            str = &str[..str.len() - suffix.len()];
+        }
+    }
+    str
+}
 
 pub struct LastFM {
     client: Arc<::lastfm::Client<::lastfm::auth::state::Authorized>>
@@ -59,8 +70,11 @@ impl LastFM {
         Some(lastfm::scrobble::HeardTrackInfo {
             artist: track.artist.as_ref().map(|s| s.split(" & ").next().unwrap())?,
             track: &track.name,
-            album: track.album.name.as_deref(),
-            album_artist: if track.album.artist.as_ref().is_some_and(|aa| Some(aa) != track.artist.as_ref()) { Some(track.album.artist.as_ref().unwrap()) } else { None },
+            album: track.album.name.as_deref().map(clean_album),
+            album_artist: if track.album.artist.as_ref().is_some_and(|aa| Some(aa) != track.artist.as_ref()) {
+                // only sent if != track artist
+                Some(track.album.artist.as_ref().unwrap())
+            } else { None },
             duration_in_seconds: track.duration.map(|d| d as u32),
             track_number: track.track_number.map(|n| n.get() as u32),
             mbid: None
