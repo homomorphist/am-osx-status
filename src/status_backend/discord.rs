@@ -338,19 +338,27 @@ impl StatusBackend for DiscordPresence {
         let super::BackendContext { track, app, listened, data: additional_info, .. } = context;
         self.position = listened.lock().await.current.as_ref().map(|position| position.get_expected_song_position());
         self.duration = track.duration;
+
+        fn make_minimum_length(mut s: String) -> String {
+            if s.len() < 2 {
+                s += "  "; // two spaces
+            }
+            s
+        }
+
         let mut activity = Activity::new()
             ._type(match track.media_kind {
                 MediaKind::Song | 
                 MediaKind::Unknown => ActivityType::Listening,
                 MediaKind::MusicVideo => ActivityType::Watching,
             })
-            .details(&track.name)
-            .state(track.artist.clone().unwrap_or("Unknown Artist".to_owned()))
+            .details(make_minimum_length(track.name.clone()))
+            .state(track.artist.clone().map(make_minimum_length).unwrap_or("Unknown Artist".to_owned()))
             .assets(|_| ActivityAssets {
-                large_text: track.album.name.clone(),
+                large_text: track.album.name.clone().map(make_minimum_length),
                 large_image: additional_info.images.track.clone(),
                 small_image: additional_info.images.artist.clone(),
-                small_text: track.artist.clone(),
+                small_text: track.artist.clone().map(make_minimum_length),
             });
 
 
