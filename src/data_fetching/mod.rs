@@ -42,12 +42,12 @@ impl AdditionalTrackData {
         if solicitation.list.contains(&Component::AlbumImage) {
             images.track = match crate::util::fallback_to_default_and_log_error!(get_artwork(&track.persistent_id)) {
                 None => None,
-                Some(artwork)  => match artwork {
+                Some(artwork) => match artwork {
                     StoredArtwork::Remote { url } => Some(url),
                     StoredArtwork::Local { path } => {
                         if let Some(host) = host  {
                             host.for_track(track, &path).await.inspect_err(|err| {
-                                tracing::error!("{}", err)
+                                tracing::error!(?err, "failed to upload custom artwork");
                             }).ok()
                         } else {
                             None

@@ -6,7 +6,7 @@ macro_rules! fallback_to_default_and_log_error {
                 match result {
                     Ok(value) => value,
                     Err(error) => {
-                        tracing::error!("{:?}", error);
+                        tracing::error!(?error, "failed to get value; using default");
                         T::default()
                     }
                 }

@@ -27,7 +27,7 @@ struct SourceInfo {
     pub fk_image_info: Option<ImageInfoKey>
 }
 
-fn get_source_info(persistent_id: PersistentId, connection: &mut Connection) -> Result<SourceInfo, rusqlite::Error> {
+fn get_source_info(persistent_id: PersistentId, connection: &mut Connection) -> Result<Option<SourceInfo>, rusqlite::Error> {
     let mut prepared  = connection.prepare_cached(r"
         SELECT ZIMAGEINFO, ZURL
         FROM ZDATABASEITEMINFO AS db
@@ -36,12 +36,12 @@ fn get_source_info(persistent_id: PersistentId, connection: &mut Connection) -> 
         WHERE db.ZPERSISTENTID = ?1;
     ")?;
 
-    prepared.query_row([persistent_id.0], |out| {
+    as_optional(prepared.query_row([persistent_id.0], |out| {
         Ok(SourceInfo {
             url: out.get(1)?,
             fk_image_info: out.get::<usize, Option<usize>>(0)?.map(ImageInfoKey)
         })
-    })
+    }))
 }
 
 fn as_optional<T>(result: Result<T, rusqlite::Error>) -> Result<Option<T>, rusqlite::Error> {
@@ -108,6 +108,7 @@ pub fn get_artwork(persistent_id: impl AsRef<str>) -> Result<Option<StoredArtwor
     let mut connection = Connection::open_with_flags(ARTWORKD_PATH.join("artworkd.sqlite"), OpenFlags::SQLITE_OPEN_READ_ONLY).expect("cannot connect to artworkd database");
     let persistent_id = PersistentId::try_from(persistent_id.as_ref()).expect("bad persistent ID");
     let source = get_source_info(persistent_id, &mut connection)?;
+    let source = if let Some(source) = source { source } else { return Ok(None) };
     if let Some(url) = source.url { return Ok(Some(StoredArtwork::Remote { url })) }
     if let Some(fk) = source.fk_image_info {
         return match get_image_info(fk, &mut connection)? {

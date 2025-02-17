@@ -22,7 +22,7 @@ impl super::CustomArtworkHost for CatboxHost {
     async fn upload_for_track(&mut self, track: &osa_apple_music::track::Track, path: &str) -> Result<String, super::UploadError> {
         const EXPIRES_IN_HOURS: u8 = 1;
         let url = ::catbox::litter::upload(path, EXPIRES_IN_HOURS).await.map_err(|error| {
-            tracing::error!(error);
+            tracing::error!(?error, "catbox upload error");
             super::UploadError::UnknownError
         })?;
         let expires_at = chrono::Utc::now() + chrono::Duration::hours(EXPIRES_IN_HOURS as i64);
