@@ -23,6 +23,7 @@ impl DebuggingSession {
                 })
                 .boxed()
             });
+            #[cfg(feature = "tokio_console")]
             layers.push({
                 console_subscriber::ConsoleLayer::builder()
                     .spawn()
