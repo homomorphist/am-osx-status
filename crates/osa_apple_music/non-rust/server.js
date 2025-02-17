@@ -54,7 +54,7 @@ $.signal(SIGPIPE, SIG_IGN);
  * @typedef { MaybeReadonly<[ptr: Ref<T>, size: number]> } PointerWithSize
  */
 /**
- * @typedef { number[] } ByteIndexable
+ * @typedef { Record<number, number> } ByteIndexable
  */
 Ref.prototype.shifted = 0
 Ref.prototype.shift = function (offset) {
@@ -113,40 +113,99 @@ function alloc(size) {
 }
 
 /**
- * Returns a pointer to an allocated C-string with the contents of the provided string.
  * @typedef { Ref<"CStr"> } CStrPtr
  * @param { string } str
  * @returns { CStrPtr }
  */
 function cstr(str) {
-    const buf = alloc(str.length + 1);
-    for (let i = 0; i < str.length; i++) {
-        buf[i] = str.charCodeAt(i);
-    }
-    // Last (null-terminating) byte is already zero'd by alloc.
-    return /** @type { CStrPtr } */ (buf)
+   return cstr.sized(str)[0]
 }
+
 /**
  * @param { string } str
  * @returns { PointerWithSize }
  */
 cstr.sized = function(str) {
-    const ptr = cstr(str);
-    return /** @type { PointerWithSize } */ ([ptr, str.length + 1]);
+    const utf8 = [];
+    for (let i = 0; i < str.length; i++) {
+        const code = str.charCodeAt(i);
+
+        if (code < 0x80) {
+            utf8.push(code);
+        } else if (code < 0x800) {
+            utf8.push(0b11000000 | (code >> 6));
+            utf8.push(0b10000000 | (code & 0b111111));
+        } else if (code >= 0xD800 && code <= 0xDFFF) {
+            if (code >= 0xDC00) continue; // unpaired low surrogate
+            const hi = code;
+            const lo = str.charCodeAt(++i);
+            if (lo < 0xDC00 || lo > 0xDFFF) continue; // invalid
+
+            const cp = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+            utf8.push(0b11110000 | (cp >> 18));
+            utf8.push(0b10000000 | ((cp >> 12) & 0b111111));
+            utf8.push(0b10000000 | ((cp >> 6) & 0b111111));
+            utf8.push(0b10000000 | (cp & 0b111111));
+        } else {
+            utf8.push(0b11100000 | (code >> 12));
+            utf8.push(0b10000000 | ((code >> 6) & 0b111111));
+            utf8.push(0b10000000 | (code & 0b111111));
+        }
+    }
+
+    const buf = alloc(utf8.length + 1); // +1 null terminator
+    for (let i = 0; i < utf8.length; i++) {
+        buf[i] = utf8[i];
+    }
+
+    return /** @type { PointerWithSize } */ ([buf, utf8.length + 1]);
 }
-    
-
-
 
 /**
- * @param { Record<number, number> } bytes
+ * Decodes a null-terminated UTF-8 C string.
+ * @param { ByteIndexable } bytes
+ * @returns { string }
  */
 function uncstr(bytes) {
-    let str = "";
+    let str = String()
     let i = 0;
+
     while (bytes[i] !== 0) {
-        str += String.fromCharCode(bytes[i++]);
+        const byte1 = bytes[i++];
+
+        if (byte1 < 0x80) {
+            str += String.fromCharCode(byte1);
+        } else if (byte1 < 0xE0) {
+            const byte2 = bytes[i++];
+            str += String.fromCharCode(
+                ((byte1 & 0b11111) << 6) |
+                 (byte2 & 0b111111)
+            );
+        } else if (byte1 < 0xF0) {
+            const byte2 = bytes[i++];
+            const byte3 = bytes[i++];
+            str += String.fromCharCode(
+                ((byte1 & 0b1111) << 12) |
+                ((byte2 & 0b111111) << 6) |
+                 (byte3 & 0b111111)
+            );
+        } else {
+            const byte2 = bytes[i++];
+            const byte3 = bytes[i++];
+            const byte4 = bytes[i++];
+            const cp =
+                ((byte1 & 0b111) << 18) |
+                ((byte2 & 0b111111) << 12) |
+                ((byte3 & 0b111111) << 6) |
+                 (byte4 & 0b111111)
+                - 0x10000;
+            str += String.fromCharCode(
+                0xD800 + (cp >> 10),
+                0xDC00 + (cp & 0x3FF)
+            );
+        }
     }
+
     return str;
 }
 
@@ -818,6 +877,7 @@ const server = new Server(path, {
 });
 
 server.listen((connection, [data]) => {
+    console.log("recv")
     switch (uncstr(data).trim()) {
         case "application": {
             const json = JSON.stringify(music.properties());
@@ -827,10 +887,9 @@ server.listen((connection, [data]) => {
             break
         }
         case "current track": {
-            const json = JSON.stringify(music.currentTrack().properties());
-            const json_cstr = cstr(json);
-            connection.send([json_cstr, json.length + 1]);
-            $.free(json_cstr);
+            const json = cstr.sized(JSON.stringify(music.currentTrack.properties()));
+            connection.send(json);
+            $.free(json[0]);
             break;
         }
         default: {

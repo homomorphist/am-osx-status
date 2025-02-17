@@ -4,6 +4,7 @@ pub mod track;
 pub use application::ApplicationData;
 pub use tokio::io::{AsyncWriteExt, AsyncReadExt, AsyncBufReadExt};
 pub use track::Track;
+use unaligned_u16::utf16;
 
 const SERVER_JS: &str = include_str!("../non-rust/server.js");
 
@@ -68,19 +69,21 @@ impl Session {
         self.socket.write_all(message.as_bytes()).await?;
         self.socket.flush().await?;
         let mut buffer = [0; 1024];
-        let mut json = String::new();
+        let mut bytes = Vec::new();
         loop {
+            let mut count = self.socket.read(&mut buffer).await?;
             let mut done = false;
-            let mut bytes = self.socket.read(&mut buffer).await?;
-            if bytes == 0 { break; }
-            if buffer[bytes - 1] == b'\0' { bytes -= 1; done = true; }
-            json.push_str(std::str::from_utf8(&buffer[..bytes]).map_err(|_| {
-                <serde_json::Error as serde::de::Error>::custom("invalid utf-8")
-            })?);
+            if count == 0 { break; }
+            if buffer[count - 1] == b'\0' { done = true; count -= 1;}
+            bytes.extend_from_slice(&buffer[..count]);
             if done { break; }
         };
 
-        serde_json::from_str(&json).map_err(error::SessionEvaluationError::DeserializationFailure)
+        let json = std::str::from_utf8(&bytes).map_err(|_| {
+            <serde_json::Error as serde::de::Error>::custom("invalid utf-8")
+        })?;
+
+        serde_json::from_str(json).map_err(error::SessionEvaluationError::DeserializationFailure)
     }
 
     pub async fn application(&mut self) -> Result<ApplicationData, error::SessionEvaluationError> {

@@ -131,6 +131,7 @@ impl DiscordPresence {
             tx_disconnect.send(DiscordPresenceState::Disconnected).unwrap();
         }).persist();
         client.on_error(|err| {
+            dbg!(&err);
             tracing::warn!("discord client error {:?}", &err);
         }).persist();
         client.start();
