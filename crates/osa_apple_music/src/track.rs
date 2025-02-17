@@ -305,6 +305,7 @@ impl core::str::FromStr for EqualizerPreset {
     }
 }
 
+
 #[serde_as]
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -573,14 +574,11 @@ impl core::ops::Deref for Track {
 impl Track {
     /// Fetches and returns the currently playing song.
     /// If you find yourself doing this repeatedly, consider using [`Session`](crate::Session) instead.
-    pub async fn get_now_playing() -> Result<Self, crate::error::SingleEvaluationError> {
-        osascript::run("JSON.stringify(Application(\"Music\").currentTrack().properties())", osascript::Language::JavaScript)
+    pub async fn get_now_playing() -> Result<Option<Self>, crate::error::SingleEvaluationError> {
+        osascript::run::<[&str; 0], _>("JSON.stringify(Application(\"Music\").currentTrack().properties())", osascript::Language::JavaScript, [])
             .await
             .map_err(crate::error::SingleEvaluationError::IoFailure)
-            .and_then(|output| {
-                dbg!(&output);
-                Ok(serde_json::from_str(&output.stdout())?)
-            })
+            .and_then(|output| { Ok(serde_json::from_str(&output.stdout())?) })
     }
 }
 

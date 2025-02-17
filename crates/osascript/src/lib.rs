@@ -1,12 +1,16 @@
 #![doc = include_str!("../README.md")]
 
 pub(crate) mod balanced;
-pub mod session;
+pub mod repl;
 
 /// A language that can be run in the `osascript` CLI.
+/// Defaults to [`Self::AppleScript`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Language {
     JavaScript,
+    /// [AppleScript]; a natural language programming language for macOS.
+    /// 
+    /// [AppleScript]: https://en.wikipedia.org/wiki/AppleScript
     AppleScript
 }
 impl Language {
@@ -30,7 +34,22 @@ impl Default for Language {
 
 /// Run the provided code in the specified language.
 /// This does not establish a session. It spawns a new process for each call.
-pub async fn run(code: &str, language: Language) -> tokio::io::Result<SingleEvaluationOutput> {
+pub async fn run<I, S>(code: &str, language: Language, args: I) -> tokio::io::Result<SingleEvaluationOutput>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr> 
+{
+    spawn(code, language, args).await?.wait().await
+}
+
+
+/// Spawns an `osascript` process with the given code and language.
+/// Returns a handle to the process.
+pub async fn spawn<I, S>(code: &str, language: Language, args: I) -> tokio::io::Result<ProcessHandle>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr> 
+{
     use tokio::io::AsyncWriteExt;
     use std::process::Stdio;
 
@@ -38,19 +57,31 @@ pub async fn run(code: &str, language: Language) -> tokio::io::Result<SingleEval
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .args([
-            "-l", language.to_str(),
-            "-",
-        ])
+        .args(["-l", language.to_str(), "-"])
+        .args(args)
         .spawn()?;
 
-    child.stdin.take().expect("cannot get stdin").write_all({
-        code.as_bytes()
-    }).await?;
+    let mut stdin = child.stdin.take().expect("cannot get stdin");
+    stdin.write_all(code.as_bytes()).await?;
+    child.stdin.replace(stdin);
 
-    child.wait_with_output().await.map(|output| SingleEvaluationOutput { raw: output })
+    Ok(ProcessHandle {
+        internal: child
+    })
 }
 
+/// A handle to a running `osascript` process.
+/// Dropping the handle will not kill the process.
+#[derive(Debug)]
+pub struct ProcessHandle {
+    pub internal: tokio::process::Child,
+}
+impl ProcessHandle {
+    pub async fn wait(self) -> tokio::io::Result<SingleEvaluationOutput> {
+        self.internal.wait_with_output().await.map(|output| SingleEvaluationOutput { raw: output })
+    }
+}
+/// The result of a single evaluation of a script.
 #[derive(Debug)]
 pub struct SingleEvaluationOutput {
     pub raw: std::process::Output,

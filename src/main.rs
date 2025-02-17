@@ -122,11 +122,11 @@ async fn main() -> ExitCode {
             });
 
 
-            let mut interval = tokio::time::interval(POLL_INTERVAL);
+            // let mut interval = tokio::time::interval(POLL_INTERVAL);
 
             while !term.load(std::sync::atomic::Ordering::Relaxed) {
                 proc_once(context.clone()).await;
-                interval.tick().await;
+                // interval.tick().await;
             }
         },
         Command::Service { ref action } => {
@@ -240,7 +240,9 @@ impl PollingContext<'_> {
             musicdb: Some(tracing::trace_span!("musicdb read").in_scope(MusicDB::default)),
             polls: 0,
             sequential_pause_states: 0,
-            jxa: osa_apple_music::Session::new().await.expect("failed to create `osa_apple_music` session")
+            jxa: osa_apple_music::Session::new(
+                crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket")
+            ).await.expect("failed to create `osa_apple_music` session")
         }
     }
 
@@ -250,7 +252,11 @@ impl PollingContext<'_> {
 
         let backends = status_backend::StatusBackends::new(config).await;
         self.backends = backends;
-    }   
+    }
+
+    pub fn is_terminating(&self) -> bool {
+        self.terminating.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 #[tracing::instrument(skip(context), level = "trace")]
@@ -263,10 +269,14 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
         Err(err) => {
             use osa_apple_music::error::SessionEvaluationError;
             match err {
-                SessionEvaluationError::DeserializationFailure(_) => tracing::error!("failed to deserialize application data"),
-                SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract application data"),
+                SessionEvaluationError::IoFailure(_) => tracing::error!("failed to retrieve application data"),
                 SessionEvaluationError::SessionFailure(_) |
-                SessionEvaluationError::IoFailure(_) => tracing::error!("failed to retrieve application data")
+                SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract application data"),
+                SessionEvaluationError::DeserializationFailure(err) => {
+                    if !(err.classify() == serde_json::error::Category::Eof && context.terminating.load(std::sync::atomic::Ordering::Relaxed)) {
+                        tracing::error!(?err, "failed to deserialize application data")
+                    }
+                }
             }
             return;
         }
@@ -318,7 +328,20 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
             let track = match context.jxa.now_playing().instrument(tracing::trace_span!("track retrieval")).await {
                 Ok(Some(track)) => Arc::new(track),
                 Ok(None) => return,
-                Err(err) => { tracing::error!(?err, "failed to retrieve track"); return; }
+                Err(err) => {
+                    use osa_apple_music::error::SessionEvaluationError;
+                    match err {
+                        SessionEvaluationError::IoFailure(_) => tracing::error!("failed to retrieve track data"),
+                        SessionEvaluationError::SessionFailure(_) |
+                        SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract track data"),
+                        SessionEvaluationError::DeserializationFailure(err) => {
+                            if !(err.classify() == serde_json::error::Category::Eof && context.terminating.load(std::sync::atomic::Ordering::Relaxed)) {
+                                tracing::error!(?err, "failed to deserialize track data")
+                            }
+                        }
+                    }
+                    return;
+                }
             };
 
             let previous = context.last_track.as_ref().map(|v: &Arc<osa_apple_music::Track>| &v.persistent_id);

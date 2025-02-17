@@ -77,7 +77,7 @@ impl ApplicationData {
     /// Fetches and returns the application state.
     /// If you find yourself doing this repeatedly, consider using [`Session`](crate::Session) instead.
     pub async fn fetch() -> Result<Self, crate::error::SingleEvaluationError> {
-        osascript::run("JSON.stringify(Application(\"Music\").properties())", osascript::Language::JavaScript)
+        osascript::run::<[&str; 0], _>("JSON.stringify(Application(\"Music\").properties())", osascript::Language::JavaScript, [])
             .await
             .map_err(crate::error::SingleEvaluationError::IoFailure)
             .and_then(|output| Ok(serde_json::from_str(&output.stdout()).map(ApplicationData::fix)?))

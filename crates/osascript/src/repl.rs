@@ -4,7 +4,7 @@ use crate::{Language, balanced};
 
 /// The reason a session couldn't process the input.
 #[derive(Debug, thiserror::Error)]
-pub enum SessionError {
+pub enum Error {
     #[error("interpreted input as multi-line (an expression didn't fully terminate)")]
     InterpretedAsMultiline {
         /// If true, this was a test performed at the start of the function, and if the execution state *wasn't already messed up*, it should be fine to continue.
@@ -32,7 +32,6 @@ pub enum SessionError {
 /// 
 /// This is an inherently more unstable method of evaluation, and buggy results can arise from odd inputs or outputs.
 /// Be warned that it may unexpectedly hang or return invalid data.
-/// 
 pub struct Session {
     language: Language,
     process: Child,
@@ -74,7 +73,7 @@ impl Session {
 
         // A preliminary evaluation needs to be performed because it decides to write it's own
         // command to stdout twice instead of once on the first execution, for whatever reason.
-        session.writeline("1").await.map_err(|err| match err { SessionError::Io(io) => io, _ => unreachable!("invalid error variant for initial process state") })?;
+        session.writeline("1").await.map_err(|err| match err { Error::Io(io) => io, _ => unreachable!("invalid error variant for initial process state") })?;
         session.void_readline().await?; // command
         session.void_readline().await?; // command... again?
         ChunkRead::read_until_including(std::sync::Arc::get_mut(&mut session.out).unwrap(), b"\r\n>> ").await?; // read output + next prompt prefix
@@ -97,8 +96,8 @@ impl Session {
         Ok(!balanced::is_balanced(input, Language::JavaScript)?)
     }
 
-    async fn writeline(&mut self, value: &str) -> Result<(), SessionError> {
-        if !self.is_alive() { return Err(SessionError::ProcessDoesNotExist) }
+    async fn writeline(&mut self, value: &str) -> Result<(), Error> {
+        if !self.is_alive() { return Err(Error::ProcessDoesNotExist) }
         let mut stdin = self.process.stdin.take().expect("cannot take stdin");
         stdin.write_all(value.as_bytes()).await?;
         stdin.write_all(b"\n").await?;
@@ -133,9 +132,9 @@ impl Session {
     }
 
     /// Attempts to run the provided code in the REPL.
-    pub async fn run(&mut self, value: &str) -> Result<ReplOutput, SessionError> {
-        if Self::will_input_require_multiline(value).map_err(|_| SessionError::FailedToTestForMultiline)? {
-            return Err(SessionError::InterpretedAsMultiline { preemptive: true })
+    pub async fn run(&mut self, value: &str) -> Result<Output, Error> {
+        if Self::will_input_require_multiline(value).map_err(|_| Error::FailedToTestForMultiline)? {
+            return Err(Error::InterpretedAsMultiline { preemptive: true })
         }
 ;
         self.writeline(value).await?;
@@ -143,14 +142,14 @@ impl Session {
         if !value.is_empty() {
             self.void_readline().await?;
             if Arc::get_mut(&mut self.out).expect("reader is not unique").fill_buf().await? == b"?> " {
-                return Err(SessionError::InterpretedAsMultiline { preemptive: false })
+                return Err(Error::InterpretedAsMultiline { preemptive: false })
             }
         }
 
         let mut out = self.read_until_new_prompt().await?;
         out.truncate(out.len() - b"\r\n>> ".len());
-        let raw = RawReplOutput(out);
-        let out = ReplOutput { raw };
+        let raw = RawOutput(out);
+        let out = Output { raw };
         Ok(out)
     } 
 
@@ -254,8 +253,8 @@ pub(crate) mod iter {
 }
 
 #[derive(Debug)]
-pub struct RawReplOutput(Vec<u8>);
-impl RawReplOutput {
+pub struct RawOutput(Vec<u8>);
+impl RawOutput {
     /// Returns the raw output; the bytes that were put to stdout/stderr, including any logged data and the output prefix (`=> `).
     pub fn into_inner(self) -> Vec<u8> {
         self.0
@@ -295,39 +294,39 @@ impl RawReplOutput {
         self.get_likely_returned().map(|x| String::from_utf8_lossy(x))
     }
 }
-impl From<RawReplOutput> for Vec<u8> {
-    fn from(val: RawReplOutput) -> Self {
+impl From<RawOutput> for Vec<u8> {
+    fn from(val: RawOutput) -> Self {
         val.0
     }
 }
-impl From<Vec<u8>> for RawReplOutput {
+impl From<Vec<u8>> for RawOutput {
     fn from(value: Vec<u8>) -> Self {
         Self(value)
     }
 }
-impl AsRef<[u8]> for RawReplOutput {
+impl AsRef<[u8]> for RawOutput {
     fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }
-impl core::ops::Deref for RawReplOutput {
+impl core::ops::Deref for RawOutput {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
-impl core::ops::DerefMut for RawReplOutput {
+impl core::ops::DerefMut for RawOutput {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
-impl From<ReplOutput> for RawReplOutput {
-    fn from(value: ReplOutput) -> Self {
+impl From<Output> for RawOutput {
+    fn from(value: Output) -> Self {
         value.raw
     }
 }
-impl<'a> From<&'a ReplOutput> for &'a RawReplOutput {
-    fn from(value: &'a ReplOutput) -> Self {
+impl<'a> From<&'a Output> for &'a RawOutput {
+    fn from(value: &'a Output) -> Self {
         &value.raw
     }
 }
@@ -342,8 +341,8 @@ impl core::fmt::Display for OutputExtractionFailure {
 }
 
 #[derive(Debug)]
-pub struct ReplOutput { pub raw: RawReplOutput }
-impl ReplOutput {
+pub struct Output { pub raw: RawOutput }
+impl Output {
     /// Returns what is plausibly (but not certainly) the outputted value as a result of running the expression.
     pub fn guess(&self) -> Result<Cow<str>, OutputExtractionFailure> {
         self.raw.get_likely_returned_as_lossy_str().ok_or(OutputExtractionFailure)
@@ -409,7 +408,7 @@ impl ChunkRead<'_> for tokio::io::BufReader<tokio::process::ChildStdout> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Session, Language, SessionError};
+    use super::{Session, Language, Error};
 
     mod chunk_read {
         use super::super::ChunkRead;
@@ -546,17 +545,17 @@ mod tests {
         assert_eq!(out.guess().unwrap(), "\"=> yea\"");
 
         let mut session = Session::new(Language::JavaScript).await.unwrap();
-        assert!(matches!(session.run("`").await, Err(SessionError::InterpretedAsMultiline { preemptive: true })));
+        assert!(matches!(session.run("`").await, Err(Error::InterpretedAsMultiline { preemptive: true })));
 
 
         assert!(session.kill().await.is_ok());
-        assert!(matches!(session.run("hi").await, Err(SessionError::ProcessDoesNotExist)));
+        assert!(matches!(session.run("hi").await, Err(Error::ProcessDoesNotExist)));
     }
 
     #[tokio::test]
     async fn multiline_input_prevention() {
         let mut session = Session::new(Language::JavaScript).await.unwrap();
-        assert!(matches!(session.run("`").await, Err(SessionError::InterpretedAsMultiline { preemptive: true })));
+        assert!(matches!(session.run("`").await, Err(Error::InterpretedAsMultiline { preemptive: true })));
     }
 
     #[tokio::test]

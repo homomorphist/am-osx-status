@@ -1,4 +1,9 @@
 # osascript
 
+Wrapper around an `osascript` process.
+
 ## Features
-- Asynchronous wrapper around an `osascript` process that allows for execution of multiple sequential commands without spawning additional instances
+- Supports q`JavaScript` and `AppleScript`.
+- Usage of a `repl` for execution of multiple sequential commands without spawning additional instances.
+    - ⚠️ Less stable and can have memory growth issues.
+
