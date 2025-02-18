@@ -16,7 +16,8 @@ fn str_to_boolish(str: &str) -> Option<bool>  {
 }
 
 pub mod io {
-    use lastfm::auth::SessionKeyThroughAuthorizationTokenError;
+    use std::io::{Write, BufRead};
+    use ::lastfm::auth::SessionKeyThroughAuthorizationTokenError;
 
     use crate::util::ferror;
 
@@ -24,7 +25,6 @@ pub mod io {
     
     pub fn prompt(prompt: &str, initial_capacity: usize) -> String {
         {
-            use std::io::Write;
             let mut stdout = std::io::stdout().lock();
             stdout.write_all(prompt.as_bytes()).unwrap();
             stdout.write_all(b"\n=> ").unwrap();
@@ -33,7 +33,6 @@ pub mod io {
 
         let mut str_buf = String::with_capacity(initial_capacity);
         {
-            use std::io::BufRead;
             let mut stdin = std::io::stdin().lock();
             stdin.read_line(&mut str_buf).expect("could not process user input");
         }
@@ -41,11 +40,38 @@ pub mod io {
         str_buf
     }
 
+
+    pub fn prompt_bool_optional(prompt: &str, remark_optional: Option<&str>) -> Option<bool> {
+        let mut answer = String::with_capacity(4);
+        loop {
+            {
+                let mut stdout = std::io::stdout().lock();
+                stdout.write_all(prompt.as_bytes()).unwrap();
+                stdout.write_all(b" (y/n); \n=> ").unwrap();
+                stdout.write_all(b"optional (");
+                stdout.write_all(remark_optional.unwrap_or("press enter to skip").as_bytes());
+                stdout.write_all(")".as_bytes()).unwrap();
+                stdout.flush().unwrap();
+            }
+    
+            {
+                let mut stdin = std::io::stdin().lock();
+                let r = stdin.read_line(&mut answer);
+                r.expect("could not process user input");
+            }
+
+            if answer.trim().is_empty() { return None }
+            if let Some(bool) = str_to_boolish(&answer) { return Some(bool) };
+            println!(r#"Invalid input! Enter "yes" or "no", or continue without any input to skip."#);
+            println!();
+            answer.clear();
+        }
+    }
+
     pub fn prompt_bool(prompt: &str) -> bool {
         let mut answer = String::with_capacity(4);
         loop {
             {
-                use std::io::Write;
                 let mut stdout = std::io::stdout().lock();
                 stdout.write_all(prompt.as_bytes()).unwrap();
                 stdout.write_all(b" (y/n)\n=> ").unwrap();
@@ -53,7 +79,7 @@ pub mod io {
             }
     
             {
-                use std::io::BufRead;
+
                 let mut stdin = std::io::stdin().lock();
                 let r = stdin.read_line(&mut answer);
                 r.expect("could not process user input");
@@ -66,20 +92,25 @@ pub mod io {
         }
     }
 
-    pub async fn prompt_lastfm() -> Option<crate::status_backend::lastfm::Config> {
+    use crate::status_backend::lastfm;
+    pub async fn prompt_lastfm(config: &mut Option<lastfm::Config>)  {
         if prompt_bool("Enable last.fm Scrobbling?") {
-            interrogate_lastfm().await
-        } else {
-            None
+            if let Some(config) = config.as_mut() {
+                config.enabled = true;
+            } else {
+                *config = authorize_lastfm().await
+            }
+        } else if let Some(config) = config.as_mut() {
+            config.enabled = false;
         }
     }
 
-    pub async fn interrogate_lastfm() -> Option<crate::status_backend::lastfm::Config> {
+    pub async fn authorize_lastfm() -> Option<lastfm::Config> {
         let client = &crate::status_backend::lastfm::DEFAULT_CLIENT_IDENTITY;
         let auth = match client.generate_authorization_token().await {
             Ok(auth) => auth,
             Err(err) => {
-                use lastfm::auth::AuthorizationTokenGenerationError;
+                use ::lastfm::auth::AuthorizationTokenGenerationError;
                 match err {
                     AuthorizationTokenGenerationError::NetworkError(failure) => {
                         eprintln!("Network failure: {}", failure.without_url());
@@ -105,15 +136,20 @@ pub mod io {
         } else { None }
     }
 
-    pub async fn prompt_listenbrainz() -> Option<crate::status_backend::listenbrainz::Config> {
+    use crate::status_backend::listenbrainz;
+    pub async fn prompt_listenbrainz(config: &mut Option<listenbrainz::Config>) {
         if prompt_bool("Enable ListenBrainz synchronization?") {
-            interrogate_listenbrainz().await
-        } else {
-            None
+            if let Some(config) = config.as_mut() {
+                config.enabled = true;
+            } else {
+                *config = authorize_listenbrainz().await
+            }
+        } else if let Some(config) = config.as_mut() {
+            config.enabled = false;
         }
     }
 
-    pub async fn interrogate_listenbrainz() -> Option<crate::status_backend::listenbrainz::Config> {
+    pub async fn authorize_listenbrainz() -> Option<listenbrainz::Config> {
         loop {
             const HYPHENATED_UUID_LENGTH: usize = 36;
             let token = prompt(r#"Paste your access token (from https://listenbrainz.org/settings/) or type "cancel":"#, HYPHENATED_UUID_LENGTH + '\n'.len_utf8());

@@ -89,8 +89,8 @@ impl<'a> Config<'a> {
 
     pub async fn edit_with_wizard(&mut self)  {
         self.backends.discord = wizard::io::prompt_bool("Enable Discord Rich Presence?");
-        self.backends.lastfm =  wizard::io::prompt_lastfm().await;
-        self.backends.listenbrainz = wizard::io::prompt_listenbrainz().await;
+        wizard::io::prompt_lastfm(&mut self.backends.lastfm).await;
+        wizard::io::prompt_listenbrainz(&mut self.backends.listenbrainz).await;
     }
 
     /// NOTE: Will not write to the provided path unless [`Self::save_to_disk`] is called.
