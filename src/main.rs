@@ -3,6 +3,7 @@ use std::{ops::DerefMut, process::ExitCode, sync::{atomic::AtomicBool, Arc}, tim
 use config::{ConfigPathChoice, ConfigRetrievalError};
 use data_fetching::services::apple_music;
 use musicdb::MusicDB;
+use osa_apple_music::application::PlayerState;
 use status_backend::{BackendContext, Listened};
 use tokio::sync::Mutex;
 use tracing::Instrument;
@@ -248,11 +249,7 @@ impl PollingContext<'_> {
     }
 
     async fn reload_from_config(&mut self, config: &config::Config<'_>) {
-        for backend in self.backends.all() {
-        }
-
-        let backends = status_backend::StatusBackends::new(config).await;
-        self.backends = backends;
+        self.backends = status_backend::StatusBackends::new(config).await;;
     }
 
     pub fn is_terminating(&self) -> bool {
@@ -284,6 +281,12 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
     };
 
     use osa_apple_music::application::PlayerState;
+    if app.state == PlayerState::Paused {
+        context.sequential_pause_states += 1;
+    } else {
+        context.sequential_pause_states = 0;
+    }
+
     match app.state {
         PlayerState::FastForwarding | PlayerState::Rewinding => unimplemented!(),
         PlayerState::Stopped => {
