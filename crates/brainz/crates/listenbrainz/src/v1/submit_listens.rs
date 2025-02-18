@@ -24,14 +24,14 @@ impl serde::Serialize for ListenType {
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub struct BasicTrackMetadata<'a> {
     #[serde(rename = "artist_name")] pub artist: &'a str,
     #[serde(rename = "track_name")] pub track: &'a str,
     #[serde(rename = "release_name")] pub release: Option<&'a str>
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub(crate) struct ListeningPayloadTrackMetadata<'a> {
     #[serde(flatten)]
     pub basic: BasicTrackMetadata<'a>,
@@ -39,7 +39,7 @@ pub(crate) struct ListeningPayloadTrackMetadata<'a> {
     pub additional_info: Option<additional_info::Raw<'a>>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub(crate) struct RawBody<'a> {
     pub listen_type: ListenType,
     pub payload: &'a [ListeningPayload<'a>]
@@ -51,9 +51,9 @@ impl RawBody<'_> {
 }
 
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub(crate) struct ListeningPayload<'a> {
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub listened_at: Option<u32>,
     #[serde(rename = "track_metadata")]
     pub metadata: ListeningPayloadTrackMetadata<'a>
@@ -123,7 +123,7 @@ pub mod additional_info {
     use shared::HyphenatedUuidString;
 
     /// - <https://listenbrainz.readthedocs.io/en/latest/users/json.html#id1>
-    #[derive(serde::Serialize)]
+    #[derive(serde::Serialize, Debug)]
     pub(crate) struct Raw<'a> {
         #[serde(skip_serializing_if = "Option::is_none")] pub artist_mbids: Option<Vec<HyphenatedUuidString>>,
         #[serde(skip_serializing_if = "Option::is_none")] pub release_group_mbid: Option<HyphenatedUuidString>,
