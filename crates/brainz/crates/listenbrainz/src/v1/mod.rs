@@ -22,7 +22,7 @@ impl UserToken {
     }
 
     pub async fn check_validity(token: impl core::fmt::Display) -> Result<TokenValidity, reqwest::Error> {
-        let url = &format!("{API_ROOT}/validate-token&?token={token}");
+        let url = &format!("{API_ROOT}/validate-token?token={token}");
         let response = reqwest::get(url).await?;
 
         #[derive(serde::Deserialize)]
