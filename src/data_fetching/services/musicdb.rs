@@ -12,8 +12,7 @@ pub enum MusicDbTrackArtworkRetrievalFailure {
 
 // Ok(None) = track exists but no artwork
 pub fn get_track_artwork(musicdb: &MusicDB, track: &osa_apple_music::track::Track) -> Result<Option<StoredArtwork>, MusicDbTrackArtworkRetrievalFailure> {
-    let db = musicdb.get_view();
     let id = AsRef::<str>::as_ref(&track.persistent_id).try_into()?;
-    let track = db.tracks.get(&id).ok_or(MusicDbTrackArtworkRetrievalFailure::NoTrackWithId)?;
+    let track = musicdb.tracks.get(&id).ok_or(MusicDbTrackArtworkRetrievalFailure::NoTrackWithId)?;
     Ok(track.artwork.as_ref().map(|artwork| StoredArtwork::Remote { url: artwork.to_string() }))
 }

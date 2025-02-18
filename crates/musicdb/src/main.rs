@@ -6,7 +6,6 @@ fn main() {
     match Arguments::parse().command {
         Command::Export { path, output } => {
             let musicdb = path.map(MusicDB::read_path).unwrap_or_default();
-            let musicdb = musicdb.get_view();
             let exported = format!("{musicdb:#?}");
             if let Some(output) = output {
                 if let Err(error) = std::fs::write(output, exported) {

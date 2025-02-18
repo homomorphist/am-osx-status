@@ -1253,6 +1253,13 @@ impl core::fmt::Debug for MusicDB<'_> {
             .finish()
     }
 }
+impl<'a> core::ops::Deref for MusicDB<'a> {
+    type Target = MusicDBView<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view
+    }
+}
 
 pub(crate) fn xxd(mut slice: &[u8]) -> String {
     let mut out = String::new();
