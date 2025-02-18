@@ -1,5 +1,4 @@
 use std::os::fd::AsRawFd;
-use kqueue::FilterFlag;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
