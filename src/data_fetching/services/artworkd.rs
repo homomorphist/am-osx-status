@@ -1,4 +1,4 @@
-use rusqlite::{Connection, OpenFlags, Result};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Result};
 
 struct PersistentId(i64);
 impl TryFrom<&str> for PersistentId {
@@ -36,21 +36,14 @@ fn get_source_info(persistent_id: PersistentId, connection: &mut Connection) -> 
         WHERE db.ZPERSISTENTID = ?1;
     ")?;
 
-    as_optional(prepared.query_row([persistent_id.0], |out| {
+    prepared.query_row([persistent_id.0], |out| {
         Ok(SourceInfo {
             url: out.get(1)?,
             fk_image_info: out.get::<usize, Option<usize>>(0)?.map(ImageInfoKey)
         })
-    }))
+    }).optional()
 }
 
-fn as_optional<T>(result: Result<T, rusqlite::Error>) -> Result<Option<T>, rusqlite::Error> {
-    match result {
-        Ok(value) => Ok(Some(value)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(err) => Err(err)
-    }
-}
 
 struct ImageInfoKey(usize);
 struct ImageInfo {
@@ -65,12 +58,12 @@ fn get_image_info(key: ImageInfoKey, connection: &mut Connection) -> Result<Opti
         WHERE Z_PK = ?1;
     ")?;
 
-    as_optional(prepared.query_row([key.0], |out| {
+    prepared.query_row([key.0], |out| {
         Ok(ImageInfo {
             kind: Kind::from_repr(out.get::<usize, u8>(1)?).expect("unknown variant"),
             hash_string: out.get(0)?,
         })
-    }))
+    }).optional()
 }
 
 #[derive(Debug)]
