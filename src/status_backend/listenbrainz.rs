@@ -76,14 +76,15 @@ impl ListenBrainz {
 impl StatusBackend for ListenBrainz {
     #[tracing::instrument(skip(self, context), level = "debug")]   
     async fn record_as_listened(&self, context: super::BackendContext<()>) {
+        // TODO: catch network errors and add to a queue.
         if let Some(track_data) = Self::basic_track_metadata(&context.track) {
             let additional_info = Self::additional_info(&context.track, &context.app, self.client.get_program_info());
-            // TODO: catch network errors and add to a queue.
-            if let Err(error) = self.client.submit_playing_now(track_data, Some(additional_info)).await {
-                tracing::error!(?error, "listenbrainz mark-listened failure")
+            let started_listening_at = if let Some(at) = context.listened.lock().await.started_at() { at } else { tracing::error!("no start duration for current listening"); return };
+            if let Err(error) = self.client.submit_listen(track_data, started_listening_at, Some(additional_info)).await {
+                tracing::error!(?error, "listenbrainz now-listening failure")
             }
         } else {
-            tracing::warn!("listenbrainz mark-listened dispatch skipped; track is missing required data (artist name)")
+            tracing::warn!("listenbrainz now-listening dispatch skipped; track is missing required data (artist name)")
         }
     }
 
@@ -99,15 +100,13 @@ impl StatusBackend for ListenBrainz {
 
     #[tracing::instrument(skip(self, context), level = "debug")]
     async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
-        // TODO: catch network errors and add to a queue.
         if let Some(track_data) = Self::basic_track_metadata(&context.track) {
             let additional_info = Self::additional_info(&context.track, &context.app, self.client.get_program_info());
-            let started_listening_at = if let Some(at) = context.listened.lock().await.started_at() { at } else { tracing::error!("no start duration for current listening"); return };
-            if let Err(error) = self.client.submit_listen(track_data, started_listening_at, Some(additional_info)).await {
-                tracing::error!(?error, "listenbrainz now-listening failure")
+            if let Err(error) = self.client.submit_playing_now(track_data, Some(additional_info)).await {
+                tracing::error!(?error, "listenbrainz mark-listened failure")
             }
         } else {
-            tracing::warn!("listenbrainz now-listening dispatch skipped; track is missing required data (artist name)")
+            tracing::warn!("listenbrainz mark-listened dispatch skipped; track is missing required data (artist name)")
         }
     }
 }
