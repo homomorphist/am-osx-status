@@ -134,8 +134,8 @@ impl Boma<'_> {
 #[derive(Debug)]
 pub struct TrackNumerics {
     pub bitrate: Option<crate::units::KilobitsPerSecond>,
-    date_added: Option<chrono::DateTime<chrono::Utc>>,
-    date_modified: Option<chrono::DateTime<chrono::Utc>>,
+    pub date_added: Option<chrono::DateTime<chrono::Utc>>,
+    pub date_modified: Option<chrono::DateTime<chrono::Utc>>,
     /// Duration of the track, in milliseconds.
     pub duration_ms: u32,
     /// File size, in bytes.
