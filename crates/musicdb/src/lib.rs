@@ -1249,12 +1249,15 @@ impl MusicDB {
         // TODO: Persistent handle? I dunno.
         *self = Self::read_path(self.path.as_path())
     }
+    pub fn default_path() -> std::path::PathBuf {
+        #[allow(deprecated)] // This binary is MacOS-exclusive; this function only has unexpected behavior on Windows.
+        let home = std::env::home_dir().unwrap();
+        home.as_path().join("Music/Music/Music Library.musiclibrary/Library.musicdb")
+    }
 }
 impl core::default::Default for MusicDB {
     fn default() -> Self {
-        #[allow(deprecated)] // This binary is MacOS-exclusive; this function only has unexpected behavior on Windows.
-        let home = std::env::home_dir().unwrap();
-        MusicDB::read_path(home.as_path().join("Music/Music/Music Library.musiclibrary/Library.musicdb"))
+        Self::read_path(Self::default_path())
     }
 }
 impl core::fmt::Debug for MusicDB {
