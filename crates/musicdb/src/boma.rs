@@ -232,7 +232,7 @@ pub enum BomaUtf16Variant {
 
     ArtistsArtistName = 400,
     ArtistsArtistNameSorted = 401, // for use in sorted lists, e.x. without leading "The"
-    ArtistsArtistCloudId = 403,
+    ArtistsArtistCloudLibraryId = 403,
 
     AccountCloudId = 800, // `sp.{UUIDv4}`
     AccountDisplayName = 801,

@@ -557,7 +557,11 @@ pub struct Artist<'a> {
     // r0x8..11 ; associated section length
     // r0x12..15 ; boma count
     pub persistent_id: <Artist::<'a> as IdPossessor>::Id, // r0x16..23
-    pub cloud_id: Option<Utf16Str<'a>>,
+    /// e.x. 1147783278; see https://developer.apple.com/documentation/applemusicapi/get-a-catalog-artist
+    pub cloud_catalog_id: Option<core::num::NonZeroU32>,
+    /// e.x. "r.y8mMT7t"; see https://developer.apple.com/documentation/applemusicapi/get-a-library-artist
+    pub cloud_library_id: Option<Utf16Str<'a>>,
+
     pub name: Option<Utf16Str<'a>>,
     pub name_sorted: Option<Utf16Str<'a>>,
     pub artwork_url: Option<mzstatic::image::MzStaticImage<'a>>
@@ -571,8 +575,11 @@ impl<'a> ContextlessRead<'a> for Artist<'a> {
         reader.advance(4)?; // assoc length;
         let boma_count = reader.cursor.read_u32::<LittleEndian>()?;
         let persistent_id = reader.cursor.read_u64::<LittleEndian>()?.into();
-        reader.advance(length as i64 - 24)?;
-        let mut cloud_id = None;
+        reader.advance(28)?;
+        let cloud_catalog_id = reader.cursor.read_u32::<LittleEndian>()?;
+        let cloud_catalog_id = core::num::NonZeroU32::new(cloud_catalog_id);
+        reader.advance(length as i64 - 56)?;
+        let mut cloud_library_id = None;
         let mut name = None;
         let mut name_sorted = None;
         let mut artwork_url = None;
@@ -581,7 +588,7 @@ impl<'a> ContextlessRead<'a> for Artist<'a> {
             match boma? {
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::ArtistsArtistName)) => name = Some(value),
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::ArtistsArtistNameSorted)) => name_sorted = Some(value),
-                Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::ArtistsArtistCloudId)) => cloud_id = Some(value),
+                Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::ArtistsArtistCloudLibraryId)) => cloud_library_id = Some(value),
                 Boma::Utf8Xml(BomaUtf8(mut value, BomaUtf8Variant::PlistArtworkURL)) => {
                     // very rigid and robust code
                     value = &value["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n".len()..];
@@ -599,7 +606,8 @@ impl<'a> ContextlessRead<'a> for Artist<'a> {
 
         Ok(Self {
             persistent_id,
-            cloud_id,
+            cloud_library_id,
+            cloud_catalog_id,
             name,
             name_sorted,
             artwork_url
@@ -1257,7 +1265,7 @@ impl MusicDB {
 }
 impl core::default::Default for MusicDB {
     fn default() -> Self {
-        Self::read_path(Self::default_path())
+        MusicDB::read_path(MusicDB::default_path())
     }
 }
 impl core::fmt::Debug for MusicDB {

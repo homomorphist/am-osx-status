@@ -149,7 +149,7 @@ enum BomaSubtype: u32 {
     BookVariant2 = 0x1FD,
     BookVariant3 = 0x200,
     // idk
-    Unknown1 = 23; // appears alongisde downloaded tracks
+    Unknown1 = 23 // appears alongside downloaded tracks
     
 };
 
@@ -330,7 +330,23 @@ AlbumList albums @ $;
 SectionBoundary bound3 @ $;
 
 
-using Artist = SimpleBomaContainer<type::Magic<"iAma">, process_artist_boma>;
+struct Artist {
+    type::Magic<"iAma"> signature [[static]];
+    u32 length;
+    u32 length_w_boma;
+    u32 boma_count;
+    PersistentID id;
+    padding[28];
+    u32 cloud_catalog_id;
+    padding[length - rel];
+    
+    if (process_artist_boma) {
+        Boma bomas[boma_count];
+    } else {
+        padding[length_w_boma - length];
+    }
+};
+
 using ArtistList = GenericList<type::Magic<"lAma">, Artist, !process_artist, SkippedWithFollowing>;
 ArtistList artists @ $;
 SectionBoundary bound4 @ $;;
