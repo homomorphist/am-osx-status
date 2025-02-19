@@ -216,13 +216,13 @@ async fn main() -> ExitCode {
 }
 
 #[derive(Debug)]
-struct PollingContext<'a> {
+struct PollingContext {
     terminating: Arc<AtomicBool>,
     backends: status_backend::StatusBackends,
     pub last_track: Option<Arc<osa_apple_music::track::Track>>,
     pub listened: Arc<Mutex<Listened>>,
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
-    musicdb: Option<musicdb::MusicDB<'a>>,
+    musicdb: Option<musicdb::MusicDB>,
     jxa: osa_apple_music::Session,
     /// The number of polls.
     /// A value of one means the first poll is ongoing; it's not zero-based because it's incremented at the start of the poll function.
@@ -231,7 +231,7 @@ struct PollingContext<'a> {
     /// Used to detect when the state is *actually* considered paused, since sometimes the paused state is returned during buffer.
     sequential_pause_states: u64
 }
-impl PollingContext<'_> {
+impl PollingContext {
     async fn from_config(config: &config::Config<'_>, terminating: Arc<AtomicBool>) -> Self {
         Self {
             terminating,
@@ -258,7 +258,7 @@ impl PollingContext<'_> {
 }
 
 #[tracing::instrument(skip(context), level = "trace")]
-async fn proc_once(mut context: Arc<Mutex<PollingContext<'_>>>) {
+async fn proc_once(mut context: Arc<Mutex<PollingContext>>) {
     let mut guard = context.lock().await;
     let context = guard.deref_mut();
 

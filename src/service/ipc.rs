@@ -230,7 +230,7 @@ impl PacketConnection {
 }
 
 pub async fn listen(
-    context: Arc<Mutex<crate::PollingContext<'static>>>,
+    context: Arc<Mutex<crate::PollingContext>>,
     config: Arc<Mutex<crate::config::Config<'static>>>
 ) -> Arc<Mutex<Listener>> {
     let mut listener = Listener::new({ config.clone().lock().await.socket_path.to_owned() }).unwrap();

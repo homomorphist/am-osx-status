@@ -1086,8 +1086,19 @@ impl CollectionMember<'_> {
     }
 }
 
+trait DbAccess<'a> {
+    fn get<'b, T: IdPossessor>(&self, id: PersistentId<'b, T>) -> Option<&'a T>;
+
+    fn library(&self) -> &LibraryMaster<'a>;
+    fn albums(&self) -> &AlbumMap<'a>;
+    fn artists(&self) -> &ArtistMap<'a>;
+    fn accounts(&self) -> Option<&AccountInfoList<'a>>;
+    fn tracks(&self) -> &TrackMap<'a>;
+    fn collections(&self) -> &CollectionMap<'a>;
+}
+
 #[derive(Debug)]
-pub struct MusicDBView<'a> {
+pub struct MusicDbView<'a> {
     pub library: LibraryMaster<'a>,
     pub albums: AlbumMap<'a>,
     pub artists: ArtistMap<'a>,
@@ -1099,8 +1110,7 @@ pub struct MusicDBView<'a> {
     pub tracks: TrackMap<'a>,
     pub collections: CollectionMap<'a>
 }
-
-impl<'a> MusicDBView<'a> {
+impl<'a> MusicDbView<'a> {
     pub(crate) fn with_reader(mut reader: Reader<'a>) -> Self {
         macro_rules! expect_boundary {
             ($reader: ident) => {
@@ -1139,8 +1149,11 @@ impl<'a> MusicDBView<'a> {
         }
     }
 
+    /// Returns the value with the given ID (be it a track, album, artist, et cetera).
+    /// 
+    /// Only works for IDs with their datatype attached at the type-level, such as IDs which were retrieved from the DB itself.
     #[allow(clippy::missing_transmute_annotations)]
-    pub fn get<'b, T: IdPossessor>(&self, id: PersistentId<'b, T>) -> Option<&'a T> {
+    fn get<'b, T: IdPossessor>(&self, id: PersistentId<'b, T>) -> Option<&'a T> {
         match T::IDENTITY {
             IdPossessorIdentity::Account => {
                 let id: PersistentId<'a, Account<'a>> = unsafe { core::mem::transmute(id) };
@@ -1175,53 +1188,51 @@ impl<'a> MusicDBView<'a> {
         }
     }
 }
-
-impl<'a> From<&'a MusicDBView<'a>> for &'a AlbumMap<'a> {
-    fn from(value: &'a MusicDBView<'a>) -> Self {
+impl<'a> From<&'a MusicDbView<'a>> for &'a AlbumMap<'a> {
+    fn from(value: &'a MusicDbView<'a>) -> Self {
         &value.albums
     }
 }
-impl<'a> From<&'a MusicDBView<'a>> for &'a ArtistMap<'a> {
-    fn from(value: &'a MusicDBView<'a>) -> Self {
+impl<'a> From<&'a MusicDbView<'a>> for &'a ArtistMap<'a> {
+    fn from(value: &'a MusicDbView<'a>) -> Self {
         &value.artists
     }
 }
-impl<'a> From<&'a MusicDBView<'a>> for &'a TrackMap<'a> {
-    fn from(value: &'a MusicDBView<'a>) -> Self {
+impl<'a> From<&'a MusicDbView<'a>> for &'a TrackMap<'a> {
+    fn from(value: &'a MusicDbView<'a>) -> Self {
         &value.tracks
     }
 }
-impl<'a> From<&'a MusicDBView<'a>> for &'a CollectionMap<'a> {
-    fn from(value: &'a MusicDBView<'a>) -> Self {
+impl<'a> From<&'a MusicDbView<'a>> for &'a CollectionMap<'a> {
+    fn from(value: &'a MusicDbView<'a>) -> Self {
         &value.collections
     }
 }
 
-
-pub struct MusicDB<'a> {
-    _owned_data: Pin<Vec<u8>>, // life: 'a
-    view: MusicDBView<'a>,
+pub struct MusicDB {
+    _owned_data: Pin<Vec<u8>>,
+    view: MusicDbView<'static>, // not really static; lifetime is 'self (as long as `_owned_data` exists)
     path: std::path::PathBuf
 }
-impl<'a> MusicDB<'a> {
-    pub fn read_path(path: impl AsRef<Path>) -> MusicDB<'a> {
+impl MusicDB {
+    pub fn read_path(path: impl AsRef<Path>) -> MusicDB {
         let path = path.as_ref().to_path_buf();
         let data = &mut std::fs::read(&path).unwrap()[..];
         let (header, data) = decode(data).unwrap();
         let data = Pin::new(data);
 
-        // Obtain a slice of the data with a lifetime promoted to that of the returned instance.
+        // Obtain a slice of the data with a lifetime promoted to that of the returned instance (not actually 'static, but 'self).
         // SAFETY:
         //  - The data is behind [`core::pin::Pin`], meaning the memory address won't ever change.
         //  - The data will be owned by the returned struct, so if it's dropped, the view would already be invalidated as the lifetime would've expired.
         //  - The data is contiguous, and can safely be mapped to a slice.
-        let slice: &'a [u8] = unsafe {
+        let slice: &'static [u8] = unsafe {
             let addr = data.as_ptr();
-            core::slice::from_raw_parts::<'a, u8>(addr, data.len())
+            core::slice::from_raw_parts::<'static, u8>(addr, data.len())
         };
 
         let view  = Reader::new(slice, header.apple_music_version);
-        let view = MusicDBView::with_reader(view);
+        let view = MusicDbView::with_reader(view);
 
         Self { view, _owned_data: data, path }
     }
@@ -1230,22 +1241,23 @@ impl<'a> MusicDB<'a> {
         let (_, data) = decode(data).unwrap();
         Ok(data)
     }
-    pub fn get_view(&self) -> &MusicDBView<'a> {
-        &self.view
+    pub fn get_view(&self) -> &MusicDbView<'_> {
+        // 'static => 'self
+        unsafe { core::mem::transmute(&self.view) }
     }
     pub fn update_view(&mut self)  {
         // TODO: Persistent handle? I dunno.
         *self = Self::read_path(self.path.as_path())
     }
 }
-impl core::default::Default for MusicDB<'_> {
+impl core::default::Default for MusicDB {
     fn default() -> Self {
         #[allow(deprecated)] // This binary is MacOS-exclusive; this function only has unexpected behavior on Windows.
         let home = std::env::home_dir().unwrap();
         MusicDB::read_path(home.as_path().join("Music/Music/Music Library.musiclibrary/Library.musicdb"))
     }
 }
-impl core::fmt::Debug for MusicDB<'_> {
+impl core::fmt::Debug for MusicDB {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MusicDB")
             .field("path", &self.path)
@@ -1253,11 +1265,34 @@ impl core::fmt::Debug for MusicDB<'_> {
             .finish()
     }
 }
-impl<'a> core::ops::Deref for MusicDB<'a> {
-    type Target = MusicDBView<'a>;
+impl MusicDB {
+    /// Returns the value with the given ID (be it a track, album, artist, et cetera).
+    /// 
+    /// Only works for IDs with their datatype attached at the type-level, such as IDs which were retrieved from the DB itself.
+    pub fn get<T: IdPossessor>(&self, id: PersistentId<'_, T>) -> Option<&T> {
+        self.get_view().get(id)
+    }
 
-    fn deref(&self) -> &Self::Target {
-        &self.view
+    /// Returns a map of every album in the library.
+    pub fn albums(&self) -> &AlbumMap<'_> {
+        &self.get_view().albums
+    }
+    /// Returns a map of every artist in the library.
+    pub fn artists(&self) -> &ArtistMap<'_> {
+        &self.get_view().artists
+    }
+    /// Returns a map of every track in the library.
+    pub fn tracks(&self) -> &TrackMap<'_> {
+        &self.get_view().tracks
+    }
+    /// Returns a map of every collection (playlist) in the library.
+    pub fn collections(&self) -> &CollectionMap<'_> {
+        &self.get_view().collections
+    }
+    /// Returns a map of every account associated with the library.
+    /// This isn't always present.
+    pub fn accounts(&self) -> Option<&AccountInfoList<'_>> {
+        self.get_view().accounts.as_ref()
     }
 }
 
@@ -1295,4 +1330,3 @@ pub(crate) fn xxd(mut slice: &[u8]) -> String {
     }
     out
 }
-
