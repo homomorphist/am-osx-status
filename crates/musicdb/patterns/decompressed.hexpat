@@ -336,7 +336,7 @@ ArtistList artists @ $;
 SectionBoundary bound4 @ $;;
 
 
-using Account = SimpleBomaContainer<type::Magic<"isma">, process_artist_boma>;
+using Account = SimpleBomaContainer<type::Magic<"isma">, process_account_boma>;
 using AccountList = GenericList<type::Magic<"Lsma">, Account, !process_account, SkippedWithFollowing>;
 char peek_account_signature[4] @ $ [[no_unique_address, hidden]];
 struct MaybeAccountList {
