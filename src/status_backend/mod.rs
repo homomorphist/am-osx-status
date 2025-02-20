@@ -255,10 +255,16 @@ impl StatusBackends {
 
     #[tracing::instrument(level = "debug")]
     pub async fn get_solicitations(&self) -> ComponentSolicitation {
+        let backends = self.all();
         let mut solicitation = ComponentSolicitation::default();
-        for backend in self.all() {
-            // these don't really actually yield for anything
-            solicitation += backend.lock().await.get_additional_data_solicitation().await;
+        let mut jobs = Vec::with_capacity(backends.len());
+        for backend in backends {
+            jobs.push(tokio::spawn(async move {
+                backend.lock().await.get_additional_data_solicitation().await
+            }));
+        }
+        for job in jobs {
+            solicitation += job.await.unwrap()
         }
         solicitation
     }
