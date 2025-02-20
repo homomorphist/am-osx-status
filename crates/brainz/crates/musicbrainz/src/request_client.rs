@@ -26,5 +26,3 @@ impl<S: AsRef<str>> ProgramInfo<S> {
         out
     }
 }
-
-

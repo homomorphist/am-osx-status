@@ -35,6 +35,15 @@ impl<T: IdPossessor> serde::Serialize for Id<T> {
         serializer.serialize_str(self.as_str())
     }
 }
+impl<'de, T: IdPossessor> serde::Deserialize<'de> for Id<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        let id = HyphenatedUuidString::new(&s).ok_or_else(|| {
+            <D::Error as serde::de::Error>::custom("Invalid UUID")
+        })?;
+        Ok(unsafe { Self::from_contextless(id) })
+    }
+}
 
 /// - <https://musicbrainz.org/doc/MusicBrainz_Database/Schema>
 #[derive(Debug)]

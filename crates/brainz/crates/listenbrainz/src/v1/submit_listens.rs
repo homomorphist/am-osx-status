@@ -75,12 +75,12 @@ pub mod additional_info {
     
     #[derive(Debug, Default)]
     pub struct BrainzIds {
-        pub artists: Option<Vec<Id<Artist>>>,
-        pub release_group: Option<Id<ReleaseGroup>>,
-        pub release: Option<Id<Release>>,
-        pub recording: Option<Id<Recording>>,
-        pub track: Option<Id<Track>>,
-        pub works: Option<Vec<Id<Work>>>
+        pub artists: Option<Vec<Id<entities::Artist>>>,
+        pub release_group: Option<Id<entities::ReleaseGroup>>,
+        pub release: Option<Id<entities::Release>>,
+        pub recording: Option<Id<entities::Recording>>,
+        pub track: Option<Id<entities::Track>>,
+        pub works: Option<Vec<Id<entities::Work>>>
     }
     
     #[derive(Default)]
