@@ -26,8 +26,8 @@ pub mod error {
 pub mod iter {
     pub struct UnalignedU16SliceIterator<'a> { slice: &'a [u8] }
     impl<'a> UnalignedU16SliceIterator<'a> {
-        pub fn new(slice: &super::UnalignedU16Slice<'a>) -> Self {
-            Self { slice: slice.raw() }
+        pub fn new(slice: &'a super::UnalignedU16Slice) -> Self {
+            Self { slice: slice.bytes() }
         }
         pub fn remaining(&self) -> usize {
             self.slice.len() / 2
@@ -65,23 +65,24 @@ pub(crate) fn u16_slice_as_u8_slice(slice: &[u16]) -> &[u8] {
     unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct UnalignedU16Slice<'a>(&'a [u8]);
-impl<'a> UnalignedU16Slice<'a> {
-    pub fn new(slice: &'a [u8]) -> Result<Self, error::BadByteLength> {
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct UnalignedU16Slice([u8]);
+impl<'a> UnalignedU16Slice {
+    pub fn new(slice: &[u8]) -> Result<&Self, error::BadByteLength> {
         if slice.len() % 2 != 0 { return Err(error::BadByteLength) }
-        Ok(Self(slice))
+        Ok(unsafe { Self::new_unchecked(slice) })
     }
 
     /// # Safety
     /// - The provided slice must have a length that is a multiple of two.
-    pub unsafe fn new_unchecked(slice: &'a [u8]) -> Self {
-        Self(slice)
+    pub unsafe fn new_unchecked(slice: &[u8]) -> &Self {
+        unsafe { core::mem::transmute(slice) }
     }
 
     /// Returns the amount of `u16` elements.
     pub fn len(&self) -> usize {
-        self.raw().len() / 2
+        self.bytes().len() / 2
     }
 
     pub fn is_empty(&self) -> bool {
@@ -89,54 +90,57 @@ impl<'a> UnalignedU16Slice<'a> {
     }
 
     pub fn byte_len(&self) -> usize {
-        self.raw().len()
+        self.bytes().len()
     }
 
-    pub fn raw(&self) -> &'a [u8] {
-        self.0
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
     }
+
     pub fn get(&self, index: usize) -> Option<u16> {
         let real = index * 2;
-        let u8 = self.raw();
+        let u8 = self.bytes();
         Some((
             (*u8.get(real + 1)? as u16) << 8) |
              *u8.get(real)?     as u16
         )
     }
-    pub fn iter(&self) -> iter::UnalignedU16SliceIterator<'a> {
+
+    pub fn iter(&'a self) -> iter::UnalignedU16SliceIterator<'a> {
         self.into_iter()
     }
 }
-impl core::ops::Deref for UnalignedU16Slice<'_> {
+impl core::ops::Deref for UnalignedU16Slice {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
-        self.0
+        &self.0
     }
 }
-impl<'a> TryFrom<&'a [u8]> for UnalignedU16Slice<'a> {
+impl<'a> TryFrom<&'a [u8]> for &'a UnalignedU16Slice {
     type Error = error::BadByteLength;
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
-        Self::new(value)
+        UnalignedU16Slice::new(value)
     }
 }
-impl<'a> From<&'a [u16]> for UnalignedU16Slice<'a> {
+impl<'a> From<&'a [u16]> for &'a UnalignedU16Slice {
     fn from(value: &'a [u16]) -> Self {
-        UnalignedU16Slice(u16_slice_as_u8_slice(value))
+        let bytes = u16_slice_as_u8_slice(value);
+        unsafe { UnalignedU16Slice::new_unchecked(bytes) }
     }
 }
-impl<'a> From<&UnalignedU16Slice<'a>> for &'a [u8] {
-    fn from(value: &UnalignedU16Slice<'a>) -> Self {
-        value.0
+impl<'a> From<&'a UnalignedU16Slice> for &'a [u8] {
+    fn from(value: &'a UnalignedU16Slice) -> Self {
+        &value.0
     }
 }
-impl<'a> TryFrom<&UnalignedU16Slice<'a>> for &'a [u16] {
+impl<'a> TryFrom<&'a UnalignedU16Slice> for &'a [u16] {
     type Error = error::AlignmentError;
-    fn try_from(value: &UnalignedU16Slice<'a>) -> Result<Self, Self::Error> {
+    fn try_from(value: &'a UnalignedU16Slice) -> Result<Self, Self::Error> {
         let (unaligned, aligned, _) = unsafe { value.0.align_to::<u16>() };
         if unaligned.is_empty() { Ok(aligned) } else { Err(error::AlignmentError) }
     }
 }
-impl<'a> IntoIterator for &UnalignedU16Slice<'a> {
+impl<'a> IntoIterator for &'a UnalignedU16Slice {
     type Item = u16;
     type IntoIter = iter::UnalignedU16SliceIterator<'a>;
     fn into_iter(self) -> Self::IntoIter {

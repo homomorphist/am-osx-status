@@ -280,7 +280,7 @@ pub enum BomaUtf16Error<'a> {
 
 
 #[derive(Debug)]
-pub struct BomaUtf16<'a>(pub Utf16Str<'a>, pub BomaUtf16Variant);
+pub struct BomaUtf16<'a>(pub &'a Utf16Str, pub BomaUtf16Variant);
 impl<'a> BomaUtf16<'a> {
     fn read_variant_content(reader: &mut Reader<'a>, variant: BomaUtf16Variant) -> Result<Self, BomaUtf16Error<'a>> {
         // r = 0x12 ; have read shared header

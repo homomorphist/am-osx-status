@@ -499,10 +499,10 @@ pub struct Artist<'a> {
     /// e.x. 1147783278; see https://developer.apple.com/documentation/applemusicapi/get-a-catalog-artist#Example
     pub cloud_catalog_id: Option<id::cloud::Catalog<Artist<'a>>>,
     /// e.x. "r.y8mMT7t"; see https://developer.apple.com/documentation/applemusicapi/get-a-library-artist#Example
-    pub cloud_library_id: Option<id::cloud::Library<Artist<'a>, Utf16Str<'a>>>,
+    pub cloud_library_id: Option<id::cloud::Library<Artist<'a>, &'a Utf16Str>>,
 
-    pub name: Option<Utf16Str<'a>>,
-    pub name_sorted: Option<Utf16Str<'a>>,
+    pub name: Option<&'a Utf16Str>,
+    pub name_sorted: Option<&'a Utf16Str>,
     pub artwork_url: Option<mzstatic::image::MzStaticImage<'a>>
 }
 impl<'a> ContextlessRead<'a> for Artist<'a> {
@@ -581,10 +581,10 @@ pub struct Album<'a> {
     // r0x8..11 ; associated section length
     // r0x12..15 ; boma count
     pub persistent_id: <Self as id::persistent::Possessor>::Id, // r0x16..23
-    pub album_name: Option<Utf16Str<'a>>,
-    pub artist_name: Option<Utf16Str<'a>>,
-    pub artist_name_cloud: Option<Utf16Str<'a>>,
-    pub cloud_library_id: Option<id::cloud::Library<Album<'a>, Utf16Str<'a>>>
+    pub album_name: Option<&'a Utf16Str>,
+    pub artist_name: Option<&'a Utf16Str>,
+    pub artist_name_cloud: Option<&'a Utf16Str>,
+    pub cloud_library_id: Option<id::cloud::Library<Album<'a>, &'a Utf16Str>>
 }
 impl<'a> ContextlessRead<'a> for Album<'a> {
     type ReadError = std::io::Error;
@@ -656,38 +656,38 @@ pub enum TrackReadError {
 #[allow(unused)]
 pub struct Track<'a> {
     // bomas: Vec<Boma<'a>>,
-    pub name: Option<Utf16Str<'a>>,
+    pub name: Option<&'a Utf16Str>,
     pub persistent_id: <Track<'a> as id::persistent::Possessor>::Id,
     pub album_id: <Album<'a> as id::persistent::Possessor>::Id,
-    pub album_name: Option<Utf16Str<'a>>,
-    pub album_artist_name: Option<Utf16Str<'a>>,
+    pub album_name: Option<&'a Utf16Str>,
+    pub album_artist_name: Option<&'a Utf16Str>,
     pub artist_id: <Artist<'a> as id::persistent::Possessor>::Id,
-    pub artist_name: Option<Utf16Str<'a>>,
-    pub genre: Option<Utf16Str<'a>>,
-    pub sort_order_name: Option<Utf16Str<'a>>,
-    pub sort_order_album_name: Option<Utf16Str<'a>>,
-    pub sort_order_album_artist_name: Option<Utf16Str<'a>>,
-    pub sort_order_artist_name: Option<Utf16Str<'a>>,
-    pub sort_order_composer: Option<Utf16Str<'a>>,
+    pub artist_name: Option<&'a Utf16Str>,
+    pub genre: Option<&'a Utf16Str>,
+    pub sort_order_name: Option<&'a Utf16Str>,
+    pub sort_order_album_name: Option<&'a Utf16Str>,
+    pub sort_order_album_artist_name: Option<&'a Utf16Str>,
+    pub sort_order_artist_name: Option<&'a Utf16Str>,
+    pub sort_order_composer: Option<&'a Utf16Str>,
 
     pub artwork: Option<MzStaticImage<'a>>,
 
 
     pub numerics: TrackNumerics<'a>,
-    pub composer: Option<Utf16Str<'a>>,
-    pub kind: Option<Utf16Str<'a>>,
-    pub copyright: Option<Utf16Str<'a>>,
-    pub comment: Option<Utf16Str<'a>>,
+    pub composer: Option<&'a Utf16Str>,
+    pub kind: Option<&'a Utf16Str>,
+    pub copyright: Option<&'a Utf16Str>,
+    pub comment: Option<&'a Utf16Str>,
 
     // also appears on downloading for offline
-    pub purchaser_email: Option<Utf16Str<'a>>,
-    pub purchaser_name: Option<Utf16Str<'a>>,
-    pub grouping: Option<Utf16Str<'a>>,
-    pub classical_work_name: Option<Utf16Str<'a>>,
-    pub classical_movement_title: Option<Utf16Str<'a>>,
-    pub fairplay_info: Option<Utf16Str<'a>>,
+    pub purchaser_email: Option<&'a Utf16Str>,
+    pub purchaser_name: Option<&'a Utf16Str>,
+    pub grouping: Option<&'a Utf16Str>,
+    pub classical_work_name: Option<&'a Utf16Str>,
+    pub classical_movement_title: Option<&'a Utf16Str>,
+    pub fairplay_info: Option<&'a Utf16Str>,
     // appears on downloading for offline, maybe purchasing? no examples to test
-    pub local_file_path: Option<Utf16Str<'a>>,
+    pub local_file_path: Option<&'a Utf16Str>,
 }
 impl<'a> ContextlessRead<'a> for Track<'a> {
     const SIGNATURE: &'static [u8; 4] = b"itma";
@@ -969,7 +969,7 @@ enum CollectionType {
 
 #[derive(Debug)]
 pub struct Collection<'a> {
-    pub name: Utf16Str<'a>,
+    pub name: &'a Utf16Str,
     pub info: Option<CollectionInfo<'a>>, // not present on collection w/ name "Hidden Cloud PlaylistOnly Tracks"
     pub tracks: Vec<CollectionMember<'a>>,
     pub persistent_id: <Self as id::persistent::Possessor>::Id,
