@@ -59,7 +59,7 @@ pub struct DiscordPresence {
 }
 impl Debug for DiscordPresence {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("DiscordPresence").finish()
+        f.debug_struct(Self::NAME).finish()
     }
 }
 impl Default for DiscordPresence {
@@ -68,6 +68,8 @@ impl Default for DiscordPresence {
     }
 }
 impl DiscordPresence {
+    const NAME: &'static str = "DiscordPresence";
+
     #[tracing::instrument(level = "debug")]
     pub async fn new() -> Self {
         let instance = Self::disconnected();
@@ -307,6 +309,10 @@ impl Drop for DiscordPresence {
 }
 #[async_trait::async_trait]
 impl StatusBackend for DiscordPresence {
+    fn get_name(&self) -> &'static str {
+        Self::NAME
+    }
+
     async fn get_additional_data_solicitation(&self) -> ComponentSolicitation {
         let mut solicitation: ComponentSolicitation = ComponentSolicitation::default();
         solicitation.list.insert(Component::ITunesData);

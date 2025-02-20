@@ -41,10 +41,12 @@ pub struct ListenBrainz {
 }
 impl core::fmt::Debug for ListenBrainz {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ListenBrainz").finish()
+        f.debug_struct(Self::NAME).finish()
     }
 }
 impl ListenBrainz {
+    const NAME: &'static str = "ListenBrainz";
+    
     pub fn new(program_info: ProgramInfo<MaybeOwnedStringDeserializeToOwned<'static>>, token: brainz::listen::v1::UserToken) -> Self {
         Self { client: Arc::new(brainz::listen::v1::Client::new(program_info, Some(token))) }
     }
@@ -74,6 +76,10 @@ impl ListenBrainz {
 }
 #[async_trait::async_trait]
 impl StatusBackend for ListenBrainz {
+    fn get_name(&self) -> &'static str {
+        Self::NAME
+    }
+
     #[tracing::instrument(skip(self, context), level = "debug")]   
     async fn record_as_listened(&self, context: super::BackendContext<()>) {
         // TODO: catch network errors and add to a queue.

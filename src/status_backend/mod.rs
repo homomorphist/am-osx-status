@@ -199,6 +199,7 @@ impl<A> Clone for BackendContext<A> {
 
 #[async_trait::async_trait]
 pub trait StatusBackend: core::fmt::Debug + Send + Sync {
+    fn get_name(&self) -> &'static str;
     async fn set_now_listening(&mut self, context: BackendContext<crate::data_fetching::AdditionalTrackData>);
     async fn record_as_listened(&self, context: BackendContext<()>);
     async fn check_eligibility(&self, context: BackendContext<()>) -> bool;
@@ -263,13 +264,18 @@ impl StatusBackends {
                 backend.lock().await.get_additional_data_solicitation().await
             }));
         }
-        for job in jobs {
-            solicitation += job.await.unwrap()
+        for (i, job) in jobs.into_iter().enumerate() {
+            match job.await {
+                Ok(got) => solicitation += got,
+                Err(err) => {
+                    let backend = self.all()[i].lock().await.get_name();
+                    tracing::error!(?err, backend, "error getting solicitation; skipping")
+                },
+            };
         }
         solicitation
     }
 
-    
     #[tracing::instrument(skip(context), level = "debug")]
     pub async fn dispatch_track_ended(&self, context: BackendContext<()>) {
         let backends = self.all();
@@ -284,8 +290,11 @@ impl StatusBackends {
             }));
         }
 
-        for job in jobs {
-            job.await.unwrap();
+        for (i, job) in jobs.into_iter().enumerate() {
+            if let Err(err) = job.await {
+                let backend = self.all()[i].lock().await.get_name();
+                tracing::error!(?err, backend, "error dispatching track completion")
+            }
         }
     }
 
@@ -301,10 +310,12 @@ impl StatusBackends {
             }));
         }
 
-        for job in jobs {
-            job.await.unwrap();
+        for (i, job) in jobs.into_iter().enumerate() {
+            if let Err(err) = job.await {
+                let backend = self.all()[i].lock().await.get_name();
+                tracing::error!(?err, backend, "error dispatching track start")
+            }
         }
-
     }
 
     #[tracing::instrument(skip(context), level = "debug")]
@@ -319,8 +330,11 @@ impl StatusBackends {
             }));
         }
 
-        for job in jobs {
-            job.await.unwrap();
+        for (i, job) in jobs.into_iter().enumerate() {
+            if let Err(err) = job.await {
+                let backend = self.all()[i].lock().await.get_name();
+                tracing::error!(?err, backend, "error dispatching progress update")
+            }
         }
     }
 

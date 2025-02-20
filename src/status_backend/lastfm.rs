@@ -249,10 +249,12 @@ pub struct LastFM {
 }
 impl Debug for LastFM {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LastFM").finish()
+        f.debug_struct(Self::NAME).finish()
     }
 }
 impl LastFM {
+    const NAME: &'static str = "LastFM";
+    
     pub fn new(identity: ClientIdentity, session_key: lastfm::auth::SessionKey) -> Self {
         let client = lastfm::Client::authorized(identity, session_key);
         Self { client }
@@ -278,6 +280,10 @@ impl LastFM {
 // TODO: Don't call `track_to_heard` twice (on start and on end).
 #[async_trait::async_trait]
 impl StatusBackend for LastFM {
+    fn get_name(&self) -> &'static str {
+        Self::NAME
+    }
+
     #[tracing::instrument(skip(self, context), level = "debug")]
     async fn record_as_listened(&self, context: super::BackendContext<()>) {
         let db = context.musicdb.as_ref().as_ref();
