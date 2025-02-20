@@ -55,6 +55,10 @@ impl<'a> Utf16Str<'a> {
             char.expect("invalid character encountered despite validation at initialization")
         })
     }
+
+    pub fn starts_with(&self, prefix: impl traits::starts_with::PrefixCheck) -> bool {
+        prefix.is_prefix_of(*self)
+    }
     
     pub fn utf8_byte_len(&self) -> usize {
         self.chars().map(|char| char.len_utf8()).sum()
@@ -126,6 +130,61 @@ impl From<Utf16Str<'_>> for String {
         string
     }
 }
+
+
+pub mod traits {
+    use super::*;
+
+    pub mod starts_with {
+        use super::*;
+
+        pub trait PrefixCheck {
+            /// Returns true if `T` starts with `self`.
+            /// Doesn't do any character normalization.
+            fn is_prefix_of(&self, against: Utf16Str<'_>) -> bool;
+        }
+    
+        impl PrefixCheck for str {
+            fn is_prefix_of(&self, against: Utf16Str<'_>) -> bool {
+                <dyn AsRef<str> as PrefixCheck>::is_prefix_of(&self, against)
+            }
+        }
+
+        impl PrefixCheck for &str {
+            fn is_prefix_of(&self, against: Utf16Str<'_>) -> bool {
+                <dyn AsRef<str> as PrefixCheck>::is_prefix_of(&self, against)
+            }
+        }
+
+        impl PrefixCheck for dyn AsRef<str> + '_ {
+            fn is_prefix_of(&self, against: Utf16Str<'_>) -> bool {
+                let mut utf8_chars = self.as_ref().chars();
+                let mut utf16_chars = against.chars();
+    
+                loop {
+                    match (utf8_chars.next(), utf16_chars.next()) {
+                        (Some(lhs), Some(rhs)) => if lhs != rhs { return false }
+                        (None, None) => return true,
+                        _ => return false,
+                    }
+                }
+            }
+        }
+
+        impl PrefixCheck for Utf16Str<'_> {
+            fn is_prefix_of(&self, against: Utf16Str<'_>) -> bool {
+                self.bytes.starts_with(&against.bytes)
+            }
+        }
+
+        impl PrefixCheck for &Utf16Str<'_> {
+            fn is_prefix_of(&self, against: Utf16Str<'_>) -> bool {
+                self.bytes.starts_with(&against.bytes)
+            }
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod test {
