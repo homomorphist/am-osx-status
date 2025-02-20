@@ -1,0 +1,10 @@
+[package]
+name = "itunes_api"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+reqwest = "0.12.12"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.138"
+thiserror = "2.0.11"
