@@ -8,7 +8,7 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.83"
-brainz = { path = "./crates/brainz/" }
+brainz = { path = "./crates/brainz/", optional = true }
 catbox = "0.8.2"
 chrono = "0.4.38"
 clap = { version = "4.5.18", features = ["cargo", "derive"] }
@@ -43,10 +43,11 @@ tokio-serde = { version = "0.9.0", features = ["bincode"] }
 osa_apple_music = { path = "./crates/osa_apple_music" }
 futures-util = "0.3.31"
 itunes_api = { path = "./crates/itunes_api" }
+include_dir = "0.7.4"
 
 [features]
 default = ["discord", "listenbrainz", "lastfm"]
 discord = ["dep:discord-presence"]
-listenbrainz = []
-lastfm = []
+listenbrainz = ["dep:brainz"]
+lastfm = ["dep:brainz"]
 tokio_console = []
