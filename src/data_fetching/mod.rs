@@ -24,8 +24,8 @@ impl AdditionalTrackData {
 
         if solicitation.list.contains(&Component::ArtistImage) {
             if let Some(db) = musicdb {
-                let id = musicdb::PersistentId::<musicdb::Track>::try_from(track.persistent_id.as_str()).expect("bad id");
-                images.artist = db.get(id)
+                let id = musicdb::PersistentId::try_from(track.persistent_id.as_str()).expect("bad id");
+                images.artist = db.tracks().get(&id)
                     .and_then(|track| db.get(track.artist_id))
                     .and_then(|artist| artist.artwork_url.as_ref())
                     .and_then(|artwork| {

@@ -183,6 +183,7 @@ pub struct BackendContext<A> {
     pub app: Arc<osa_apple_music::ApplicationData>,
     pub data: Arc<A>,
     pub listened: Arc<Mutex<Listened>>,
+    pub musicdb: Arc<Option<musicdb::MusicDB>>,
 }
 impl<A> Clone for BackendContext<A> {
     fn clone(&self) -> Self {
@@ -191,6 +192,7 @@ impl<A> Clone for BackendContext<A> {
             app: self.app.clone(),
             data: self.data.clone(),
             listened: self.listened.clone(),
+            musicdb: self.musicdb.clone(),
         }
     }
 }

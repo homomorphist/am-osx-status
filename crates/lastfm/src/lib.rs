@@ -12,7 +12,7 @@ pub(crate) const API_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 
 pub struct Client<A: auth::state::AuthorizationStatus> {
     pub identity: auth::ClientIdentity,
-    net: reqwest::Client,
+    pub net: reqwest::Client, // exposed for re-use if dev'd like to only have one
     session_key: Option<auth::SessionKey>,
     _authorized: core::marker::PhantomData<A>
 }

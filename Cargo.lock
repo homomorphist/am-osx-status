@@ -63,6 +63,7 @@ dependencies = [
  "console-subscriber",
  "discord-presence",
  "futures-util",
+ "itunes_api",
  "lastfm",
  "libc",
  "maybe_owned_string",
@@ -1438,6 +1439,16 @@ name = "itoa"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d75a2a4b1b190afb6f5425f10f6a8f959d2ea0b9c2b1d79553551850539e4674"
+
+[[package]]
+name = "itunes_api"
+version = "0.0.0"
+dependencies = [
+ "reqwest 0.12.12",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.11",
+]
 
 [[package]]
 name = "js-sys"

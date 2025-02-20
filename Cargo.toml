@@ -42,6 +42,7 @@ tokio-util = "0.7.13"
 tokio-serde = { version = "0.9.0", features = ["bincode"] }
 osa_apple_music = { path = "./crates/osa_apple_music" }
 futures-util = "0.3.31"
+itunes_api = { path = "./crates/itunes_api" }
 
 [features]
 default = ["discord", "listenbrainz", "lastfm"]

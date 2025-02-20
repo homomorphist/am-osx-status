@@ -222,7 +222,7 @@ struct PollingContext {
     pub last_track: Option<Arc<osa_apple_music::track::Track>>,
     pub listened: Arc<Mutex<Listened>>,
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
-    musicdb: Option<musicdb::MusicDB>,
+    musicdb: Arc<Option<musicdb::MusicDB>>,
     jxa: osa_apple_music::Session,
     /// The number of polls.
     /// A value of one means the first poll is ongoing; it's not zero-based because it's incremented at the start of the poll function.
@@ -239,7 +239,7 @@ impl PollingContext {
             last_track: None,
             listened: Arc::new(Mutex::new(Listened::new())),
             custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
-            musicdb: Some(tracing::trace_span!("musicdb read").in_scope(MusicDB::default)),
+            musicdb: Arc::new(Some(tracing::trace_span!("musicdb read").in_scope(MusicDB::default))),
             polls: 0,
             sequential_pause_states: 0,
             jxa: osa_apple_music::Session::new(
@@ -308,6 +308,7 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext>>) {
                     track: previous,
                     app: app.clone(),
                     data: ().into(),
+                    musicdb: context.musicdb.clone()
                 }).await;
             }
         }
@@ -362,13 +363,14 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext>>) {
                 
                 use data_fetching::AdditionalTrackData;
                 let solicitation = context.backends.get_solicitations().await;
-                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, track.as_ref(), context.musicdb.as_ref(), context.custom_artwork_host.as_mut());
+                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, track.as_ref(), context.musicdb.as_ref().as_ref(), context.custom_artwork_host.as_mut());
                 let additional_data = if let Some(previous) = context.last_track.clone() {
                     let pending_dispatch = context.backends.dispatch_track_ended(BackendContext {
                         app: app.clone(),
                         track: previous,
                         listened: context.listened.clone(),
                         data: ().into(),
+                        musicdb: context.musicdb.clone()
                     }).instrument(tracing::trace_span!("song end dispatch"));
 
                     async move { 
@@ -385,7 +387,11 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext>>) {
                 let listened = Arc::new(Mutex::new(Listened::new_with_current(app.position.or(track.playable_range.as_ref().map(|r| r.start)).unwrap_or(0.))));
                 context.listened = listened.clone();
                 context.last_track = Some(track.clone());
-                context.backends.dispatch_track_started(BackendContext { app, listened, track, data: Arc::new(additional_data) }).await;
+                context.backends.dispatch_track_started(BackendContext {
+                    app, listened, track,
+                    data: Arc::new(additional_data),
+                    musicdb: context.musicdb.clone()
+                }).await;
             } else if let Some(position) = app.position {
                 let mut listened = context.listened.lock().await;
                 match listened.current.as_ref() {
@@ -400,7 +406,8 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext>>) {
                                 track: track.clone(),
                                 app: app.clone(),
                                 data: ().into(),
-                                listened: context.listened.clone()
+                                listened: context.listened.clone(),
+                                musicdb: context.musicdb.clone()
                             }).await;
                         }
                     }

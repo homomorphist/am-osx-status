@@ -22,7 +22,7 @@ pub struct HeardTrackInfo<'a> {
 
     /// The MusicBrainz Track ID.
     // TODO: Gate this type definition behind a feature, making it a `&'a str` otherwise.
-    pub mbid: Option<brainz::music::Id<brainz::music::Track>>,
+    pub mbid: Option<brainz::music::Id<brainz::music::entities::Track>>,
 
     /// The duration of the track in seconds.
     pub duration_in_seconds: Option<u32>,
