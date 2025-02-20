@@ -7,7 +7,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use unaligned_u16::utf16::Utf16Str;
 
 use crate::version::AppleMusicVersion;
-use crate::{CollectionMember, Reader};
+use crate::{cloud, CollectionMember, Reader};
 
 use super::{convert_timestamp, ContextlessRead};
 
@@ -90,7 +90,7 @@ impl From<BomaUtf8Variant> for BomaSubtype {
 
 #[derive(Debug)]
 pub enum Boma<'a> {
-    TrackNumerics(TrackNumerics),
+    TrackNumerics(TrackNumerics<'a>),
     CollectionMember(CollectionMember<'a>),
     Utf16(BomaUtf16<'a>),
     Utf8Xml(BomaUtf8<'a>),
@@ -132,17 +132,22 @@ impl Boma<'_> {
 }
 
 #[derive(Debug)]
-pub struct TrackNumerics {
+pub struct TrackNumerics<'a> {
     pub bitrate: Option<crate::units::KilobitsPerSecond>,
     pub date_added: Option<chrono::DateTime<chrono::Utc>>,
     pub date_modified: Option<chrono::DateTime<chrono::Utc>>,
     /// Duration of the track, in milliseconds.
     pub duration_ms: u32,
+
+    pub cloud_catalog_album_id: Option<crate::id::cloud::Catalog<crate::Album<'a>>>,
+    pub cloud_catalog_artist_id: Option<crate::id::cloud::Catalog<crate::Artist<'a>>>,
+    pub cloud_catalog_track_id: Option<crate::id::cloud::Catalog<crate::Track<'a>>>,
+
     /// File size, in bytes.
     pub bytes: u32,
 }
 
-impl TrackNumerics {
+impl TrackNumerics<'_> {
     pub const BOMA_SUBTYPE: u32 = 0x1;
 
     pub fn read_content(cursor: &mut Cursor<&[u8]>, length: u32) -> Result<Self, std::io::Error> {
@@ -154,16 +159,34 @@ impl TrackNumerics {
         let date_modified = convert_timestamp(cursor.read_u32::<LittleEndian>()?);
         cursor.seek(SeekFrom::Current(176 - (148 + 4)))?;
         let duration_ms = cursor.read_u32::<LittleEndian>()?; // milliseconds
-        cursor.seek(SeekFrom::Current(316 - (176 + 4)))?;
+        let cloud_catalog_album_id = cursor.read_u32::<LittleEndian>()?;
+        let cloud_catalog_album_id = core::num::NonZeroU32::new(cloud_catalog_album_id);
+        let cloud_catalog_album_id = cloud_catalog_album_id.map(|id| unsafe { crate::id::cloud::Catalog::new_unchecked(id) });
+        cursor.seek(SeekFrom::Current(4))?;
+        let cloud_catalog_artist_id = cursor.read_u32::<LittleEndian>()?;
+        let cloud_catalog_artist_id = core::num::NonZeroU32::new(cloud_catalog_artist_id);
+        let cloud_catalog_artist_id = cloud_catalog_artist_id.map(|id| unsafe { crate::id::cloud::Catalog::new_unchecked(id) }); 
+        cursor.seek(SeekFrom::Current(316 - (176 + 16)))?;
         let bytes = cursor.read_u32::<LittleEndian>()?;
-        cursor.seek(SeekFrom::Current((length as i64) - (316 + 4)))?;
+        cursor.seek(SeekFrom::Current(4))?;
+        let cloud_catalog_track_id = cursor.read_u32::<LittleEndian>()?;
+        let cloud_catalog_track_id = core::num::NonZeroU32::new(cloud_catalog_track_id);
+        let cloud_catalog_track_id = cloud_catalog_track_id.map(|id| unsafe { crate::id::cloud::Catalog::new_unchecked(id) });
+        // it also appears no less than three fuckin times after this appearance so like
+        // uh. need to investigate that
+
+        cursor.seek(SeekFrom::Current((length as i64) - (316 + 12)))?;
 
         Ok(Self {
             bitrate,
             date_added,
             date_modified,
             duration_ms,
-            bytes
+            bytes,
+
+            cloud_catalog_album_id,
+            cloud_catalog_artist_id,
+            cloud_catalog_track_id
         })
     }
 

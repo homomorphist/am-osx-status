@@ -3,8 +3,10 @@
 use std::{collections::HashMap, fmt::Debug, hash::Hash, io::{Cursor, Read, Seek, SeekFrom}, marker::PhantomData, ops::Deref, path::Path, pin::Pin, ptr::null};
 use byteorder::{LittleEndian, ReadBytesExt};
 
+pub mod id;
 pub mod boma;
 pub mod units;
+pub use id::*;
 mod version;
 use boma::*;
 use flate2::read;
@@ -354,71 +356,8 @@ impl<'a, T: ContextlessRead<'a>> IntoIterator for List<'a, T> {
     }
 }
 
-pub struct PersistentId<'a, T>(u64, PhantomData<&'a T>);
-impl<T> PersistentId<'_, T> {
-    pub fn get_raw(&self) -> u64 {
-        self.0
-    }
-}
-impl<T> Clone for PersistentId<'_, T> {
-    fn clone(&self) -> Self { *self }
-}
-impl<T> Copy for PersistentId<'_, T> {}
-impl<T> PartialEq for PersistentId<'_, T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-impl<T> Eq for PersistentId<'_, T> {}
-impl<T> Hash for PersistentId<'_, T> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.0);
-    }
-}
-impl<T> PersistentId<'_, T> {
-    fn new(raw: u64) -> Self { Self(raw, PhantomData) }
-}
-impl<T> From<u64> for PersistentId<'_, T> {
-    fn from(value: u64) -> Self {
-        Self::new(value)
-    }
-}
-impl<T> From<PersistentId<'_, T>> for u64 {
-    fn from(val: PersistentId<'_, T>) -> Self {
-        val.0
-    }
-}
-impl<'a, T> TryFrom<&'a str> for PersistentId<'a, T> {
-    type Error = core::num::ParseIntError;
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-        Ok(PersistentId::new(u64::from_str_radix(value, 16)?))
-    }
-}
-impl<T: IdPossessor> core::fmt::Debug for PersistentId<'_, T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.pad(&format!("Id<{:?}>({})", T::IDENTITY, self.0))
-    }
-}
-
-
-pub trait IdPossessor {
-    type Id: Clone + Copy + Hash + PartialEq + Eq;
-    #[allow(private_interfaces)]
-    const IDENTITY: IdPossessorIdentity;
-    fn get_persistent_id(&self) -> Self::Id;
-}
-
-#[derive(Debug)]
-enum IdPossessorIdentity {
-    Track,
-    Account,
-    Artist,
-    Album,
-    Collection
-}
-
-pub struct Map<'a, T: IdPossessor>(HashMap<T::Id, T>, PhantomData<&'a ()>);
-impl<'a, T: IdPossessor> Map<'a, T> {
+pub struct Map<'a, T: id::persistent::Possessor>(HashMap<T::Id, T>, PhantomData<&'a ()>);
+impl<'a, T: id::persistent::Possessor> Map<'a, T> {
     pub(crate) fn read_contents(reader: &mut Reader<'a>) -> Result<Self, ListReadError<<T as ContextlessRead<'a>>::ReadError>> where T: ContextlessRead<'a> {
         let byte_length = reader.cursor.read_u32::<LittleEndian>().map_err(ListReadError::BadListHeader)?;
         let item_count = reader.cursor.read_u32::<LittleEndian>().map_err(ListReadError::BadListHeader)? as usize;
@@ -431,26 +370,26 @@ impl<'a, T: IdPossessor> Map<'a, T> {
         Ok(Self(items, PhantomData))
     }
 }
-impl<'a, T: ContextlessRead<'a> + IdPossessor> core::fmt::Debug for Map<'a, T> where T: Debug, T::Id: Debug  {
+impl<'a, T: ContextlessRead<'a> + id::persistent::Possessor> core::fmt::Debug for Map<'a, T> where T: Debug, T::Id: Debug  {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Map ")?;
         f.debug_map().entries(self.iter()).finish()
     }
 }
-impl<'a, T: ContextlessRead<'a> + IdPossessor> Deref for Map<'a, T> {
+impl<'a, T: ContextlessRead<'a> + id::persistent::Possessor> Deref for Map<'a, T> {
     type Target = HashMap<T::Id, T>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
-impl<'a, T: ContextlessRead<'a> + IdPossessor> IntoIterator for Map<'a, T> {
+impl<'a, T: ContextlessRead<'a> + id::persistent::Possessor> IntoIterator for Map<'a, T> {
     type Item = (T::Id, T);
     type IntoIter = std::collections::hash_map::IntoIter<T::Id, T>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
-impl<'a, T: ContextlessRead<'a> + IdPossessor> IntoIterator for &Map<'a, T> where Self: 'a {
+impl<'a, T: ContextlessRead<'a> + id::persistent::Possessor> IntoIterator for &Map<'a, T> where Self: 'a {
     type Item = (&'a T::Id, &'a T);
     type IntoIter = std::collections::hash_map::Iter<'a, T::Id, T>;
     fn into_iter(self) -> Self::IntoIter {
@@ -556,11 +495,11 @@ pub struct Artist<'a> {
     // r0x4..7 ; len
     // r0x8..11 ; associated section length
     // r0x12..15 ; boma count
-    pub persistent_id: <Artist::<'a> as IdPossessor>::Id, // r0x16..23
+    pub persistent_id: <Artist::<'a> as id::persistent::Possessor>::Id, // r0x16..23
     /// e.x. 1147783278; see https://developer.apple.com/documentation/applemusicapi/get-a-catalog-artist#Example
-    pub cloud_catalog_id: Option<core::num::NonZeroU32>,
+    pub cloud_catalog_id: Option<id::cloud::Catalog<Artist<'a>>>,
     /// e.x. "r.y8mMT7t"; see https://developer.apple.com/documentation/applemusicapi/get-a-library-artist#Example
-    pub cloud_library_id: Option<Utf16Str<'a>>,
+    pub cloud_library_id: Option<id::cloud::Library<Artist<'a>, Utf16Str<'a>>>,
 
     pub name: Option<Utf16Str<'a>>,
     pub name_sorted: Option<Utf16Str<'a>>,
@@ -578,6 +517,7 @@ impl<'a> ContextlessRead<'a> for Artist<'a> {
         reader.advance(28)?;
         let cloud_catalog_id = reader.cursor.read_u32::<LittleEndian>()?;
         let cloud_catalog_id = core::num::NonZeroU32::new(cloud_catalog_id);
+        let cloud_catalog_id = cloud_catalog_id.map(|c| unsafe { id::cloud::Catalog::new_unchecked(c) });
         reader.advance(length as i64 - 56)?;
         let mut cloud_library_id = None;
         let mut name = None;
@@ -588,7 +528,9 @@ impl<'a> ContextlessRead<'a> for Artist<'a> {
             match boma? {
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::ArtistsArtistName)) => name = Some(value),
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::ArtistsArtistNameSorted)) => name_sorted = Some(value),
-                Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::ArtistsArtistCloudLibraryId)) => cloud_library_id = Some(value),
+                Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::ArtistsArtistCloudLibraryId)) => {
+                    cloud_library_id = Some(unsafe { id::cloud::Library::new_unchecked(value) })
+                },
                 Boma::Utf8Xml(BomaUtf8(mut value, BomaUtf8Variant::PlistArtworkURL)) => {
                     // very rigid and robust code
                     value = &value["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n".len()..];
@@ -614,15 +556,22 @@ impl<'a> ContextlessRead<'a> for Artist<'a> {
         })
     }
 }
-impl<'a> IdPossessor for Artist<'a> {
-    type Id = PersistentId<'a, Artist<'a>>;
+impl<'a> id::persistent::Possessor for Artist<'a> {
+    type Id = PersistentId<Artist<'a>>;
     #[allow(private_interfaces)]
-    const IDENTITY: IdPossessorIdentity = IdPossessorIdentity::Artist;
+    const IDENTITY: id::persistent::PossessorIdentity = id::persistent::PossessorIdentity::Artist;
     fn get_persistent_id(&self) -> Self::Id {
         self.persistent_id
     }
 }
-
+impl id::cloud::library::Possessor for Artist<'_> {
+    #[allow(private_interfaces)]
+    const IDENTITY: cloud::library::PossessorIdentity = cloud::library::PossessorIdentity::Artist;
+}
+impl id::cloud::catalog::Possessor for Artist<'_> {
+    #[allow(private_interfaces)]
+    const IDENTITY: cloud::catalog::PossessorIdentity = cloud::catalog::PossessorIdentity::Artist;
+}
 derive_map!(ArtistMap, Artist<'a>, b"lAma");
 
 #[derive(Debug)]
@@ -631,11 +580,11 @@ pub struct Album<'a> {
     // r0x4..7 ; len
     // r0x8..11 ; associated section length
     // r0x12..15 ; boma count
-    pub persistent_id: <Self as IdPossessor>::Id, // r0x16..23
+    pub persistent_id: <Self as id::persistent::Possessor>::Id, // r0x16..23
     pub album_name: Option<Utf16Str<'a>>,
     pub artist_name: Option<Utf16Str<'a>>,
     pub artist_name_cloud: Option<Utf16Str<'a>>,
-    pub cloud_id: Option<Utf16Str<'a>>,
+    pub cloud_library_id: Option<id::cloud::Library<Album<'a>, Utf16Str<'a>>>
 }
 impl<'a> ContextlessRead<'a> for Album<'a> {
     type ReadError = std::io::Error;
@@ -650,13 +599,15 @@ impl<'a> ContextlessRead<'a> for Album<'a> {
         let mut album_name = None;
         let mut artist_name = None;
         let mut artist_name_cloud = None;
-        let mut cloud_id = None;
+        let mut cloud_library_id = None;
         for boma in reader.read_sequence::<Boma>(boma_count as usize) {
             match boma? {
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::IamaAlbum)) => album_name = Some(value),
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::IamaAlbumArtist)) => artist_name = Some(value),
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::IamaAlbumArtistCloud)) => artist_name_cloud = Some(value),
-                Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::IamaAlbumCloudId)) => cloud_id = Some(value),
+                Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::IamaAlbumCloudId)) => {
+                    cloud_library_id = Some(unsafe { id::cloud::Library::new_unchecked(value) });
+                },
                 _ => panic!("unknown") // fixme good error handling
             }
         }
@@ -665,17 +616,25 @@ impl<'a> ContextlessRead<'a> for Album<'a> {
             artist_name,
             artist_name_cloud,
             persistent_id,
-            cloud_id,
+            cloud_library_id,
         })
     }
 }
-impl<'a> IdPossessor for Album<'a> {
-    type Id = PersistentId<'a, Album<'a>>;
+impl<'a> id::persistent::Possessor for Album<'a> {
+    type Id = PersistentId<Album<'a>>;
     #[allow(private_interfaces)]
-    const IDENTITY: IdPossessorIdentity = IdPossessorIdentity::Album;
+    const IDENTITY: id::persistent::PossessorIdentity = id::persistent::PossessorIdentity::Album;
     fn get_persistent_id(&self) -> Self::Id {
         self.persistent_id
     }
+}
+impl id::cloud::catalog::Possessor for Album<'_> {
+    #[allow(private_interfaces)]
+    const IDENTITY: cloud::catalog::PossessorIdentity = cloud::catalog::PossessorIdentity::Album;
+}
+impl id::cloud::library::Possessor for Album<'_> {
+    #[allow(private_interfaces)]
+    const IDENTITY: cloud::library::PossessorIdentity = cloud::library::PossessorIdentity::Album;
 }
 
 derive_map!(AlbumMap, Album<'a>, b"lama");
@@ -698,11 +657,11 @@ pub enum TrackReadError {
 pub struct Track<'a> {
     // bomas: Vec<Boma<'a>>,
     pub name: Option<Utf16Str<'a>>,
-    pub persistent_id: <Track<'a> as IdPossessor>::Id,
-    pub album_id: <Album<'a> as IdPossessor>::Id,
+    pub persistent_id: <Track<'a> as id::persistent::Possessor>::Id,
+    pub album_id: <Album<'a> as id::persistent::Possessor>::Id,
     pub album_name: Option<Utf16Str<'a>>,
     pub album_artist_name: Option<Utf16Str<'a>>,
-    pub artist_id: <Artist<'a> as IdPossessor>::Id,
+    pub artist_id: <Artist<'a> as id::persistent::Possessor>::Id,
     pub artist_name: Option<Utf16Str<'a>>,
     pub genre: Option<Utf16Str<'a>>,
     pub sort_order_name: Option<Utf16Str<'a>>,
@@ -714,7 +673,7 @@ pub struct Track<'a> {
     pub artwork: Option<MzStaticImage<'a>>,
 
 
-    pub numerics: TrackNumerics,
+    pub numerics: TrackNumerics<'a>,
     pub composer: Option<Utf16Str<'a>>,
     pub kind: Option<Utf16Str<'a>>,
     pub copyright: Option<Utf16Str<'a>>,
@@ -880,14 +839,23 @@ impl<'a> ContextlessRead<'a> for Track<'a> {
         })
     }
 }
-impl<'a> IdPossessor for Track<'a> {
-    type Id = PersistentId<'a, Track<'a>>;
+impl<'a> id::persistent::Possessor for Track<'a> {
+    type Id = PersistentId<Track<'a>>;
     #[allow(private_interfaces)]
-    const IDENTITY: IdPossessorIdentity = IdPossessorIdentity::Track;
+    const IDENTITY: id::persistent::PossessorIdentity = id::persistent::PossessorIdentity::Track;
     fn get_persistent_id(&self) -> Self::Id {
         self.persistent_id
     }
 }
+impl id::cloud::catalog::Possessor for Track<'_> {
+    #[allow(private_interfaces)]
+    const IDENTITY: cloud::catalog::PossessorIdentity = cloud::catalog::PossessorIdentity::Track;
+}
+impl id::cloud::library::Possessor for Track<'_> {
+    #[allow(private_interfaces)]
+    const IDENTITY: cloud::library::PossessorIdentity = cloud::library::PossessorIdentity::Track;
+}
+
 impl<'a> Track<'a> {
     pub fn get_artist_on(&'a self, artists: impl Into<&'a ArtistMap<'a>> + 'a) -> Option<&'a Artist<'a>> {
         Into::<&'a ArtistMap<'a>>::into(artists).get(&self.artist_id)
@@ -897,11 +865,12 @@ impl<'a> Track<'a> {
     }
 }
 
+
 derive_map!(TrackMap, Track<'a>, b"ltma");
 #[derive(Debug)]
 pub struct Account<'a> {
     bomas: Vec<Boma<'a>>,
-    pub persistent_id: <Self as IdPossessor>::Id,
+    pub persistent_id: <Self as id::persistent::Possessor>::Id,
 }
 impl<'a> ContextlessRead<'a> for Account<'a> {
     const SIGNATURE: &'static [u8; 4] = b"isma";
@@ -917,10 +886,10 @@ impl<'a> ContextlessRead<'a> for Account<'a> {
         Ok(Self { bomas, persistent_id })
     }
 }
-impl<'a> IdPossessor for Account<'a> {
+impl<'a> id::persistent::Possessor for Account<'a> {
     #[allow(private_interfaces)]
-    const IDENTITY: IdPossessorIdentity = IdPossessorIdentity::Account;
-    type Id = PersistentId<'a, Account<'a>>;
+    const IDENTITY: id::persistent::PossessorIdentity = id::persistent::PossessorIdentity::Account;
+    type Id = PersistentId<Account<'a>>;
     fn get_persistent_id(&self) -> Self::Id {
         self.persistent_id
     }
@@ -1003,7 +972,7 @@ pub struct Collection<'a> {
     pub name: Utf16Str<'a>,
     pub info: Option<CollectionInfo<'a>>, // not present on collection w/ name "Hidden Cloud PlaylistOnly Tracks"
     pub tracks: Vec<CollectionMember<'a>>,
-    pub persistent_id: <Self as IdPossessor>::Id,
+    pub persistent_id: <Self as id::persistent::Possessor>::Id,
     pub creation_date: Option<chrono::DateTime<chrono::Utc>>,
     pub modification_date: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -1065,10 +1034,10 @@ impl<'a> Collection<'a> {
             .collect::<Vec<_>>()
     }
 }
-impl<'a> IdPossessor for Collection<'a> {
-    type Id = PersistentId<'a, Collection<'a>>;
+impl<'a> id::persistent::Possessor for Collection<'a> {
+    type Id = PersistentId<Collection<'a>>;
     #[allow(private_interfaces)]
-    const IDENTITY: IdPossessorIdentity = IdPossessorIdentity::Collection;
+    const IDENTITY: id::persistent::PossessorIdentity = id::persistent::PossessorIdentity::Collection;
     fn get_persistent_id(&self) -> Self::Id {
         self.persistent_id
     }
@@ -1078,7 +1047,7 @@ derive_list!(CollectionMap, Collection<'a>, b"lPma");
 
 #[derive(Debug)]
 pub struct CollectionMember<'a> {
-    pub track_persistent_id: <Track<'a> as IdPossessor>::Id
+    pub track_persistent_id: <Track<'a> as id::persistent::Possessor>::Id
 }
 impl CollectionMember<'_> {
     pub const BOMA_SUBTYPE: u32 = 206;
@@ -1095,7 +1064,7 @@ impl CollectionMember<'_> {
 }
 
 trait DbAccess<'a> {
-    fn get<'b, T: IdPossessor>(&self, id: PersistentId<'b, T>) -> Option<&'a T>;
+    fn get<T: id::persistent::Possessor>(&self, id: PersistentId<T>) -> Option<&'a T>;
 
     fn library(&self) -> &LibraryMaster<'a>;
     fn albums(&self) -> &AlbumMap<'a>;
@@ -1161,10 +1130,10 @@ impl<'a> MusicDbView<'a> {
     /// 
     /// Only works for IDs with their datatype attached at the type-level, such as IDs which were retrieved from the DB itself.
     #[allow(clippy::missing_transmute_annotations)]
-    fn get<'b, T: IdPossessor>(&self, id: PersistentId<'b, T>) -> Option<&'a T> {
+    fn get<T: id::persistent::Possessor>(&self, id: PersistentId<T>) -> Option<&'a T> {
         match T::IDENTITY {
-            IdPossessorIdentity::Account => {
-                let id: PersistentId<'a, Account<'a>> = unsafe { core::mem::transmute(id) };
+            id::persistent::PossessorIdentity::Account => {
+                let id: PersistentId<Account<'a>> = unsafe { core::mem::transmute(id) };
                 if self.accounts.is_none() {
                     tracing::warn!("account ID passed without existence of accounts field");
                 };
@@ -1173,23 +1142,23 @@ impl<'a> MusicDbView<'a> {
                  });
                 unsafe { core::mem::transmute(account) }
             }
-            IdPossessorIdentity::Album => {
-                let id: PersistentId<'a, Album<'a>> = unsafe { core::mem::transmute(id) };
+            id::persistent::PossessorIdentity::Album => {
+                let id: PersistentId<Album<'a>> = unsafe { core::mem::transmute(id) };
                 let album = self.albums.get(&id);
                 unsafe { core::mem::transmute(album) }
             },
-            IdPossessorIdentity::Artist => {
-                let id: PersistentId<'a, Artist<'a>> = unsafe { core::mem::transmute(id) };
+            id::persistent::PossessorIdentity::Artist => {
+                let id: PersistentId<Artist<'a>> = unsafe { core::mem::transmute(id) };
                 let artist = self.artists.get(&id);
                 unsafe { core::mem::transmute(artist) }
             },
-            IdPossessorIdentity::Collection => {
-                let id: PersistentId<'a, Collection<'a>> = unsafe { core::mem::transmute(id) };
+            id::persistent::PossessorIdentity::Collection => {
+                let id: PersistentId<Collection<'a>> = unsafe { core::mem::transmute(id) };
                 let collection = &self.collections.0.iter().find(|collection| collection.persistent_id == id);
                 unsafe { core::mem::transmute(collection) }
             },
-            IdPossessorIdentity::Track => {
-                let id: PersistentId<'a, Track<'a>> = unsafe { core::mem::transmute(id) };
+            id::persistent::PossessorIdentity::Track => {
+                let id: PersistentId<Track<'a>> = unsafe { core::mem::transmute(id) };
                 let track = self.tracks.get(&id);
                 unsafe { core::mem::transmute(track) }
             },
@@ -1280,7 +1249,7 @@ impl MusicDB {
     /// Returns the value with the given ID (be it a track, album, artist, et cetera).
     /// 
     /// Only works for IDs with their datatype attached at the type-level, such as IDs which were retrieved from the DB itself.
-    pub fn get<T: IdPossessor>(&self, id: PersistentId<'_, T>) -> Option<&T> {
+    pub fn get<T: id::persistent::Possessor>(&self, id: PersistentId<T>) -> Option<&T> {
         self.get_view().get(id)
     }
 

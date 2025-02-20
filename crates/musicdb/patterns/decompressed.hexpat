@@ -185,8 +185,19 @@ struct TrackNumerics {
     u32 normalization; // ?
     padding[176 - (152 + 4)];
     u32 length_ms;
-    padding[316 - (176 + 4)];
+    u32 cloud_catalog_album_id;
+    padding[4];
+    u32 cloud_catalog_artist_id;
+    padding[316 - (176 + 16)];
     u32 file_size;
+    padding[4];
+    u32 cloud_catalog_track_id;
+    padding[12];
+    u32 cloud_catalog_track_id_again;
+    padding[16];
+    u32 cloud_catalog_track_id_again_again;
+    padding[4];
+    u32 cloud_catalog_track_id_again_again_again;
 };
 
 struct CollectionMember {
