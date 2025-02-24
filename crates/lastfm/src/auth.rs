@@ -95,7 +95,7 @@ impl AuthorizationToken {
         format!("https://www.last.fm/api/auth/?api_key={}&token={self}", client.key)
     }
 
-    /// [`Self::get_authorization_url`] flow must be completed prior to obtaining a session token.
+    /// [`Self::generate_authorization_url`] flow must be completed prior to obtaining a session token.
     /// - <https://www.last.fm/api/show/auth.getSession>
     pub async fn generate_session_key(&self, client: &ClientIdentity) -> crate::Result<SessionKey, SessionKeyThroughAuthorizationTokenError> {
         let signature = format!("{:x}", md5::compute(format!("api_key{}methodauth.getSessiontoken{self}{}", client.key, client.secret)));
@@ -164,7 +164,7 @@ crate::error::code::def!{
 /// 
 /// Obtainable via 
 ///  - [`AccountCredentials::generate_session_key`]
-///  - [`AuthorizationToken::generate_session_key`] (after user completion of [`AuthorizationToken::get_authorization_url`])
+///  - [`AuthorizationToken::generate_session_key`] (after user completion of [`AuthorizationToken::generate_authorization_url`])
 // TODO: Mobile obtainment method.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SessionKey(internal::ThirtyTwoCharacterAsciiString);

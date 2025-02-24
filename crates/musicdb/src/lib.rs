@@ -496,9 +496,9 @@ pub struct Artist<'a> {
     // r0x8..11 ; associated section length
     // r0x12..15 ; boma count
     pub persistent_id: <Artist::<'a> as id::persistent::Possessor>::Id, // r0x16..23
-    /// e.x. 1147783278; see https://developer.apple.com/documentation/applemusicapi/get-a-catalog-artist#Example
+    /// e.x. 1147783278; see <https://developer.apple.com/documentation/applemusicapi/get-a-catalog-artist#Example>
     pub cloud_catalog_id: Option<id::cloud::Catalog<Artist<'a>>>,
-    /// e.x. "r.y8mMT7t"; see https://developer.apple.com/documentation/applemusicapi/get-a-library-artist#Example
+    /// e.x. "r.y8mMT7t"; see <https://developer.apple.com/documentation/applemusicapi/get-a-library-artist#Example>
     pub cloud_library_id: Option<id::cloud::Library<Artist<'a>, &'a Utf16Str>>,
 
     pub name: Option<&'a Utf16Str>,

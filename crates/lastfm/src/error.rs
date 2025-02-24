@@ -43,7 +43,7 @@ pub use code::GeneralErrorCode;
 /// <https://www.last.fm/api/errorcodes>
 pub mod code {
     /// Implemented for Last.fm API error codes.
-    /// Allows for [`core::convert::Into`] conversions to [`Error`] without overlapping implements on generics.
+    /// Allows for [`core::convert::Into`] conversions to [`super::Error`] without overlapping implements on generics.
     pub trait ErrorCode:
         std::error::Error
         + core::fmt::Debug

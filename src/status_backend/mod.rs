@@ -17,7 +17,7 @@ pub mod error {
             /// If this method is called multiple times per track, it may be wise to use [`Recovery::Skip`] with a [`SkipPredicate`] instead.
             Continue(RecoveryAttributes),
             /// Don't use this method again until the predicate is met.
-            /// If this method isn't one which is called multiple times per track, it is equivalent to [`Recovery::Ignore`].
+            /// If this method isn't one which is called multiple times per track, it is equivalent to [`Recovery::Continue`].
             /// Predicate is not tracked across sessions. If the program is restarted, the method will be called again as normal.
             Skip {
                 /// Shared attributes for this recovery method.
@@ -81,7 +81,7 @@ pub mod error {
             use super::MaybeOwnedString;
 
             /// The request-related cause of a dispatch error.
-            /// This occurs if the request (or its response) wasn't successfully processed because a [non-data](Data) error was encountered.
+            /// This occurs if the request (or its response) wasn't successfully processed because a [non-data](DataError) error was encountered.
             #[derive(thiserror::Error, Debug)]
             pub enum RequestError {
                 /// The remote backend refused the request because of a lack of authorization.
@@ -138,7 +138,7 @@ pub mod error {
                 Internal(Box<dyn std::error::Error + Send + Sync>),
             }
             impl Cause {
-                /// Add a recovery method to the cause and convert it into a full [`DispatchError`].
+                /// Add a recovery method to the cause and convert it into a full [`DispatchError`](super::DispatchError).
                 pub fn with_recovery(self, recovery: super::Recovery) -> super::DispatchError {
                     super::DispatchError {
                         cause: self,
