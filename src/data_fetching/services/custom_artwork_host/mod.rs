@@ -1,3 +1,5 @@
+use crate::status_backend::DispatchableTrack;
+
 pub mod catbox;
 
 #[derive(thiserror::Error, Debug)]
@@ -23,9 +25,9 @@ pub enum CustomArtworkHostError {
 
 #[async_trait::async_trait]
 pub trait CustomArtworkHost: core::fmt::Debug + Send {
-    async fn get_for_track(&self, track: &osa_apple_music::track::Track) -> Result<Option<String>, RetrievalError>;
-    async fn upload_for_track(&mut self, track: &osa_apple_music::track::Track, path: &str) -> Result<String, UploadError>;
-    async fn for_track(&mut self, track: &osa_apple_music::track::Track, path: &str) -> Result<String, CustomArtworkHostError> {
+    async fn get_for_track(&self, track: &DispatchableTrack) -> Result<Option<String>, RetrievalError>;
+    async fn upload_for_track(&mut self, track: &DispatchableTrack, path: &str) -> Result<String, UploadError>;
+    async fn for_track(&mut self, track: &DispatchableTrack, path: &str) -> Result<String, CustomArtworkHostError> {
         match self.get_for_track(track).await.map_err(CustomArtworkHostError::RetrievalError)? {
             Some(url) => Ok(url),
             None => self.upload_for_track(track, path).await.map_err(CustomArtworkHostError::UploadError)

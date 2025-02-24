@@ -39,10 +39,10 @@ async fn search_songs(query: &str) -> Result<Vec<ITunesStoreSong>, SongSearchErr
 }
 
 // TODO: Rank with numeric. With Levenshtein; after removing parentheses, ignoring album, stuff like that.
-fn does_track_match_search(track: &osa_apple_music::track::Track, found: &ITunesStoreSong) -> bool {
+fn does_track_match_search(track: &crate::status_backend::DispatchableTrack, found: &ITunesStoreSong) -> bool {
     let name = normalize(&track.name);
     let artist = normalize(&track.artist.clone().unwrap_or_default());
-    let collection = normalize(&track.album.name.clone().unwrap_or_default());
+    let collection = normalize(&track.album.clone().unwrap_or_default());
 
     (
         normalize(&found.name) == name ||
@@ -52,7 +52,7 @@ fn does_track_match_search(track: &osa_apple_music::track::Track, found: &ITunes
         && (normalize(&found.collection_name) == collection)
 }
 
-pub async fn find_track(track: &osa_apple_music::track::Track) -> Result<Option<ITunesStoreSong>, SongSearchError> {
+pub async fn find_track(track: &crate::status_backend::DispatchableTrack) -> Result<Option<ITunesStoreSong>, SongSearchError> {
     let query = format!("{} {}", track.artist.clone().unwrap_or_default(), track.name);
     let songs = search_songs(&query).await?;
     if songs.len() == 1 { return Ok(songs.into_iter().next()) }

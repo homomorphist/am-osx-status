@@ -274,7 +274,7 @@ impl DiscordPresence {
     /// This also updates the duration and position fields based on the new context.
     async fn should_dispatch_progress_update(&mut self, context: &super::BackendContext<()>) -> bool {
         const STATUS_UPDATE_RATELIMIT_SECONDS: f32 = 15.;
-        self.duration = context.track.duration;
+        self.duration = context.track.duration.map(|d| d.as_secs_f32());
         self.position = context.listened.lock().await.current.as_ref().map(|c| c.get_expected_song_position());
         let duration = if let Some(duration) = self.duration { duration } else { return true };
         let position = if let Some(position) = self.position { position } else { return true };
@@ -308,7 +308,7 @@ super::subscribe!(DiscordPresence, TrackStarted, {
         use osa_apple_music::track::MediaKind;
         let super::BackendContext { track, listened, data: additional_info, .. } = context;
         self.position = listened.lock().await.current.as_ref().map(|position| position.get_expected_song_position());
-        self.duration = track.duration;
+        self.duration = track.duration.map(|d| d.as_secs_f32());
 
         fn make_minimum_length(mut s: String) -> String {
             if s.len() < 2 {
@@ -326,7 +326,7 @@ super::subscribe!(DiscordPresence, TrackStarted, {
             .details(make_minimum_length(track.name.clone()))
             .state(track.artist.clone().map(make_minimum_length).unwrap_or("Unknown Artist".to_owned()))
             .assets(|_| ActivityAssets {
-                large_text: track.album.name.clone().map(make_minimum_length),
+                large_text: track.album.clone().map(make_minimum_length),
                 large_image: additional_info.images.track.clone(),
                 small_image: additional_info.images.artist.clone(),
                 small_text: track.artist.clone().map(make_minimum_length),

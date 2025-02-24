@@ -15,7 +15,7 @@ pub struct AdditionalTrackData {
 impl AdditionalTrackData {
     pub async fn from_solicitation(
         solicitation: ComponentSolicitation,
-        track: &osa_apple_music::track::Track,
+        track: &crate::status_backend::DispatchableTrack,
         musicdb: Option<&musicdb::MusicDB>,
         host: Option<&mut Box<dyn crate::data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
     ) -> Self {

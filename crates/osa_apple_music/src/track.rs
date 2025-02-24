@@ -5,7 +5,7 @@ type Time = chrono::DateTime<chrono::Utc>;
 use std::{default, num::NonZeroU8};
 
 use serde_with::*;
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 macro_rules! non_zero_conv {
     ($(($ty: ty, $ident: ident) $(,)?)*) => {
@@ -28,6 +28,19 @@ non_zero_conv!(
     (u16, u16_ZeroAsNone)
 );
 
+serde_with::serde_conv!(
+    optional_f32_duration,
+    Option<core::time::Duration>,
+    |v: &Option<core::time::Duration>| v.map(|v| v.as_secs_f32()),
+    |value: f32| -> Result<_, std::convert::Infallible> {
+        if value == 0.0 {
+            Ok(None)
+        } else {
+            Ok(Some(core::time::Duration::from_secs_f32(value)))
+        }
+    }
+);
+
 rating::def_rating!({}, Rating);
 impl<T> PartialEq<T> for Rating where T: AsRef<Rating> {
     fn eq(&self, other: &T) -> bool {
@@ -35,13 +48,14 @@ impl<T> PartialEq<T> for Rating where T: AsRef<Rating> {
     }
 }
 
+
 pub(crate) mod rating {
     use super::*;
 
     #[macro_export]
     macro_rules! def_rating {
         ({ $(#[$meta: meta])* }, $ident: ident) =>  {
-            #[derive(Debug, Deserialize, PartialEq)]
+            #[derive(Debug, Deserialize, Serialize, PartialEq)]
             $(#[$meta])*
             pub enum $ident {
                 User(u8),
@@ -76,7 +90,7 @@ pub(crate) mod rating {
     }, ForTrackAlbum, equivalent => Rating);
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")] // with space delimiters
 pub enum TrackCloudStatus {
     /// The cloud status of this track is unknown / ineligible.
@@ -101,7 +115,7 @@ pub enum TrackCloudStatus {
     NotUploaded
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct TrackDownloader {
     /// The Apple ID of the person who downloaded this track.
     #[serde(rename = "downloaderAppleID")]
@@ -111,7 +125,7 @@ pub struct TrackDownloader {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct TrackPurchaser {
     /// The Apple ID of the person who purchased this track.
     #[serde(rename = "purchaserAppleID")]
@@ -121,7 +135,7 @@ pub struct TrackPurchaser {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MediaKind {
     Song,
@@ -130,7 +144,7 @@ pub enum MediaKind {
     Unknown
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EpisodeDetails {
     /// The episode ID of the track.
@@ -142,7 +156,7 @@ pub struct EpisodeDetails {
 }
 
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct PlayedInfo {
     /// Number of times this track has been played.
     #[serde(rename = "playedCount")]
@@ -157,7 +171,7 @@ pub struct PlayedInfo {
     never: bool
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SkippedInfo {
     /// Number of times this track has been skipped.
     #[serde(rename = "skippedCount")]
@@ -168,7 +182,7 @@ pub struct SkippedInfo {
     last: Option<Time>,
 }
 
-#[derive(Debug, Deserialize, serde::Serialize, Default, Clone)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct MovementInfo {
     /// The name of the movement.
     #[serde(rename = "movement")]
@@ -194,7 +208,7 @@ serde_with::serde_conv!(
 
 
 #[serde_as]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SortingOverrides {
     /// Override string to use for the track when sorting by album
@@ -229,7 +243,7 @@ pub struct SortingOverrides {
 }
 
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
 pub struct PlayableRange {
     /// The start of the playable region, in seconds. Defaults to zero.
     pub start: f32,
@@ -239,7 +253,7 @@ pub struct PlayableRange {
     pub end: f32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub enum EqualizerPreset {
     Acoustic,
     Classical,
@@ -304,10 +318,17 @@ impl core::str::FromStr for EqualizerPreset {
         })
     }
 }
-
+impl core::fmt::Display for EqualizerPreset {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut string = serde_json::to_string(self).unwrap();
+        debug_assert_eq!(string.pop(), Some('"'));
+        debug_assert_eq!(string.remove(0), '"');
+        write!(f, "{}", string)
+    }
+}
 
 #[serde_as]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct BasicTrack {
     /// The library's persistent ID for the track.
@@ -387,8 +408,8 @@ pub struct BasicTrack {
     pub downloader: Option<TrackDownloader>,
 
     /// The length of the track, in seconds.
-    /// Unavailable for audio streams.
-    pub duration: Option<f32>,
+    #[serde_as(as = "optional_f32_duration")]
+    pub duration: Option<core::time::Duration>,
 
     /// Whether this track is enabled for playback.
     pub enabled: bool,
@@ -519,7 +540,7 @@ pub struct BasicTrack {
 }
 
 #[serde_as]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize ,Debug)]
 pub struct NetworkStreamTrack {
     /// The track details.
     #[serde(flatten)]
@@ -536,7 +557,7 @@ impl core::ops::Deref for NetworkStreamTrack {
 
 
 #[serde_as]
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct LocalTrack {
     /// The track details.
     #[serde(flatten)]
@@ -551,7 +572,7 @@ impl core::ops::Deref for LocalTrack {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(untagged)] // it doesn't wanna let me tag for whatever reason
 pub enum Track {
     // #[serde(rename = "fileTrack")]
@@ -571,6 +592,15 @@ impl core::ops::Deref for Track {
         }
     }
 }
+impl From<Track> for BasicTrack {
+    fn from(val: Track) -> Self {
+        match val {
+            Track::NetworkStream(v) => v.track,
+            Track::Local(v) => v.track,
+            Track::Shared(v) => v,
+        }
+    }
+}
 impl Track {
     /// Fetches and returns the currently playing song.
     /// If you find yourself doing this repeatedly, consider using [`Session`](crate::Session) instead.
@@ -583,7 +613,7 @@ impl Track {
 }
 
 #[serde_as]
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize ,PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackAlbum {
     /// The name of the album that this track is in.

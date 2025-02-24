@@ -2,11 +2,11 @@ use std::{fmt::Debug, sync::Arc};
 use chrono::TimeDelta;
 use maybe_owned_string::MaybeOwnedString;
 
-use super::{error::dispatch::DispatchError, subscribe, subscription::{self}};
+use super::{error::dispatch::DispatchError, DispatchableTrack, subscribe, subscription};
 use crate::{data_fetching::AdditionalTrackData, listened::TimeDeltaExtension as _};
 
 const FOUR_MINUTES: TimeDelta = TimeDelta::new(4 * 60, 0).unwrap();
-const THIRTY_SECONDS: TimeDelta = TimeDelta::new(30, 0).unwrap();
+const THIRTY_SECONDS: core::time::Duration = core::time::Duration::new(30, 0);
 
 use std::sync::LazyLock;
 use lastfm::auth::ClientIdentity;
@@ -137,8 +137,8 @@ struct FirstArtistQuery<'a> {
     id: musicdb::PersistentId<musicdb::Track<'a>>,
     artists: &'a str
 }
-impl<'a> From<&'a osa_apple_music::track::Track> for FirstArtistQuery<'a> {
-    fn from(track: &'a osa_apple_music::track::Track) -> Self {
+impl<'a> From<&'a DispatchableTrack> for FirstArtistQuery<'a> {
+    fn from(track: &'a DispatchableTrack) -> Self {
         Self {
             name: &track.name,
             id: musicdb::PersistentId::try_from(track.persistent_id.as_str()).expect("bad track persistent ID"),
@@ -351,27 +351,26 @@ impl LastFM {
     }
 
     /// - <https://www.last.fm/api/scrobbling#scrobble-requests>
-    async fn is_eligible(track: &osa_apple_music::Track, listened: Arc<tokio::sync::Mutex<crate::Listened>>) -> bool {
+    async fn is_eligible(track: &DispatchableTrack, listened: Arc<tokio::sync::Mutex<crate::Listened>>) -> bool {
         if let Some(duration) = track.duration {
-            let length = TimeDelta::from_secs_f32(duration);
             let time_listened = listened.lock().await.total_heard();
-            if length < THIRTY_SECONDS { return false };
+            if duration < THIRTY_SECONDS { return false };
             time_listened >= FOUR_MINUTES ||
-            time_listened.as_secs_f32() >= (length.as_secs_f32() / 2.)
+            time_listened.as_secs_f32() >= (duration.as_secs_f32() / 2.)
         } else { false }
     }
 
     /// Returns `None` if the track is missing required data (the artist or track name).
-    async fn track_to_heard<'a>(track: &'a osa_apple_music::track::Track, artist: &'a str) -> lastfm::scrobble::HeardTrackInfo<'a> {
+    async fn track_to_heard<'a>(track: &'a DispatchableTrack, artist: &'a str) -> lastfm::scrobble::HeardTrackInfo<'a> {
         lastfm::scrobble::HeardTrackInfo {
             artist,
             track: &track.name,
-            album: track.album.name.as_deref().map(clean_album),
-            album_artist: if track.album.artist.as_ref().is_some_and(|aa| Some(aa) != track.artist.as_ref()) {
+            album: track.album.as_deref().map(clean_album),
+            album_artist: if track.album.as_ref().is_some_and(|aa| Some(aa) != track.artist.as_ref()) {
                 // only sent if != track artist
-                Some(track.album.artist.as_ref().unwrap())
+                Some(track.album.as_ref().unwrap())
             } else { None },
-            duration_in_seconds: track.duration.map(|d| d as u32),
+            duration_in_seconds: track.duration.map(|d| d.as_secs()as u32),
             track_number: track.track_number.map(|n| n.get() as u32),
             mbid: None
         }

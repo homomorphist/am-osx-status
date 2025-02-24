@@ -2,7 +2,7 @@
 use std::{ops::DerefMut, process::ExitCode, sync::{atomic::AtomicBool, Arc}, time::Duration};
 use config::{ConfigPathChoice, ConfigRetrievalError};
 use musicdb::MusicDB;
-use status_backend::{subscription, BackendContext};
+use status_backend::{subscription, BackendContext, DispatchableTrack};
 use tokio::sync::Mutex;
 use tracing::Instrument;
 use listened::Listened;
@@ -219,7 +219,7 @@ async fn main() -> ExitCode {
 struct PollingContext {
     terminating: Arc<AtomicBool>,
     backends: status_backend::Backends,
-    pub last_track: Option<Arc<osa_apple_music::track::Track>>,
+    pub last_track: Option<Arc<DispatchableTrack>>,
     pub listened: Arc<Mutex<Listened>>,
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
     musicdb: Arc<Option<musicdb::MusicDB>>,
@@ -331,7 +331,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
 
         PlayerState::Playing => {
             let track = match context.jxa.now_playing().instrument(tracing::trace_span!("track retrieval")).await {
-                Ok(Some(track)) => Arc::new(track),
+                Ok(Some(track)) => track,
                 Ok(None) => return,
                 Err(err) => {
                     use osa_apple_music::error::SessionEvaluationError;
@@ -356,6 +356,9 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
             ) {
                 return;
             }
+
+            let track_playable_range = track.playable_range;
+            let track = Arc::new(DispatchableTrack::from(track));
 
             let previous = context.last_track.as_ref().map(|v| &v.persistent_id);
             if previous != Some(&track.persistent_id) {
@@ -384,7 +387,9 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                     additional_data_pending.await
                 };
 
-                let listened = Arc::new(Mutex::new(Listened::new_with_current(app.position.or(track.playable_range.as_ref().map(|r| r.start)).unwrap_or(0.))));
+                let track_start = app.position.or(track_playable_range.as_ref().map(|r| r.start)).unwrap_or(0.);
+                let listened = Listened::new_with_current(track_start);
+                let listened = Arc::new(Mutex::new(listened));
                 context.listened = listened.clone();
                 context.last_track = Some(track.clone());
                 context.backends.dispatch_track_started(BackendContext {

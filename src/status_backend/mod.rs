@@ -1,5 +1,7 @@
 use std::sync::Arc;
+use maybe_owned_string::MaybeOwnedString;
 use tokio::sync::Mutex;
+use serde::{Serialize, Deserialize};
 
 use crate::data_fetching::components::ComponentSolicitation;
 
@@ -489,7 +491,6 @@ macro_rules! use_backends {
         }
         }
 
-        #[derive(Debug)]
         pub struct Backends {
             $(
                 #[cfg(feature = $feature)]
@@ -510,6 +511,18 @@ macro_rules! use_backends {
                 backends
             }
         }
+        impl core::fmt::Debug for Backends {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                let mut set = f.debug_set();
+                $(
+                    #[cfg(feature = $feature)]
+                    if let Some(backend) = &self.$name {
+                        set.entry(backend);
+                    }
+                )*
+                set.finish()
+            }
+        }
     };
 }
 use_backends!([
@@ -524,9 +537,37 @@ impl<T, E> BackendMap<Result<T, E>> {
     }
 }
 
+/// The minimum data required to dispatch a track to a backend.
+/// This can be serialized and deserialized for bulk dispatches at later dates.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DispatchableTrack {
+    pub name: String,
+    pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub artist: Option<String>,
+    pub persistent_id: String,
+    pub duration: Option<core::time::Duration>,
+    pub media_kind: osa_apple_music::track::MediaKind,
+    pub track_number: Option<core::num::NonZero<u16>>,
+}
+impl From<osa_apple_music::Track> for DispatchableTrack {
+    fn from(track: osa_apple_music::Track) -> Self {
+        let track: osa_apple_music::track::BasicTrack = track.into();
+        Self {
+            name: track.name,
+            album: track.album.name,
+            album_artist: track.album.artist,
+            artist: track.artist,
+            persistent_id: track.persistent_id.clone(),
+            media_kind: track.media_kind,
+            duration: track.duration,
+            track_number: track.track_number,
+        }
+    }
+}
 #[derive(Debug)]
 pub struct BackendContext<A> {
-    pub track: Arc<osa_apple_music::Track>,
+    pub track: Arc<DispatchableTrack>,
     pub app: Arc<osa_apple_music::ApplicationData>,
     pub data: Arc<A>,
     pub listened: Arc<Mutex<crate::listened::Listened>>,

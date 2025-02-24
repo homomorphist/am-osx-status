@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use maybe_owned_string::MaybeOwnedStringDeserializeToOwned;
 
-use super::{error::dispatch::DispatchError, subscribe};
+use super::{error::dispatch::DispatchError, DispatchableTrack, subscribe};
 use crate::{data_fetching::AdditionalTrackData, listened::TimeDeltaExtension as _};
 
 const FOUR_MINUTES: chrono::TimeDelta = chrono::TimeDelta::new(4 * 60, 0).unwrap();
@@ -75,18 +75,18 @@ impl ListenBrainz {
         Self { client: Arc::new(brainz::listen::v1::Client::new(program_info, Some(token))) }
     }
 
-    fn basic_track_metadata(track: &osa_apple_music::track::Track) -> Result<brainz::listen::v1::submit_listens::BasicTrackMetadata<'_>, DispatchError> {
+    fn basic_track_metadata(track: &DispatchableTrack) -> Result<brainz::listen::v1::submit_listens::BasicTrackMetadata<'_>, DispatchError> {
         Ok(brainz::listen::v1::submit_listens::BasicTrackMetadata {
             artist: track.artist.as_deref().ok_or(DispatchError::missing_required_data("artist name"))?,
             track: &track.name,
-            release: track.album.name.as_deref()
+            release: track.album.as_deref()
         })
     }
 
-    fn additional_info<'a>(track: &'a osa_apple_music::track::Track, app: &'a osa_apple_music::application::ApplicationData, program: &'a brainz::music::request_client::ProgramInfo<S>) -> brainz::listen::v1::submit_listens::additional_info::AdditionalInfo<'a> {
+    fn additional_info<'a>(track: &'a DispatchableTrack, app: &'a osa_apple_music::application::ApplicationData, program: &'a brainz::music::request_client::ProgramInfo<S>) -> brainz::listen::v1::submit_listens::additional_info::AdditionalInfo<'a> {
         use brainz::listen::v1::submit_listens::additional_info::*;
         AdditionalInfo {
-            duration: track.duration.map(core::time::Duration::from_secs_f32),
+            duration: track.duration,
             track_number: track.track_number.map(|n| n.get() as u32),
             submission_client: Some(program),
             music_service: Some(MusicService::Domain("music.apple.com")),
@@ -101,10 +101,9 @@ impl ListenBrainz {
     /// - <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html#post--1-submit-listens>
     async fn is_eligible_for_submission<T>(&self, context: &super::BackendContext<T>) -> bool {
         if let Some(duration) = context.track.duration {
-            let length = core::time::Duration::from_secs_f32(duration);
             let time_listened = context.listened.lock().await.total_heard();
             time_listened >= FOUR_MINUTES ||
-            time_listened.as_secs_f32() >= (length.as_secs_f32() / 2.)
+            time_listened.as_secs_f32() >= (duration.as_secs_f32() / 2.)
         } else { false }
     }
 }
