@@ -78,8 +78,6 @@ pub mod response {
         pub fn new(json: String, capacity: usize) -> Result<Self, serde_json::Error> {
             let json = core::pin::Pin::new(json);
     
-            dbg!("scrob", &json);
-
             let (results, counts) = {
                 // Disassociate to allow reference into JSON despite it "moving" into this struct.
                 // It's alright since it's pinned and doesn't actually move.
@@ -166,8 +164,6 @@ pub mod response {
                     let bytes = core::mem::transmute::<&'a [u8], &[u8]>(bytes);
                     core::str::from_utf8_unchecked(bytes)
                 };
-
-                dbg!("np", json);
 
                 let response = serde_json::from_str::<raw::NowPlayingResponse>(json)?.inner;
 
