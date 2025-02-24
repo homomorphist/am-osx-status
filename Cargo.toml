@@ -19,7 +19,6 @@ maybe_owned_string = { path = "./crates/maybe_owned_string/" }
 musicdb = { path = "./crates/musicdb/", features = ["tracing"] }
 mzstatic = { path = "./crates/mzstatic/" }
 reqwest = "0.12.7"
-rusqlite = { version = "0.32.1" }
 serde = { version = "1.0.214", features = ["derive"] }
 serde_json = "1.0.128"
 service-manager = "0.7.1"
@@ -45,6 +44,7 @@ futures-util = "0.3.31"
 itunes_api = { path = "./crates/itunes_api" }
 include_dir = "0.7.4"
 cast_trait_object = "0.1.4"
+sqlx = { version = "0.8.3", features = ["runtime-tokio", "sqlite-unbundled", "macros"] }
 
 [features]
 default = ["discord", "listenbrainz", "lastfm"]

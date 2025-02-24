@@ -1,5 +1,3 @@
-use rusqlite::{Connection, OpenFlags, OptionalExtension, Result};
-
 struct PersistentId(i64);
 impl TryFrom<&str> for PersistentId {
     type Error = core::num::ParseIntError;
@@ -27,43 +25,49 @@ struct SourceInfo {
     pub fk_image_info: Option<ImageInfoKey>
 }
 
-fn get_source_info(persistent_id: PersistentId, connection: &mut Connection) -> Result<Option<SourceInfo>, rusqlite::Error> {
-    let mut prepared  = connection.prepare_cached(r"
+async fn get_source_info(persistent_id: PersistentId, pool: &sqlx::SqlitePool) -> Result<Option<SourceInfo>, sqlx::Error> {
+    sqlx::query(r"
         SELECT ZIMAGEINFO, ZURL
         FROM ZDATABASEITEMINFO AS db
         JOIN ZSOURCEINFO AS src
         ON db.ZSOURCEINFO = src.Z_PK
         WHERE db.ZPERSISTENTID = ?1;
-    ")?;
-
-    prepared.query_row([persistent_id.0], |out| {
-        Ok(SourceInfo {
-            url: out.get(1)?,
-            fk_image_info: out.get::<usize, Option<usize>>(0)?.map(ImageInfoKey)
+    ")
+        .bind(persistent_id.0)
+        .fetch_optional(pool).await?
+        .map(|row| {
+            use sqlx::Row;
+            Ok(SourceInfo {
+                url: row.get(1),
+                fk_image_info: row.get::<Option<u64>, usize>(0).map(ImageInfoKey)
+            })
         })
-    }).optional()
+        .transpose()
 }
 
 
-struct ImageInfoKey(usize);
+struct ImageInfoKey(u64);
 struct ImageInfo {
     pub hash_string: String,
     pub kind: Kind,
 }
 
-fn get_image_info(key: ImageInfoKey, connection: &mut Connection) -> Result<Option<ImageInfo>, rusqlite::Error> {
-    let mut prepared  = connection.prepare_cached(r"
+async fn get_image_info(key: ImageInfoKey, pool: &sqlx::SqlitePool) -> Result<Option<ImageInfo>, sqlx::Error> {
+    sqlx::query(r"
         SELECT ZHASHSTRING, ZKIND
         FROM ZIMAGEINFO
         WHERE Z_PK = ?1;
-    ")?;
-
-    prepared.query_row([key.0], |out| {
-        Ok(ImageInfo {
-            kind: Kind::from_repr(out.get::<usize, u8>(1)?).expect("unknown variant"),
-            hash_string: out.get(0)?,
+    ")
+        .bind(key.0 as i64)
+        .fetch_optional(pool).await?
+        .map(|out| {
+            use sqlx::Row;
+            Ok(ImageInfo {
+                kind: Kind::from_repr(out.get(1)).expect("unknown variant"),
+                hash_string: out.get::<&str, usize>(0).to_string(),
+            })
         })
-    }).optional()
+        .transpose()
 }
 
 #[derive(Debug)]
@@ -73,17 +77,25 @@ pub enum StoredArtwork {
 }
 
 use std::sync::LazyLock;
+
+use sqlx::pool;
 static ARTWORKD_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     crate::util::HOME.as_path().join("Library/Containers/com.apple.AMPArtworkAgent/Data/Documents")
 });
+static ARTWORKD_ARTWORK_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
+    ARTWORKD_PATH.as_path().join("artworkd")
+});
+static ARTWORKD_SQLITE_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
+    ARTWORKD_PATH.as_path().join("artworkd.sqlite")
+});
+
+
 
 // Merely knowing this function exists has brought me great pain, to say much less of writing it.
 // One day I hope it may be rendered unnecessary. 
 fn get_file_extension(info: &ImageInfo) -> String {
     if info.kind == Kind::UserCustomAlbumArt {
-        let folder = ARTWORKD_PATH.join("artwork");
-        let folder = folder.to_str().expect("bad album artwork path");
-
+        let folder = &*ARTWORKD_ARTWORK_PATH;
         for file in std::fs::read_dir(folder).expect("cannot read album art folder") {
             let file = file.expect("cannot read album art file").file_name();
             if file.to_string_lossy().starts_with(&info.hash_string) {
@@ -97,14 +109,22 @@ fn get_file_extension(info: &ImageInfo) -> String {
 
 /// ## Parameters
 /// - `persistent_id`: Hexadecimal string containing 8 bytes.
-pub fn get_artwork(persistent_id: impl AsRef<str>) -> Result<Option<StoredArtwork>, rusqlite::Error> {
-    let mut connection = Connection::open_with_flags(ARTWORKD_PATH.join("artworkd.sqlite"), OpenFlags::SQLITE_OPEN_READ_ONLY).expect("cannot connect to artworkd database");
+pub async fn get_artwork(persistent_id: impl AsRef<str>) -> Result<Option<StoredArtwork>, sqlx::Error> {
+    let connect_options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&*ARTWORKD_SQLITE_PATH)
+        .read_only(true);
+
+    // not really a pool, ay? but this'll work fine for now.
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(connect_options).await?;
+
     let persistent_id = PersistentId::try_from(persistent_id.as_ref()).expect("bad persistent ID");
-    let source = get_source_info(persistent_id, &mut connection)?;
+    let source = get_source_info(persistent_id, &pool).await?;
     let source = if let Some(source) = source { source } else { return Ok(None) };
     if let Some(url) = source.url { return Ok(Some(StoredArtwork::Remote { url })) }
     if let Some(fk) = source.fk_image_info {
-        return match get_image_info(fk, &mut connection)? {
+        return match get_image_info(fk, &pool).await? {
             None => Ok(None),
             Some(info) => {
                 const CACHE_ID: usize = 1; // it's kinda borked

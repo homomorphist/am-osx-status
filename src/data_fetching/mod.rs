@@ -39,7 +39,7 @@ impl AdditionalTrackData {
         }
 
         if solicitation.list.contains(&Component::AlbumImage) {
-            images.track = match crate::util::fallback_to_default_and_log_error!(get_artwork(&track.persistent_id)) {
+            images.track = match crate::util::fallback_to_default_and_log_error!(get_artwork(&track.persistent_id).await) {
                 None => None,
                 Some(artwork) => match artwork {
                     StoredArtwork::Remote { url } => Some(url),
