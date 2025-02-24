@@ -1,15 +1,15 @@
 #![allow(unused)]
-use std::{ops::DerefMut, process::ExitCode, sync::{atomic::AtomicBool, Arc}, time::{Duration, Instant}};
+use std::{ops::DerefMut, process::ExitCode, sync::{atomic::AtomicBool, Arc}, time::Duration};
 use config::{ConfigPathChoice, ConfigRetrievalError};
-use data_fetching::services::apple_music;
 use musicdb::MusicDB;
-use osa_apple_music::application::PlayerState;
-use status_backend::{BackendContext, Listened};
+use status_backend::{subscription, BackendContext};
 use tokio::sync::Mutex;
 use tracing::Instrument;
-use util::{ferror, OWN_PID};
+use listened::Listened;
+use util::ferror;
 
 mod status_backend;
+mod listened;
 mod debugging;
 mod data_fetching;
 mod service;
@@ -86,7 +86,7 @@ async fn main() -> ExitCode {
     use cli::Command;
     match args.command {
         Command::Start => {
-            let mut config = match get_config_or_path!() {
+            let config = match get_config_or_path!() {
                 Ok(config) => config,
                 Err(path) => if config::wizard::io::prompt_bool(match path {
                     ConfigPathChoice::Automatic(..) => "No configuration has been set up! Would you like to use the wizard to build one?",
@@ -218,7 +218,7 @@ async fn main() -> ExitCode {
 #[derive(Debug)]
 struct PollingContext {
     terminating: Arc<AtomicBool>,
-    backends: status_backend::StatusBackends,
+    backends: status_backend::Backends,
     pub last_track: Option<Arc<osa_apple_music::track::Track>>,
     pub listened: Arc<Mutex<Listened>>,
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
@@ -235,7 +235,7 @@ impl PollingContext {
     async fn from_config(config: &config::Config<'_>, terminating: Arc<AtomicBool>) -> Self {
         Self {
             terminating,
-            backends: status_backend::StatusBackends::new(config).await,
+            backends: status_backend::Backends::new(config).await,
             last_track: None,
             listened: Arc::new(Mutex::new(Listened::new())),
             custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
@@ -249,7 +249,7 @@ impl PollingContext {
     }
 
     async fn reload_from_config(&mut self, config: &config::Config<'_>) {
-        self.backends = status_backend::StatusBackends::new(config).await;;
+        self.backends = status_backend::Backends::new(config).await;
     }
 
     pub fn is_terminating(&self) -> bool {
@@ -258,7 +258,7 @@ impl PollingContext {
 }
 
 #[tracing::instrument(skip(context), level = "trace")]
-async fn proc_once(mut context: Arc<Mutex<PollingContext>>) {
+async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     let mut guard = context.lock().await;
     let context = guard.deref_mut();
 
@@ -271,7 +271,7 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext>>) {
                 SessionEvaluationError::SessionFailure(err) => tracing::error!(?err, "failed to extract application data"),
                 SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract application data"),
                 SessionEvaluationError::DeserializationFailure(err) => {
-                    if !(err.classify() == serde_json::error::Category::Eof && context.terminating.load(std::sync::atomic::Ordering::Relaxed)) {
+                    if !(err.classify() == serde_json::error::Category::Eof && context.is_terminating()) {
                         tracing::error!(?err, "failed to deserialize application data")
                     }
                 }
@@ -340,7 +340,7 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext>>) {
                         SessionEvaluationError::SessionFailure(err) => tracing::error!(?err, "failed to retrieve track data"),
                         SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract track data"),
                         SessionEvaluationError::DeserializationFailure(err) => {
-                            if !(err.classify() == serde_json::error::Category::Eof && context.terminating.load(std::sync::atomic::Ordering::Relaxed)) {
+                            if !(err.classify() == serde_json::error::Category::Eof && context.is_terminating()) {
                                 tracing::error!(?err, "failed to deserialize track data")
                             }
                         }
@@ -362,7 +362,7 @@ async fn proc_once(mut context: Arc<Mutex<PollingContext>>) {
                 tracing::trace!(?track, "new track");
                 
                 use data_fetching::AdditionalTrackData;
-                let solicitation = context.backends.get_solicitations().await;
+                let solicitation = context.backends.get_solicitations(subscription::Identity::TrackStarted).await;
                 let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, track.as_ref(), context.musicdb.as_ref().as_ref(), context.custom_artwork_host.as_mut());
                 let additional_data = if let Some(previous) = context.last_track.clone() {
                     let pending_dispatch = context.backends.dispatch_track_ended(BackendContext {

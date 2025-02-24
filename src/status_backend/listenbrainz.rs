@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use maybe_owned_string::MaybeOwnedStringDeserializeToOwned;
 
-use super::{StatusBackend, TimeDeltaExtension as _};
+use super::{error::dispatch::DispatchError, subscribe};
+use crate::{data_fetching::AdditionalTrackData, listened::TimeDeltaExtension as _};
 
 const FOUR_MINUTES: chrono::TimeDelta = chrono::TimeDelta::new(4 * 60, 0).unwrap();
 
-use brainz::{listen::v1::submit_listens::additional_info, music::request_client::ProgramInfo};
+use brainz::music::request_client::ProgramInfo;
 
 type S = MaybeOwnedStringDeserializeToOwned<'static>;
 type P = ProgramInfo<S>;
@@ -36,24 +37,47 @@ pub struct Config {
     pub user_token: Option<brainz::listen::v1::UserToken>,
 }
 
-pub struct ListenBrainz {
-    client: Arc<brainz::listen::v1::Client<S>>,
+use brainz::listen::v1::submit_listens::ListenSubmissionError;
+impl From<ListenSubmissionError> for DispatchError {
+    fn from(error: ListenSubmissionError) -> Self {
+        match error {
+            ListenSubmissionError::NetworkFailure(err) => err.into(),
+            ListenSubmissionError::HistoricDateError(_) => DispatchError::invalid_data("date of listen is too far in the past"),
+            ListenSubmissionError::InvalidToken(_) => DispatchError::unauthorized(Some("invalid token")),
+            ListenSubmissionError::Ratelimited => todo!("ratelimited"),
+            ListenSubmissionError::Other(..) => todo!(),
+        }
+    }
 }
+
+use brainz::listen::v1::submit_listens::CurrentlyPlayingSubmissionError;
+impl From<CurrentlyPlayingSubmissionError> for DispatchError {
+    fn from(error: CurrentlyPlayingSubmissionError) -> Self {
+        match error {
+            CurrentlyPlayingSubmissionError::NetworkFailure(err) => err.into(),
+            CurrentlyPlayingSubmissionError::InvalidToken(_) => DispatchError::unauthorized(Some("invalid token")),
+            CurrentlyPlayingSubmissionError::Ratelimited => todo!("ratelimited"),
+            CurrentlyPlayingSubmissionError::Other(..) => todo!(),
+        }
+    }
+}
+
+super::subscription::define_subscriber!(pub ListenBrainz, {
+    client: Arc<brainz::listen::v1::Client<S>>,
+});
 impl core::fmt::Debug for ListenBrainz {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct(Self::NAME).finish()
     }
 }
 impl ListenBrainz {
-    const NAME: &'static str = "ListenBrainz";
-    
     pub fn new(program_info: ProgramInfo<MaybeOwnedStringDeserializeToOwned<'static>>, token: brainz::listen::v1::UserToken) -> Self {
         Self { client: Arc::new(brainz::listen::v1::Client::new(program_info, Some(token))) }
     }
 
-    fn basic_track_metadata(track: &osa_apple_music::track::Track) -> Option<brainz::listen::v1::submit_listens::BasicTrackMetadata<'_>> {
-        Some(brainz::listen::v1::submit_listens::BasicTrackMetadata {
-            artist: track.artist.as_deref()?,
+    fn basic_track_metadata(track: &osa_apple_music::track::Track) -> Result<brainz::listen::v1::submit_listens::BasicTrackMetadata<'_>, DispatchError> {
+        Ok(brainz::listen::v1::submit_listens::BasicTrackMetadata {
+            artist: track.artist.as_deref().ok_or(DispatchError::missing_required_data("artist name"))?,
             track: &track.name,
             release: track.album.name.as_deref()
         })
@@ -73,29 +97,9 @@ impl ListenBrainz {
             ..Default::default()
         }
     }
-}
-#[async_trait::async_trait]
-impl StatusBackend for ListenBrainz {
-    fn get_name(&self) -> &'static str {
-        Self::NAME
-    }
-
-    #[tracing::instrument(skip(self, context), level = "debug")]   
-    async fn record_as_listened(&self, context: super::BackendContext<()>) {
-        // TODO: catch network errors and add to a queue.
-        if let Some(track_data) = Self::basic_track_metadata(&context.track) {
-            let additional_info = Self::additional_info(&context.track, &context.app, self.client.get_program_info());
-            let started_listening_at = if let Some(at) = context.listened.lock().await.started_at() { at } else { tracing::error!("no start duration for current listening"); return };
-            if let Err(error) = self.client.submit_listen(track_data, started_listening_at, Some(additional_info)).await {
-                tracing::error!(?error, "listenbrainz now-listening failure")
-            }
-        } else {
-            tracing::warn!("listenbrainz now-listening dispatch skipped; track is missing required data (artist name)")
-        }
-    }
 
     /// - <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html#post--1-submit-listens>
-    async fn check_eligibility(&self, context: super::BackendContext<()>) -> bool {
+    async fn is_eligible_for_submission<T>(&self, context: &super::BackendContext<T>) -> bool {
         if let Some(duration) = context.track.duration {
             let length = core::time::Duration::from_secs_f32(duration);
             let time_listened = context.listened.lock().await.total_heard();
@@ -103,17 +107,20 @@ impl StatusBackend for ListenBrainz {
             time_listened.as_secs_f32() >= (length.as_secs_f32() / 2.)
         } else { false }
     }
-
-    #[tracing::instrument(skip(self, context), level = "debug")]
-    async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
-        if let Some(track_data) = Self::basic_track_metadata(&context.track) {
-            let additional_info = Self::additional_info(&context.track, &context.app, self.client.get_program_info());
-            if let Err(error) = self.client.submit_playing_now(track_data, Some(additional_info)).await {
-                tracing::error!(?error, "listenbrainz mark-listened failure")
-            }
-        } else {
-            tracing::warn!("listenbrainz mark-listened dispatch skipped; track is missing required data (artist name)")
-        }
-    }
 }
-
+subscribe!(ListenBrainz, TrackStarted, {
+    async fn dispatch(&mut self, context: super::BackendContext<AdditionalTrackData>) -> Result<(), DispatchError> {
+        let track_data = Self::basic_track_metadata(&context.track)?;
+        let additional_info = Self::additional_info(&context.track, &context.app, self.client.get_program_info());
+        self.client.submit_playing_now(track_data, Some(additional_info)).await.map_err(Into::into)
+    }
+});
+subscribe!(ListenBrainz, TrackEnded, {
+    async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
+        if !self.is_eligible_for_submission(&context).await { return Ok(()) }
+        let track_data = Self::basic_track_metadata(&context.track)?;
+        let additional_info = Self::additional_info(&context.track, &context.app, self.client.get_program_info());
+        let started_listening_at = context.listened.lock().await.started_at().ok_or(DispatchError::missing_required_data("listen start time"))?;
+        self.client.submit_listen(track_data, started_listening_at, Some(additional_info)).await.map_err(Into::into)
+    }
+});

@@ -1,11 +1,10 @@
-use std::{fmt::Debug, sync::{Arc, Weak}, time::{Duration, Instant}};
-use discord_presence::models::{payload::Payload, Activity, ActivityAssets, ActivityType};
+use std::{fmt::Debug, sync::{Arc, Weak}, time::Duration};
+use discord_presence::models::{Activity, ActivityAssets, ActivityType};
 use tokio::sync::Mutex;
-use tracing::instrument;
 
-use crate::{data_fetching::components::{Component, ComponentSolicitation}, util::fallback_to_default_and_log_absence};
+use crate::data_fetching::components::{Component, ComponentSolicitation};
 
-use super::{Listened, StatusBackend};
+use super::error::DispatchError;
 
 const APPLICATION_ID: u64 = 1286481105410588672; // "Apple Music"
 
@@ -34,19 +33,7 @@ pub enum DiscordPresenceState {
     Disconnected,
 }
 
-macro_rules! get_client_or_early_return {
-    ($self: ident) => {
-        match *$self.state.try_lock().unwrap() {
-            DiscordPresenceState::Disconnected => return,
-            DiscordPresenceState::Ready => match $self.client.as_mut() {
-                Some(client) => client,
-                None => return
-            }
-        }
-    };
-}
-
-pub struct DiscordPresence {
+super::subscription::define_subscriber!(pub DiscordPresence, {
     client: Option<discord_presence::Client>,
     state: Arc<Mutex<DiscordPresenceState>>,
     state_channel: tokio::sync::broadcast::Sender<DiscordPresenceState>,
@@ -56,7 +43,7 @@ pub struct DiscordPresence {
     activity: Option<discord_presence::models::Activity>,
     position: Option<f32>,
     duration: Option<f32>,
-}
+});
 impl Debug for DiscordPresence {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct(Self::NAME).finish()
@@ -68,8 +55,6 @@ impl Default for DiscordPresence {
     }
 }
 impl DiscordPresence {
-    const NAME: &'static str = "DiscordPresence";
-
     #[tracing::instrument(level = "debug")]
     pub async fn new() -> Self {
         let instance = Self::disconnected();
@@ -133,8 +118,7 @@ impl DiscordPresence {
             tx_disconnect.send(DiscordPresenceState::Disconnected).unwrap();
         }).persist();
         client.on_error(|err| {
-            dbg!(&err);
-            tracing::warn!("discord client error {:?}", &err);
+            tracing::error!(?err, "discord rpc error");
         }).persist();
         client.start();
 
@@ -250,19 +234,17 @@ impl DiscordPresence {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
-    async fn dispatch(&mut self) {
+    #[tracing::instrument(skip(self), level = "debug")]
+    async fn send_activity(&mut self) -> Result<(), DispatchError> {
         let activity = if let Some(activity) = self.activity.clone() { activity } else {
-            tracing::warn!("cannot dispatch without set activity");
-            return
+            return Err(DispatchError::internal_msg("no activity to dispatch", false))
         };
 
         let client = if let Some(client) = self.client.as_mut() { client } else {
-            tracing::warn!("cannot dispatch without client");
-            return
+            return Err(DispatchError::internal_msg("cannot dispatch without client", true))
         };
 
-        match client.set_activity(|_| activity.timestamps(|mut activity| {
+        client.set_activity(|_| activity.timestamps(|mut activity| {
             if let Some(position) = self.position {
                 let start = chrono::Utc::now().timestamp() as u64 - position as u64;
                 activity = activity.start(start);
@@ -271,14 +253,19 @@ impl DiscordPresence {
                 }
             } 
             activity
-        })) {
-            Ok(..) => {
-                self.has_content = true;
-            },
-            Err(error) => {
-                tracing::error!(?error, "activity dispatch failure");
-            }
-        }
+        }))
+            .map(|_| { self.has_content = true; })
+            .map_err(|err| {
+                use super::error::dispatch::{Recovery, RecoveryAttributes};
+                use discord_presence::DiscordError;
+                match err {
+                    DiscordError::JsonError(err) => err.into(),
+                    _ => DispatchError::internal(Box::new(err), Recovery::Continue(RecoveryAttributes {
+                        log: Some(tracing::Level::WARN),
+                        defer: false,
+                    }))
+                }
+            })
     }
 
     /// Because of the ratelimit on Discord's end, it's sometimes not worth dispatching a length change
@@ -307,13 +294,9 @@ impl Drop for DiscordPresence {
         }
     }
 }
-#[async_trait::async_trait]
-impl StatusBackend for DiscordPresence {
-    fn get_name(&self) -> &'static str {
-        Self::NAME
-    }
 
-    async fn get_additional_data_solicitation(&self) -> ComponentSolicitation {
+super::subscribe!(DiscordPresence, TrackStarted, {
+    async fn get_solicitation(&self) -> ComponentSolicitation {
         let mut solicitation: ComponentSolicitation = ComponentSolicitation::default();
         solicitation.list.insert(Component::ITunesData);
         solicitation.list.insert(Component::AlbumImage);
@@ -321,28 +304,9 @@ impl StatusBackend for DiscordPresence {
         solicitation
     }
 
-    async fn record_as_listened(&self, context: super::BackendContext<()>) {
-        // no-op
-    }
-
-    async fn check_eligibility(&self, context: super::BackendContext<()>) -> bool {
-        false
-    }
-
-    #[tracing::instrument(skip(self, context), level = "debug")]
-    async fn update_progress(&mut self, context: super::BackendContext<()>) {
-        if self.should_dispatch_progress_update(&context).await {
-            self.dispatch().await;
-        } else {
-            // TODO: Only do this if there is actually another song queued up
-            tracing::debug!("skipping progress dispatch since it'll delay next song dispatch")
-        }
-    }
-
-    #[tracing::instrument(skip(self, context), level = "debug")]
-    async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
+    async fn dispatch(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) -> Result<(), DispatchError> {
         use osa_apple_music::track::MediaKind;
-        let super::BackendContext { track, app, listened, data: additional_info, .. } = context;
+        let super::BackendContext { track, listened, data: additional_info, .. } = context;
         self.position = listened.lock().await.current.as_ref().map(|position| position.get_expected_song_position());
         self.duration = track.duration;
 
@@ -377,6 +341,18 @@ impl StatusBackend for DiscordPresence {
         }
 
         self.activity = Some(activity);
-        self.dispatch().await;
+        self.send_activity().await
     }
-}
+
+});
+super::subscribe!(DiscordPresence, ProgressJolt, {
+    async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
+        if self.should_dispatch_progress_update(&context).await {
+            self.send_activity().await
+        } else {
+            tracing::debug!("skipping progress dispatch since it'll delay next song dispatch");
+            Ok(())
+        }
+    }
+});
+

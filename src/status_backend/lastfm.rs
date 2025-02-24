@@ -1,10 +1,9 @@
 use std::{fmt::Debug, sync::Arc};
-use brainz::music;
 use chrono::TimeDelta;
 use maybe_owned_string::MaybeOwnedString;
-use musicdb::MusicDB;
 
-use super::{StatusBackend, TimeDeltaExtension as _};
+use super::{error::dispatch::DispatchError, subscribe, subscription::{self}};
+use crate::{data_fetching::AdditionalTrackData, listened::TimeDeltaExtension as _};
 
 const FOUR_MINUTES: TimeDelta = TimeDelta::new(4 * 60, 0).unwrap();
 const THIRTY_SECONDS: TimeDelta = TimeDelta::new(30, 0).unwrap();
@@ -54,6 +53,84 @@ fn clean_album(mut str: &str) -> &str {
     str
 }
 
+impl From<lastfm::scrobble::response::ScrobbleError> for DispatchError {
+    fn from(error: lastfm::scrobble::response::ScrobbleError) -> Self {
+        match error {
+            lastfm::scrobble::response::ScrobbleError::BadArtist => DispatchError::invalid_data("artist name is blacklisted"),
+            lastfm::scrobble::response::ScrobbleError::BadTrack => DispatchError::invalid_data("track name is blacklisted"),
+            lastfm::scrobble::response::ScrobbleError::TimestampTooOld => DispatchError::invalid_data("timestamp too old"),
+            lastfm::scrobble::response::ScrobbleError::TimestampTooNew => DispatchError::invalid_data("timestamp too new"),
+            lastfm::scrobble::response::ScrobbleError::DailyLimitReached => todo!("handle daily scrobble limit reached"),
+        }
+    }
+}
+impl<T: Into<super::DispatchError> + lastfm::error::code::ErrorCode> From<lastfm::Error<T>> for super::DispatchError {
+    fn from(error: lastfm::Error<T>) -> Self {
+        use lastfm::Error;
+        match error {
+            Error::Network(err) => err.into(),
+            Error::Deserialization(err) => err.into(),
+            Error::ApiError(err) => err.into(),
+        }
+    }
+}
+impl From<lastfm::error::code::general::Authentication> for super::DispatchError {
+    fn from(val: lastfm::error::code::general::Authentication) -> Self {
+        use super::error::dispatch::*;
+        DispatchError {
+            cause: Cause::Request(cause::RequestError::Unauthorized(Some(val.to_string().into()))),
+            recovery: Recovery::Skip {
+                until: SkipPredicate::Restart,
+                attributes: RecoveryAttributes {
+                    log: Some(tracing::Level::ERROR),
+                    defer: true,
+                },
+            }
+        }
+    }
+}
+impl From<lastfm::error::code::general::InvalidUsage> for super::DispatchError {
+    fn from(val: lastfm::error::code::general::InvalidUsage) -> Self {
+        use super::error::dispatch::*;
+        DispatchError {
+            cause: Cause::internal(val.to_string()),
+            recovery: Recovery::Skip {
+                until: SkipPredicate::Restart,
+                attributes: RecoveryAttributes {
+                    log: Some(tracing::Level::ERROR),
+                    defer: true,
+                },
+            }
+        }
+    }
+}
+impl From<lastfm::error::code::general::ServiceAvailability> for super::DispatchError {
+    fn from(_: lastfm::error::code::general::ServiceAvailability) -> Self {
+        use super::error::dispatch::*;
+        DispatchError {
+            cause: Cause::Request(cause::RequestError::Unavailable),
+            recovery: Recovery::Skip {
+                until: SkipPredicate::Restart,
+                attributes: RecoveryAttributes {
+                    log: Some(tracing::Level::ERROR),
+                    defer: true,
+                },
+            }
+        }
+    }
+}
+impl From<lastfm::error::code::GeneralErrorCode> for super::DispatchError {
+    fn from(val: lastfm::error::code::GeneralErrorCode) -> Self {
+        use lastfm::error::code::GeneralErrorCode;
+        match val {
+            GeneralErrorCode::Authentication(err) => err.into(),
+            GeneralErrorCode::InvalidUsage(err) => err.into(),
+            GeneralErrorCode::ServiceAvailability(err) => err.into(),
+            GeneralErrorCode::RateLimitExceeded => todo!()
+        }
+    }
+}
+
 #[derive(Debug)]
 struct FirstArtistQuery<'a> {
     name: &'a str,
@@ -85,20 +162,6 @@ async fn extract_first_artist<'a, 'b: 'a>(
 ) -> MaybeOwnedString<'a> {
     let track = Into::<FirstArtistQuery>::into(track);
 
-    fn is_certainly_single_artist(id: &musicdb::PersistentId<musicdb::Track<'_>>, db: &musicdb::MusicDB) -> bool {
-        if let Some(track) = db.get(*id) {
-            if let Some(artist) = db.get(track.artist_id) {
-                // Two combined artists are treated as one "artist" on the Apple Music frontend and in the MusicDB database.
-                // However, this doesn't apply to the Apple Music / iTunes' backend.
-                // This means we can use the lack of presence of a `cloud_catalog_id` to deduce whether an artist is "combined" or not,
-                // with the caveat that it won't apply to local artists. In that instance, we'll just treat it as false and do some more digging.
-                return artist.cloud_catalog_id.is_some()
-            }
-        }
-
-        false
-    }
-
     // TODO: Create a `brainz` abstraction.
     async fn search_listenbrainz(track: &FirstArtistQuery<'_>, net: &reqwest::Client) -> Option<String> {
         let query = format!("artist:\"{}\" AND recording:\"{}\"",
@@ -107,7 +170,7 @@ async fn extract_first_artist<'a, 'b: 'a>(
         );
         
         use super::listenbrainz::DEFAULT_PROGRAM_INFO;
-        let mut request = net.get("https://musicbrainz.org/ws/2/recording/")
+        let request = net.get("https://musicbrainz.org/ws/2/recording/")
             .header("User-Agent", &DEFAULT_PROGRAM_INFO.to_user_agent())
             .query(&[("query", query)]);
 
@@ -206,11 +269,11 @@ async fn extract_first_artist<'a, 'b: 'a>(
 ///  - "The Age of Rockets"' "Pictures of Space"
 #[tokio::test]
 #[ignore = "requires suitable library"]
-async fn artist_extraction () {
+async fn artist_extraction() {
     let db = musicdb::MusicDB::default();
     let net = reqwest::Client::new();
 
-    fn prepare_query<'a>(track_name: &'a str, artists: &'a str, db: &'a MusicDB) -> FirstArtistQuery<'a> {
+    fn prepare_query<'a>(track_name: &'a str, artists: &'a str, db: &'a musicdb::MusicDB) -> FirstArtistQuery<'a> {
         let artist_id = db.artists().values().find(|artist| artist.name.is_some_and(|v| v == artists)).unwrap_or_else(|| {
             panic!("missing required track for testing: artist(s) not found: \"{}\"", artists)
         }).persistent_id;
@@ -244,25 +307,63 @@ async fn artist_extraction () {
     assert_eq!(extract_first_artist(mesmerizer, Some(&db), &net).await, "Satsuki".into());
 } 
 
-pub struct LastFM {
+subscription::define_subscriber!(pub LastFM, {
     client: ::lastfm::Client<::lastfm::auth::state::Authorized>
-}
-impl Debug for LastFM {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct(Self::NAME).finish()
+});
+subscribe!(LastFM, TrackStarted, {
+    async fn dispatch(&mut self, context: super::BackendContext<AdditionalTrackData>) -> Result<(), DispatchError> {
+        let db = context.musicdb.as_ref().as_ref();
+        let track = context.track.as_ref();
+        let artist = extract_first_artist(track, db, &self.client.net).await;
+        let info = Self::track_to_heard(track, &artist).await;
+        self.client.set_now_listening(&info).await?;
+        Ok(())
     }
-}
+});
+subscribe!(LastFM, TrackEnded, {
+    async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
+        if !Self::is_eligible(context.track.as_ref(), context.listened).await {
+            return Ok(())
+        }
+
+        let db = context.musicdb.as_ref().as_ref();
+        let track = context.track.as_ref();
+        let artist = extract_first_artist(track, db, &self.client.net).await;
+        let response = self.client.scrobble(&[lastfm::scrobble::Scrobble {
+            chosen_by_user: None,
+            timestamp: chrono::Utc::now(),
+            info: Self::track_to_heard(track, &artist).await
+        }]).await?;
+
+        if let Some(outcome) = response.results.into_iter().next() {
+            outcome?;
+        }
+
+        Ok(())
+    }
+});
+
+
 impl LastFM {
-    const NAME: &'static str = "LastFM";
-    
     pub fn new(identity: ClientIdentity, session_key: lastfm::auth::SessionKey) -> Self {
         let client = lastfm::Client::authorized(identity, session_key);
         Self { client }
     }
 
+    /// - <https://www.last.fm/api/scrobbling#scrobble-requests>
+    async fn is_eligible(track: &osa_apple_music::Track, listened: Arc<tokio::sync::Mutex<crate::Listened>>) -> bool {
+        if let Some(duration) = track.duration {
+            let length = TimeDelta::from_secs_f32(duration);
+            let time_listened = listened.lock().await.total_heard();
+            if length < THIRTY_SECONDS { return false };
+            time_listened >= FOUR_MINUTES ||
+            time_listened.as_secs_f32() >= (length.as_secs_f32() / 2.)
+        } else { false }
+    }
+
     /// Returns `None` if the track is missing required data (the artist or track name).
-    async fn track_to_heard<'a>(track: &'a osa_apple_music::track::Track, artist: &'a str) -> Option<lastfm::scrobble::HeardTrackInfo<'a>> {
-        Some(lastfm::scrobble::HeardTrackInfo {
+    async fn track_to_heard<'a>(track: &'a osa_apple_music::track::Track, artist: &'a str) -> lastfm::scrobble::HeardTrackInfo<'a> {
+        lastfm::scrobble::HeardTrackInfo {
             artist,
             track: &track.name,
             album: track.album.name.as_deref().map(clean_album),
@@ -273,57 +374,11 @@ impl LastFM {
             duration_in_seconds: track.duration.map(|d| d as u32),
             track_number: track.track_number.map(|n| n.get() as u32),
             mbid: None
-        })
+        }
     }
 }
-
-// TODO: Don't call `track_to_heard` twice (on start and on end).
-#[async_trait::async_trait]
-impl StatusBackend for LastFM {
-    fn get_name(&self) -> &'static str {
-        Self::NAME
-    }
-
-    #[tracing::instrument(skip(self, context), level = "debug")]
-    async fn record_as_listened(&self, context: super::BackendContext<()>) {
-        let db = context.musicdb.as_ref().as_ref();
-        let track = context.track.as_ref();
-        let artist = extract_first_artist(track, db, &self.client.net).await;
-        if let Some(info) = Self::track_to_heard(track, &artist).await {
-            if let Err(error) = self.client.scrobble(&[lastfm::scrobble::Scrobble {
-                chosen_by_user: None,
-                timestamp: chrono::Utc::now(),
-                info
-            }]).await {
-                tracing::error!(?error, "last.fm mark-listened failure")
-            }
-        } else {
-            tracing::warn!("scrobble skipped; track is missing required data (artist name)")
-        }
-    }
-
-    /// - <https://www.last.fm/api/scrobbling#scrobble-requests>
-    async fn check_eligibility(&self, context: super::BackendContext<()>) -> bool {
-        if let Some(duration) = context.track.duration {
-            let length = TimeDelta::from_secs_f32(duration);
-            let time_listened = context.listened.lock().await.total_heard();
-            if length < THIRTY_SECONDS { return false };
-            time_listened >= FOUR_MINUTES ||
-            time_listened.as_secs_f32() >= (length.as_secs_f32() / 2.)
-        } else { false }
-    }
-
-    #[tracing::instrument(skip(self, context), level = "debug")]
-    async fn set_now_listening(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) {
-        let db = context.musicdb.as_ref().as_ref();
-        let track = context.track.as_ref();
-        let artist = extract_first_artist(track, db, &self.client.net).await;
-        if let Some(info) = Self::track_to_heard(track, &artist).await {
-            if let Err(error) = self.client.set_now_listening(&info).await {
-                tracing::error!(?error, "last.fm now-listening dispatch failure")
-            }
-        } else {
-            tracing::warn!("last.fm now-listening dispatch skipped; track is missing required data (artist name)")
-        }
+impl core::fmt::Debug for LastFM {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LastFM").finish()
     }
 }

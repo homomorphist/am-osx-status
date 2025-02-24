@@ -2,9 +2,6 @@ use std::str::FromStr;
 
 use serde::{Serialize, Deserialize};
 
-
-use crate::GeneralError;
-
 pub mod state {
     pub trait AuthorizationStatus {}
 
@@ -32,7 +29,7 @@ impl ClientIdentity {
         }
     }
 
-    pub async fn generate_authorization_token(&self) -> Result<AuthorizationToken, AuthorizationTokenGenerationError> {
+    pub async fn generate_authorization_token(&self) -> crate::Result<AuthorizationToken> {
         AuthorizationToken::generate(self).await
     }
 
@@ -44,6 +41,20 @@ impl ClientIdentity {
     }
 }
 
+
+crate::error::code::def!(
+    pub enum AuthorizationTokenGenerationError {
+        /// Invalid username or password.
+        #[error("invalid username or password")]
+        InvalidUsernameOrPassword = 4,
+
+        /// The service is currently unavailable.
+        #[error("service unavailable: {0}")]
+        ServiceUnavailable(#[from] crate::error::code::general::ServiceAvailability),
+    }
+);
+
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthorizationToken(internal::ThirtyTwoCharacterAsciiString);
 impl AuthorizationToken {
@@ -54,7 +65,7 @@ impl AuthorizationToken {
     }
 
     /// <https://www.last.fm/api/show/auth.getToken>
-    pub async fn generate(client: &ClientIdentity) -> Result<AuthorizationToken, AuthorizationTokenGenerationError> {
+    pub async fn generate(client: &ClientIdentity) -> crate::Result<AuthorizationToken> {
         let url = format!("{}?method=auth.gettoken&api_key={}&format=json", crate::API_URL, client.key);
         let response = reqwest::get(url).await?;
 
@@ -66,13 +77,17 @@ impl AuthorizationToken {
         }
         
         let response = response.text().await?;
-        let response = serde_json::from_str(&response).expect("deserialization failure");
-        // ^ Do I really want to panic here? What if it returns an NGINX 500 HTML error page, or something? (TODO)
-
+        let response = serde_json::from_str(&response)?;
 
         match response {
             Response::Ok { token } => Ok(token),
-            Response::Fail { code,  .. } => panic!("fail w/ code {code}") // FIXME better error handling
+            Response::Fail { code,  .. } => Err(match code {
+                // "There was an error granting the request token. Please try again later."
+                //  => "There was a temporary error processing your request. Please try again"
+                //      (It's basically the same...)
+                8 => crate::error::code::general::ServiceAvailability::TemporaryError.into(),
+                _ => crate::Error::from(code)
+            })
         }
     }
 
@@ -82,7 +97,7 @@ impl AuthorizationToken {
 
     /// [`Self::get_authorization_url`] flow must be completed prior to obtaining a session token.
     /// - <https://www.last.fm/api/show/auth.getSession>
-    pub async fn generate_session_key(&self, client: &ClientIdentity) -> Result<SessionKey, SessionKeyThroughAuthorizationTokenError> {
+    pub async fn generate_session_key(&self, client: &ClientIdentity) -> crate::Result<SessionKey, SessionKeyThroughAuthorizationTokenError> {
         let signature = format!("{:x}", md5::compute(format!("api_key{}methodauth.getSessiontoken{self}{}", client.key, client.secret)));
         let response = reqwest::Client::new().post(crate::API_URL)
             .header("Content-Length", "0")
@@ -97,14 +112,9 @@ impl AuthorizationToken {
             .send().await?
             .text().await?;
 
-        match serde_json::from_str(&response).expect("output could not be deserialized") {
+        match serde_json::from_str(&response)? {
             SessionKeyGenerationResponse::Ok { session } => Ok(session.key),
-            SessionKeyGenerationResponse::Fail { code,  .. } => match code {
-                4 => Err(SessionKeyThroughAuthorizationTokenError::Invalid),
-                14 => Err(SessionKeyThroughAuthorizationTokenError::Unauthorized),
-                15 => Err(SessionKeyThroughAuthorizationTokenError::Expired),
-                _ => Err(SessionKeyThroughAuthorizationTokenError::General(GeneralError::try_from(code).expect("unknown error code")))
-            }
+            SessionKeyGenerationResponse::Fail { code,  .. } => Err(crate::Error::<SessionKeyThroughAuthorizationTokenError>::from(code))
         }
     }
 }
@@ -117,13 +127,6 @@ impl core::fmt::Display for AuthorizationToken {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.0)
     }
-}
-
-
-#[derive(Debug, thiserror::Error)]
-pub enum AuthorizationTokenGenerationError {
-    #[error("network error: {0}")]
-    NetworkError(#[from] reqwest::Error)
 }
 
 /// Returned by the session generation endpoints upon success.
@@ -142,24 +145,19 @@ enum SessionKeyGenerationResponse {
 }
 
 
-/// <https://www.last.fm/api/show/auth.getSession#Errors>
-#[derive(Debug, thiserror::Error)]
-pub enum SessionKeyThroughAuthorizationTokenError {
-    #[error("network failure: {0}")]
-    NetworkFailure(#[from] reqwest::Error),
-
-    /// The authorization token is not valid. This may mean it has already been used to successfully create a session.
-    #[error("authorization token invalid")]
-    Invalid, // 4
-    /// The authorization token was not authorized by the user.
-    #[error("token was not authorized")]
-    Unauthorized, // 14
-    /// The authorization token has expired. 
-    #[error("token expired")]
-    Expired, // 15
-
-    #[error("{0}")]
-    General(#[from] crate::GeneralError)
+crate::error::code::def!{
+    /// <https://www.last.fm/api/show/auth.getSession#Errors>
+    pub enum SessionKeyThroughAuthorizationTokenError {
+        /// The authorization token is not valid. This may mean it has already been used to successfully create a session.
+        #[error("token is invalid")]
+        Invalid = 4,
+        /// The authorization token was not authorized by the user.
+        #[error("token was not authorized")]
+        Unauthorized = 14,
+        /// The authorization token has expired. 
+        #[error("token has expired")]
+        Expired = 15,
+    }
 }
 
 /// A key authenticating an authorized user session.
@@ -204,19 +202,18 @@ impl core::fmt::Display for ApiSignature {
     }
 }
 
-/// <https://www.last.fm/api/show/auth.getMobileSession#Errors>
-#[derive(Debug, thiserror::Error)]
+crate::error::code::def!(
+    /// <https://www.last.fm/api/show/auth.getMobileSession#Errors>
+    pub enum SessionKeyThroughCredentialsError {
+        /// Invalid username or password.
+        #[error("invalid username or password")]
+        InvalidUsernameOrPassword = 4,
 
-pub enum SessionKeyThroughCredentialsError {
-    #[error("network failure: {0}")]
-    NetworkFailure(#[from] reqwest::Error),
-
-    #[error("username or password is incorrect")]
-    IncorrectCredentials,
-
-    #[error("{0}")]
-    General(#[from] crate::GeneralError)
-}
+        /// The service is currently unavailable.
+        #[error("service unavailable: {0}")]
+        ServiceUnavailable(#[from] crate::error::code::general::ServiceAvailability),
+    }
+);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccountCredentials<'a> {
@@ -225,7 +222,7 @@ pub struct AccountCredentials<'a> {
     pub password: &'a str,
 }
 impl AccountCredentials<'_> {
-    pub async fn generate_session_key(&self, client: &ClientIdentity) -> Result<SessionKey, SessionKeyThroughCredentialsError> {
+    pub async fn generate_session_key(&self, client: &ClientIdentity) -> Result<SessionKey, crate::Error<SessionKeyThroughCredentialsError>> {
         let signature = format!("{:x}", md5::compute(format!("api_key{}methodauth.getMobileSessionpassword{}username{}{}", client.key, self.password, self.username, client.secret)));
         let url = format!("{}?format=json&method=auth.getMobileSession&api_key={}&api_sig={signature}&username={}&password={}", crate::API_URL, client.key, self.username, self.password);
         let response = reqwest::Client::new().post(crate::API_URL)
@@ -242,12 +239,9 @@ impl AccountCredentials<'_> {
             .send().await?
             .text().await?;
 
-        match serde_json::from_str(&response).expect("output could not be deserialized") {
+        match serde_json::from_str(&response)? {
             SessionKeyGenerationResponse::Ok { session } => Ok(session.key),
-            SessionKeyGenerationResponse::Fail { code,  .. } => match code {
-                4 => Err(SessionKeyThroughCredentialsError::IncorrectCredentials),
-                _ =>  Err(SessionKeyThroughCredentialsError::General(GeneralError::try_from(code).expect("unknown error code")))
-            }
+            SessionKeyGenerationResponse::Fail { code,  .. } => Err(SessionKeyThroughCredentialsError::try_from(code)?.into())
         }
     }
 }

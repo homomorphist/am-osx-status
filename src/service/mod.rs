@@ -52,10 +52,6 @@ impl ServiceController {
             .filter(|process| process.pid().as_u32() != *crate::util::OWN_PID as u32)
     }
 
-    pub fn is_program_active(&self) -> bool {
-        self.get_processes().next().is_some()
-    }
-
     pub fn start(&self, config: impl Into<OsString>, force: bool) -> Result<(), ServiceStartFailure> {
         if !force && self.get_processes().next().is_some() {
             return Err(ServiceStartFailure::ProcessAlreadyRunning)

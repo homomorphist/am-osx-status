@@ -16,26 +16,7 @@ macro_rules! fallback_to_default_and_log_error {
     };
 }
 
-macro_rules! fallback_to_default_and_log_absence {
-    ($option: expr, $context: literal) => {
-        {
-            // needed to get T::default
-            fn fallback_to_default_and_log_absence<T: Default>(option: Option<T>) -> T {
-                match option {
-                    Some(value) => value,
-                    None => {
-                        tracing::error!("got None {}", $context);
-                        T::default()
-                    }
-                }
-            }
-            fallback_to_default_and_log_absence($option)
-        }
-    };
-}
-
 pub(crate) use fallback_to_default_and_log_error;
-pub(crate) use fallback_to_default_and_log_absence;
 
 pub const REPOSITORY_URL: &str = "https://github.com/Agapurnis/am-osx-status";
 

@@ -17,7 +17,6 @@ fn str_to_boolish(str: &str) -> Option<bool>  {
 
 pub mod io {
     use std::io::{Write, BufRead};
-    use ::lastfm::auth::SessionKeyThroughAuthorizationTokenError;
 
     use crate::util::ferror;
 
@@ -39,35 +38,7 @@ pub mod io {
 
         str_buf
     }
-
-
-    pub fn prompt_bool_optional(prompt: &str, remark_optional: Option<&str>) -> Option<bool> {
-        let mut answer = String::with_capacity(4);
-        loop {
-            {
-                let mut stdout = std::io::stdout().lock();
-                stdout.write_all(prompt.as_bytes()).unwrap();
-                stdout.write_all(b" (y/n); \n=> ").unwrap();
-                stdout.write_all(b"optional (");
-                stdout.write_all(remark_optional.unwrap_or("press enter to skip").as_bytes());
-                stdout.write_all(")".as_bytes()).unwrap();
-                stdout.flush().unwrap();
-            }
     
-            {
-                let mut stdin = std::io::stdin().lock();
-                let r = stdin.read_line(&mut answer);
-                r.expect("could not process user input");
-            }
-
-            if answer.trim().is_empty() { return None }
-            if let Some(bool) = str_to_boolish(&answer) { return Some(bool) };
-            println!(r#"Invalid input! Enter "yes" or "no", or continue without any input to skip."#);
-            println!();
-            answer.clear();
-        }
-    }
-
     pub fn prompt_bool(prompt: &str) -> bool {
         let mut answer = String::with_capacity(4);
         loop {
@@ -109,15 +80,10 @@ pub mod io {
         let client = &crate::status_backend::lastfm::DEFAULT_CLIENT_IDENTITY;
         let auth = match client.generate_authorization_token().await {
             Ok(auth) => auth,
-            Err(err) => {
-                use ::lastfm::auth::AuthorizationTokenGenerationError;
-                match err {
-                    AuthorizationTokenGenerationError::NetworkError(failure) => {
-                        eprintln!("Network failure: {}", failure.without_url());
-                        eprintln!("Continuing with last.fm support disabled. This can be reconfigured later.");
-                        return None;
-                    }
-                }
+            Err(error) => {
+                eprintln!("Error: {}", error);
+                eprintln!("Continuing with last.fm support disabled. This can be reconfigured later.");
+                return None;
             }
         };
         let auth_url = auth.generate_authorization_url(client);

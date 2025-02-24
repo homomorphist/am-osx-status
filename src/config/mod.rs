@@ -1,6 +1,4 @@
-use std::os::fd::AsRawFd;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 
 pub mod wizard;
 mod file;
@@ -105,7 +103,7 @@ impl<'a> Config<'a> {
     }
 
     pub async fn reload_from_disk(&mut self) -> Result<(), ConfigRetrievalError<'a>> {
-        let new = Self::from_path(self.path.clone()).await?;;
+        let new = Self::from_path(self.path.clone()).await?;
         *self = new;
         Ok(())
     }

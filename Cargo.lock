@@ -56,6 +56,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "brainz",
+ "cast_trait_object",
  "catbox",
  "chrono",
  "clap",
@@ -337,6 +338,28 @@ name = "bytes"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f61dac84819c6588b558454b194026eb1f09c293b9036ae9b159e74e73ab6cf9"
+
+[[package]]
+name = "cast_trait_object"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b57511ad5efa2778f663d23d4ec563916f0da63dc3dcc0e898535149c1937db"
+dependencies = [
+ "cast_trait_object_macros",
+]
+
+[[package]]
+name = "cast_trait_object_macros"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26e9e0d94b70a03eb44b8c7fbed28e3647ef2282c29a6033ecd7bea438e323b1"
+dependencies = [
+ "either",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "catbox"

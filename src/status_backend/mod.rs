@@ -1,188 +1,535 @@
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::data_fetching::components::ComponentSolicitation;
 
-use chrono::TimeDelta;
-type DateTime = chrono::DateTime<chrono::Utc>;
-
-
-trait TimeDeltaExtension {
-    fn from_secs_f32(secs: f32) -> Self;
-    fn as_secs_f32(&self) -> f32;
-    fn as_secs_f64(&self) -> f64;
-}
-impl TimeDeltaExtension for TimeDelta {
-    fn from_secs_f32(secs: f32) -> Self {
-        let seconds = secs.trunc() as i64;
-        let nanoseconds = (secs.fract() * 1e9) as u32;
-        TimeDelta::new(seconds, nanoseconds).expect("bad duration")
-    }
-    fn as_secs_f32(&self) -> f32 {
-        self.num_microseconds().expect("duration overflow") as f32 / 1e6
-    }
-    fn as_secs_f64(&self) -> f64 {
-        self.num_microseconds().expect("duration overflow") as f64 / 1e6
-    }
-}
-
-// const fn extract_delta_seconds_f32(delta: chrono::TimeDelta) -> f32 {
-//     delta.num_microseconds().expect("duration overflow") as f32 / 1e6
-// }
-
-// fn delta_to_duration(delta: chrono::TimeDelta) -> Duration {
-//     let u64: u64 = delta.num_microseconds().expect("duration overflow").try_into().expect("duration is negative");
-//     Duration::from_micros(u64)}
-// }
-
-
-#[cfg(feature = "listenbrainz")]
-pub mod listenbrainz;
-#[cfg(feature = "lastfm")]
-pub mod lastfm;
-#[cfg(feature = "discord")]
-pub mod discord;
-
-#[derive(Debug)]
-pub struct ListenedChunk {
-    started_at_song_position: f32, // seconds
-    started_at: DateTime,
-    duration: chrono::TimeDelta 
-}
-impl ListenedChunk {
-    pub fn ended_at(&self) -> DateTime {
-        self.started_at.checked_add_signed(self.duration).expect("date out of range")
-    }
-    pub fn ended_at_song_position(&self) -> f32 {
-        self.started_at_song_position + self.duration.as_secs_f32()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CurrentListened {
-    started_at_song_position: f32, // seconds
-    started_at: DateTime,
-}
-impl From<CurrentListened> for ListenedChunk {
-    fn from(value: CurrentListened) -> Self {
-        ListenedChunk {
-            started_at: value.started_at,
-            started_at_song_position: value.started_at_song_position,
-            duration: chrono::Utc::now().signed_duration_since(value.started_at),
+use error::dispatch::DispatchError;
+pub mod error {
+    pub use dispatch::DispatchError;
+    pub mod dispatch {
+        /// How the program should respond to an error being encountered.
+        #[derive(Debug)]
+        pub enum Recovery {
+            /// Will cause the program (not just the backend) to exit with a fatal error.
+            /// This will always be logged at the `ERROR` level.
+            CriticallyFail,
+            /// Don't interrupt program behavior, log the error and continue, potentially recording the input data for retrial at a later time.
+            /// If this method is called multiple times per track, it may be wise to use [`Recovery::Skip`] with a [`SkipPredicate`] instead.
+            Continue(RecoveryAttributes),
+            /// Don't use this method again until the predicate is met.
+            /// If this method isn't one which is called multiple times per track, it is equivalent to [`Recovery::Ignore`].
+            /// Predicate is not tracked across sessions. If the program is restarted, the method will be called again as normal.
+            Skip {
+                /// Shared attributes for this recovery method.
+                attributes: RecoveryAttributes, 
+                /// The condition which must be met before the method can be called again.
+                /// If `defer` is true, attempts to call the method will be stored and attempted in bulk once the predicate is met (or the program is restarted).
+                until: SkipPredicate 
+            },
         }
-    }
-}
-impl CurrentListened {
-    pub fn new_with_position(position: f32) -> Self {
-        Self {
-            started_at: chrono::Utc::now(),
-            started_at_song_position: position
-        }
-    }
-    pub fn get_expected_song_position(&self) -> f32 {
-        self.started_at_song_position + chrono::Utc::now().signed_duration_since(self.started_at).as_secs_f32()
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct Listened {
-    pub contiguous: Vec<ListenedChunk>,
-    pub current: Option<CurrentListened>,
-}
-impl Listened {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn new_with_current(position: f32) -> Self {
-        Self {
-            contiguous: vec![],
-            current: Some(CurrentListened::new_with_position(position)),
-        }
-    }
-
-    pub fn started_at(&self) -> Option<DateTime> {
-        self.current.as_ref().map(|c| c.started_at)
-    }
-
-    fn find_index_for_current(&self, current: &CurrentListened) -> usize {
-        self.contiguous.iter()
-            .enumerate()
-            .filter(|(_, chunk)| chunk.started_at_song_position < current.started_at_song_position)
-            .last().map(|(i, _)| i + 1).unwrap_or_default()
-    }
-
-    pub fn flush_current(&mut self) {
-        if let Some(current) = self.current.take() {
-            let index = self.find_index_for_current(&current);
-            self.contiguous.insert(index, current.into());
-        }
-    }
-    
-    pub fn set_new_current(&mut self, current_song_position: f32) {
-        if self.current.replace(CurrentListened::new_with_position(current_song_position)).is_some() {
-            tracing::warn!("overwrote current before it was flushed")
-        }
-    }
-    
-    pub fn total_heard_unique(&self) -> chrono::TimeDelta {
-        if self.contiguous.is_empty() {
-            return self.current.as_ref()
-                .map(|current| chrono::Utc::now().signed_duration_since(current.started_at))
-                .unwrap_or_default()
-        }
-        
-        let mut total = chrono::TimeDelta::zero();
-        let mut last_end_position = 0.0;
-
-        let current = self.current.clone().map(|current| (
-            self.find_index_for_current(&current),
-            Into::<ListenedChunk>::into(current),
-        ));
-        
-        for mut index in 0..self.contiguous.len() + if current.is_some() { 1 } else { 0 } {
-            let chunk = if let Some((current_idx, current)) = &current {
-                use core::cmp::Ordering;
-                match index.cmp(current_idx) {
-                    Ordering::Greater => &self.contiguous[index - 1],
-                    Ordering::Equal => current,
-                    Ordering::Less => &self.contiguous[index]
+        impl Recovery {
+            /// Returns the associated attributes, if present.
+            pub const fn attributes(&self) -> Option<&RecoveryAttributes> {
+                match self {
+                    Recovery::Continue(attributes) => Some(attributes),
+                    Recovery::Skip { attributes, .. } => Some(attributes),
+                    _ => None
                 }
-            } else { &self.contiguous[index] };
+            }
 
-            let chunk_start = chunk.started_at_song_position;
-            let chunk_end = chunk.ended_at_song_position();
-
-            if chunk_end > last_end_position {
-                let len = chunk_end - chunk_start.max(last_end_position);
-                
-                total += chrono::TimeDelta::new(len.trunc() as i64, (len.fract() * 1e6) as u32).expect("bad duration");
-                last_end_position = chunk_end;
+            /// Returns the log level, if present.
+            pub fn log_level(&self) -> Option<tracing::Level> {
+                self.attributes().and_then(|a| a.log).or({
+                    if matches!(self, Recovery::CriticallyFail) {
+                        Some(tracing::Level::ERROR)
+                    } else { None }
+                })
+            }
+            
+            /// Returns whether or not more attempt(s) should be deferred.
+            pub fn defer(&self) -> bool {
+                self.attributes().map(|a| a.defer).unwrap_or_default()
             }
         }
 
-        total
-    }
+        /// Attributes which can be applied to a recovery method.
+        #[derive(Debug)]
+        pub struct RecoveryAttributes {
+            /// The level, if any, at which to log the error.
+            /// If `None`, the error will not be logged.
+            pub log: Option<tracing::Level>,
+            /// Whether or not to attempt to store the data for the call(s) so that they can be tried again later.
+            /// ## Example
+            /// If you're [skipping](Recovery::Skip) until an authentication issue is fixed, you'd defer `listened` data to be submitted in bulk later once the issue is resolved.
+            pub defer: bool,
+        }
 
-    pub fn total_heard(&self) -> chrono::TimeDelta {
-        self.contiguous.iter()
-            .map(|d| d.duration)
-            .fold(
-                self.current.as_ref()
-                    .map(|c| chrono::Utc::now().signed_duration_since(c.started_at))
-                    .unwrap_or_default(),
-                |a, b| a + b
-            )
+
+        /// A condition which must be met before the method can be called again.
+        #[derive(Debug)]
+        pub enum SkipPredicate {
+            /// Skip the method until a new song is played.
+            NextSong,
+            /// Skip this method until the program is restarted.
+            Restart,
+        }
+
+        use maybe_owned_string::MaybeOwnedString;
+
+        pub use cause::Cause;
+        pub mod cause {
+            use super::MaybeOwnedString;
+
+            /// The request-related cause of a dispatch error.
+            /// This occurs if the request (or its response) wasn't successfully processed because a [non-data](Data) error was encountered.
+            #[derive(thiserror::Error, Debug)]
+            pub enum RequestError {
+                /// The remote backend refused the request because of a lack of authorization.
+                /// Contains an optional message with an elaboration as to why.
+                #[error("unauthorized: {cause}", cause = .0.as_deref().unwrap_or("no reason given"))]
+                Unauthorized(Option<MaybeOwnedString<'static>>),
+                /// A response was received, but it indicated that the backend is currently unavailable.
+                #[error("service unavailable")]
+                Unavailable,
+                /// Couldn't connect to the backend; likely because the user's network is offline.
+                #[error("connection failure")]
+                ConnectionFailure,
+                /// The user's network is presumably online, but the backend is unreachable for one reason or another.
+                #[error("network error: {0}")]
+                NetworkError(reqwest::Error),
+                /// Unable to deserialize the response from the backend.
+                #[error("deserialization error: {0}")]
+                DeserializationError(#[from] serde_json::Error),
+            }
+            impl From<reqwest::Error> for RequestError {
+                fn from(error: reqwest::Error) -> Self {
+                    if error.is_connect() {
+                        RequestError::ConnectionFailure
+                    } else {
+                        RequestError::NetworkError(error)
+                    }
+                }
+            }
+
+            /// The data-related cause of a dispatch error.
+            /// This occurs if the dispatch wasn't successfully processed because of an issue with the data being submitted.
+            #[derive(thiserror::Error, Debug)]
+            pub enum DataError {
+                /// The current track is missing required data (i.e. a title, the artist name).
+                /// Contains an elaboration on what data is missing.
+                #[error("missing required data: {0}")]
+                MissingRequired(MaybeOwnedString<'static>),
+                /// Attempted to submit data which is invalid or out of range.
+                /// Contains an elaboration on what data is invalid.
+                #[error("invalid data: {0}")]
+                Invalid(MaybeOwnedString<'static>),
+            }
+
+            /// The cause of a dispatch error.
+            #[derive(thiserror::Error, Debug)]
+            pub enum Cause {
+                #[error("{0}")]
+                Request(#[from] RequestError),
+                #[error("{0}")]
+                Data(#[from] DataError),
+                /// Something went wrong concerning the [`Subscriber`](crate::status_backend::Subscriber) implementation itself.
+                /// Contains an elaboration on what went wrong.
+                #[error("internal error: {0}")]
+                Internal(Box<dyn std::error::Error + Send + Sync>),
+            }
+            impl Cause {
+                /// Add a recovery method to the cause and convert it into a full [`DispatchError`].
+                pub fn with_recovery(self, recovery: super::Recovery) -> super::DispatchError {
+                    super::DispatchError {
+                        cause: self,
+                        recovery
+                    }
+                }
+
+                /// Create a new internal error with the specified message.
+                pub fn internal(msg: impl Into<MaybeOwnedString<'static>>) -> Self {
+                    #[derive(Debug)]
+                    struct InternalError(MaybeOwnedString<'static>);
+                    impl core::fmt::Display for InternalError {
+                        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                            write!(f, "internal error: {}", self.0)
+                        }
+                    }
+                    impl core::error::Error for InternalError {}
+
+                    Cause::Internal(Box::new(InternalError(msg.into())))
+                }
+            }
+
+            impl From<reqwest::Error> for Cause {
+                fn from(error: reqwest::Error) -> Self {
+                    Cause::Request(error.into())
+                }
+            }
+            impl From<serde_json::Error> for Cause {
+                fn from(error: serde_json::Error) -> Self {
+                    Cause::Request(error.into())
+                }
+            }
+        }
+
+        /// An error that occurred as a result of a dispatch to a backend.
+        #[derive(Debug)]
+        pub struct DispatchError {
+            /// The cause of the error.
+            pub cause: Cause,
+            /// How the program should respond to the error.
+            pub recovery: Recovery,
+        }
+        impl std::error::Error for DispatchError {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                match &self.cause {
+                    Cause::Request(cause::RequestError::NetworkError(err)) => Some(err),
+                    _ => None
+                }
+            }
+        }
+        impl core::fmt::Display for DispatchError {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                write!(f, "{}", self.cause)
+            }
+        }
+        impl DispatchError {
+            /// Log the error with the specified context, if applicable.
+            pub fn log(&self, backend: &'static str, event: impl crate::subscription::TypeIdentity) {
+                if let Some(level) = self.recovery.log_level() {
+                    // Uhm, so, we can't using `tracing::event` with a non-constant level, so...
+                    macro_rules! bind {
+                        ($(($level: ident, $macro: ident) $(,)?)*) => {
+                            match level {
+                                $(tracing::Level::$level => tracing::$macro!(backend, ?event, error = ?self, "dispatch error"),)*
+                            }
+                        };
+                    }
+                    bind! {
+                        (ERROR, error),
+                        (WARN, warn),
+                        (INFO, info),
+                        (DEBUG, debug),
+                        (TRACE, trace),
+                    }
+                }
+            }
+
+            /// Panic if the error is fatal.
+            fn handle_fatal(&self) {
+                if matches!(self.recovery, Recovery::CriticallyFail) {
+                    // more info would've been logged already by `log`
+                    panic!("dispatch resulted in fatal error");
+                }
+            }
+
+            /// Log the error and panic if it is fatal.
+            pub fn handle(&self, backend: &'static str, event: impl crate::subscription::TypeIdentity) {
+                self.log(backend, event);
+                self.handle_fatal();
+            }
+        }
+        impl DispatchError { // constructors
+            pub fn internal(error: Box<dyn std::error::Error + Send + Sync>, recovery: Recovery) -> Self {
+                Self {
+                    cause: Cause::Internal(error),
+                    recovery
+                }
+            }
+
+            pub fn internal_msg(msg: &'static str, skip: bool) -> Self {
+                Self {
+                    cause: Cause::internal(msg),
+                    recovery: if skip {
+                        Recovery::Skip {
+                            until: SkipPredicate::Restart,
+                            attributes: RecoveryAttributes {
+                                log: Some(tracing::Level::ERROR),
+                                defer: true,
+                            }
+                        }
+                    } else {
+                        Recovery::Continue(RecoveryAttributes {
+                            log: Some(tracing::Level::ERROR),
+                            defer: true
+                        })
+                    }
+                }
+            }
+
+            pub const fn missing_required_data(data: &'static str) -> Self {
+                Self {
+                    cause: Cause::Data(cause::DataError::MissingRequired(MaybeOwnedString::Borrowed(data))),
+                    recovery: Recovery::Skip {
+                        until: SkipPredicate::NextSong,
+                        attributes: RecoveryAttributes {
+                            log: Some(tracing::Level::ERROR),
+                            defer: false
+                        }
+                    }
+                }
+            }
+
+            pub const fn invalid_data(data: &'static str) -> Self {
+                Self {
+                    cause: Cause::Data(cause::DataError::Invalid(MaybeOwnedString::Borrowed(data))),
+                    recovery: Recovery::Continue(RecoveryAttributes {
+                        log: Some(tracing::Level::ERROR),
+                        defer: false
+                    })
+                }
+            }
+
+            pub const fn unauthorized(reason: Option<&'static str>) -> Self {
+                Self {
+                    cause: Cause::Request(cause::RequestError::Unauthorized({
+                        if let Some(reason) = reason {
+                            Some(MaybeOwnedString::Borrowed(reason))
+                        } else { None }
+                    })),
+                    recovery: Recovery::Skip {
+                        until: SkipPredicate::Restart,
+                        attributes: RecoveryAttributes {
+                            log: Some(tracing::Level::ERROR),
+                            defer: true,
+                        },
+                    }
+                }
+            }
+        }
+        impl From<reqwest::Error> for DispatchError {
+            fn from(error: reqwest::Error) -> Self {
+                Self {
+                    cause: error.into(),
+                    recovery: Recovery::Continue(RecoveryAttributes {
+                        log: Some(tracing::Level::ERROR),
+                        defer: true
+                    })
+                }
+            }
+        }
+        impl From<serde_json::Error> for DispatchError {
+            fn from(error: serde_json::Error) -> Self {
+                Self {
+                    cause: error.into(),
+                    recovery: Recovery::Continue(RecoveryAttributes {
+                        log: Some(tracing::Level::ERROR),
+                        defer: true
+                    })
+                }
+            }
+        }
     }
 }
 
+
+macro_rules! use_backends {
+    ([ $(($name: ident, $ident: ident, $feature: literal, $id: literal)$(,)?)* ]) => {
+        pub const MAX_ENABLED_BACKEND_COUNT: usize = {
+            $(
+                ({
+                    #[cfg(feature = $feature)]
+                    { 1 }
+                    #[cfg(not(feature = $feature))]
+                    { 0 }
+                }) +
+            )* 0
+        };
+
+        $(
+            #[cfg(feature = $feature)]
+            pub mod $name;
+        )*
+
+        #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+        pub enum BackendIdentity {
+            $(
+                #[cfg(feature = $feature)]
+                $ident,
+            )*
+        }
+        impl BackendIdentity {
+            pub const fn get_name(&self) -> &'static str {
+                match self {
+                    $(
+                        #[cfg(feature = $feature)]
+                        Self::$ident => stringify!($ident),
+                    )*
+                }
+            }
+            pub const fn get_holey_index(&self) -> u16 {
+                match self {
+                    $(
+                        #[cfg(feature = $feature)]
+                        Self::$ident => $id,
+                    )*
+                }
+            }
+            pub const fn from_holey_index(index: u16) -> Option<Self> {
+                match index {
+                    $(
+                        #[cfg(feature = $feature)]
+                        $id => Some(Self::$ident),
+                    )*
+                    _ => None
+                }
+            }
+        }
+
+        
+        #[derive(Debug, Default)]
+        pub struct BackendMap<T> {
+            $(
+                #[cfg(feature = $feature)]
+                pub $name: Option<T>,
+            )*
+        }
+        impl<'a, T> BackendMap<T> {
+            pub fn new() -> Self {
+                Self {
+                    $(
+                        #[cfg(feature = $feature)]
+                        $name: None,
+                    )*
+                }
+            }
+
+            pub fn iter(&'a self) -> iter::BackendMapIterator<'a, T> {
+                self.into_iter()
+            }
+
+            pub fn take(&mut self, identity: BackendIdentity) -> Option<T> {
+                match identity {
+                    $(
+                        #[cfg(feature = $feature)]
+                        BackendIdentity::$ident => self.$name.take(),
+                    )*
+                }
+            }
+        }
+        impl<T> core::ops::Index<BackendIdentity> for BackendMap<T> {
+            type Output = Option<T>;
+            fn index(&self, index: BackendIdentity) -> &Self::Output {
+                match index {
+                    $(
+                        #[cfg(feature = $feature)]
+                        BackendIdentity::$ident => &self.$name,
+                    )*
+                }
+            }
+        }
+        impl<T> core::ops::IndexMut<BackendIdentity> for BackendMap<T> {
+            fn index_mut(&mut self, index: BackendIdentity) -> &mut Self::Output {
+                match index {
+                    $(
+                        #[cfg(feature = $feature)]
+                        BackendIdentity::$ident => &mut self.$name,
+                    )*
+                }
+            }
+        }
+
+        pub mod iter {
+            use super::*;
+
+            pub struct BackendMapIterator<'a, T> {
+                inner: &'a BackendMap<T>,
+                index: usize,
+            }
+            impl<'a, T> Iterator for BackendMapIterator<'a, T> {
+                type Item = (BackendIdentity, &'a Option<T>);
+                fn next(&mut self) -> Option<Self::Item> {                
+                    while self.index < MAX_ENABLED_BACKEND_COUNT {
+                        let index = self.index;
+                        let identity = BackendIdentity::from_holey_index(index as u16);
+                        self.index += 1;
+                        if let Some(identity) = identity {
+                            return Some((identity, &self.inner[identity]));
+                        }
+                    }
+                    None
+                }
+            }
+            impl<'a, T> IntoIterator for &'a BackendMap<T> {
+                type Item = (BackendIdentity, &'a Option<T>);
+                type IntoIter = iter::BackendMapIterator<'a, T>;
+                fn into_iter(self) -> Self::IntoIter {
+                    self.iter()
+                }
+            }
+            
+            pub struct BackendMapIntoIterator<T> {
+                inner: BackendMap<T>,
+                index: usize,
+            }
+            impl<T> IntoIterator for BackendMap<T> {
+                type Item = (BackendIdentity, Option<T>);
+                type IntoIter = BackendMapIntoIterator<T>;
+                fn into_iter(self) -> Self::IntoIter {
+                    BackendMapIntoIterator {
+                        inner: self,
+                        index: 0,
+                    }
+                }
+            }
+            impl<T> Iterator for BackendMapIntoIterator<T> {
+            type Item = (BackendIdentity, Option<T>);
+            fn next(&mut self) -> Option<Self::Item> {
+                while self.index < MAX_ENABLED_BACKEND_COUNT {
+                    let index = self.index;
+                    let identity = BackendIdentity::from_holey_index(index as u16);
+                    self.index += 1;
+                    if let Some(identity) = identity {
+                        return Some((identity, self.inner.take(identity)));
+                    }
+                }
+                None
+            }
+        }
+        }
+
+        #[derive(Debug)]
+        pub struct Backends {
+            $(
+                #[cfg(feature = $feature)]
+                pub $name: Option<Arc<Mutex<$name::$ident>>>,
+            )*
+        }
+        impl Backends {
+            pub fn all(&self) -> Vec<Arc<Mutex<dyn Subscriber>>> {
+                let mut backends: Vec<Arc<Mutex<dyn Subscriber>>> = Vec::with_capacity(MAX_ENABLED_BACKEND_COUNT);
+        
+                $(
+                    #[cfg(feature = $feature)]
+                    if let Some(backend) = self.$name.as_ref() {
+                        backends.push(backend.clone());
+                    }
+                )*
+        
+                backends
+            }
+        }
+    };
+}
+use_backends!([
+    (discord, DiscordPresence, "discord", 0),
+    (lastfm, LastFM, "lastfm", 1),
+    (listenbrainz, ListenBrainz, "listenbrainz", 2)
+]);
+
+impl<T, E> BackendMap<Result<T, E>> {
+    fn into_errors_iter(self) -> impl Iterator<Item = (BackendIdentity, E)> {
+        self.into_iter().filter_map(|(i, r)| r.and_then(|r| r.err()).map(|e| (i, e)))
+    }
+}
 
 #[derive(Debug)]
 pub struct BackendContext<A> {
     pub track: Arc<osa_apple_music::Track>,
     pub app: Arc<osa_apple_music::ApplicationData>,
     pub data: Arc<A>,
-    pub listened: Arc<Mutex<Listened>>,
+    pub listened: Arc<Mutex<crate::listened::Listened>>,
     pub musicdb: Arc<Option<musicdb::MusicDB>>,
 }
 impl<A> Clone for BackendContext<A> {
@@ -197,78 +544,247 @@ impl<A> Clone for BackendContext<A> {
     }
 }
 
-#[async_trait::async_trait]
-pub trait StatusBackend: core::fmt::Debug + Send + Sync {
-    fn get_name(&self) -> &'static str;
-    async fn set_now_listening(&mut self, context: BackendContext<crate::data_fetching::AdditionalTrackData>);
-    async fn record_as_listened(&self, context: BackendContext<()>);
-    async fn check_eligibility(&self, context: BackendContext<()>) -> bool;
-    async fn update_progress(&mut self, context: BackendContext<()>) {}
-    async fn get_additional_data_solicitation(&self) -> ComponentSolicitation {
-        ComponentSolicitation::default()
-    }
-}
+struct TransientSendableUntypedRawBoxPointer(*mut u8);
+unsafe impl Send for TransientSendableUntypedRawBoxPointer {}
 
-pub struct StatusBackends {
-    #[cfg(feature = "discord")]
-    pub discord: Option<Arc<Mutex<discord::DiscordPresence>>>,
-    #[cfg(feature = "lastfm")]
-    pub lastfm: Option<Arc<Mutex<lastfm::LastFM>>>,
-    #[cfg(feature = "listenbrainz")]
-    pub listenbrainz: Option<Arc<Mutex<listenbrainz::ListenBrainz>>>
-}
-impl core::fmt::Debug for StatusBackends {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut set = &mut f.debug_set();
+pub use subscription::{Subscriber, subscribe};
+pub mod subscription {
+    use crate::data_fetching::components::ComponentSolicitation;
 
-        #[cfg(feature = "discord")]
-        { if self.discord.is_some() { set = set.entry(&"DiscordPresence") } }
-        #[cfg(feature = "lastfm")]
-        { if self.lastfm.is_some() { set = set.entry(&"LastFM") } }
-        #[cfg(feature = "listenbrainz")]
-        { if self.listenbrainz.is_some() { set = set.entry(&"ListenBrainz") } }
+    use super::{error::DispatchError, BackendContext, TransientSendableUntypedRawBoxPointer};
 
-        set.finish()
-    }
-}
+    type DefaultContext = BackendContext<()>;
+    type DefaultReturn = ();
 
-impl StatusBackends {
-    pub fn all(&self) -> Vec<Arc<Mutex<dyn StatusBackend>>> {
-        let mut backends: Vec<Arc<Mutex<dyn StatusBackend>>> = vec![];
+    macro_rules! define {
+        (
+            $dollar: tt, // nested macro hack until $$ is stabilized
+            [$({
+                $(#[$meta:meta])* $name:ident $($extra: tt)*
+            }$($comma: tt)?)*],
+            { $($subscriber: tt)* }
+        ) => {
+            $(
+                define!(@trait@ $(#[$meta])* $name $($extra)*);
+            )*
 
-        macro_rules! add {
-            ([$(($property: ident, $feature: literal) $(,)?)*]) => {
+
+            #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+            pub enum Identity { $($name,)* }
+
+            pub use type_identity::TypeIdentity;
+            pub mod type_identity {
+                pub mod context {
+                    $(
+                        define!(@context@ $name, $($extra)*);
+                    )*
+                }
+                pub mod returns {
+                    $(
+                        define!(@returns@ $name, $($extra)*);
+                    )*
+                }
+                
+                pub trait TypeIdentity: core::fmt::Debug {
+                    const IDENTITY: super::Identity;
+                    type DispatchContext: Send + Clone;
+                    type DispatchReturn: Send;
+                }
                 $(
-                    #[cfg(feature = $feature)]
-                    { if let Some(backend) = &self.$property { backends.push(backend.clone()) } }
+                    #[derive(Debug)]
+                    pub struct $name;
+                    impl TypeIdentity for $name {
+                        const IDENTITY: super::Identity = super::Identity::$name;
+                        type DispatchContext = super::type_identity::context::$name;
+                        type DispatchReturn = super::type_identity::returns::$name;
+                    }
                 )*
-            };
+            }
+
+            use cast_trait_object::{create_dyn_cast_config, DynCast};
+
+            pub mod cast_configs {
+                $(
+                    super::create_dyn_cast_config!(pub $name = super::Subscriber => super::$name<Identity = super::type_identity::$name>);
+                )*
+            }
+
+            #[async_trait::async_trait]
+            pub trait Subscriber: $(DynCast<cast_configs::$name> +)* core::fmt::Debug + Sync + Send {
+                $($subscriber)*
+            }
+
+            #[macro_export]
+            macro_rules! define_subscriber {
+                (
+                    $dollar(#[$sub_meta:meta])*
+                    $vis:vis
+                    $sub_name:ident,
+                    $dollar($def:tt)*
+                ) => {
+                    cast_trait_object::impl_dyn_cast!($sub_name => $($crate::status_backend::subscription::cast_configs::$name),*);
+                    $dollar(#[$sub_meta])*
+                    $vis struct $sub_name $dollar($def)*
+                    impl $sub_name {
+                        pub const NAME: &'static str = stringify!($sub_name);
+                    }
+                    #[async_trait::async_trait]
+                    impl $crate::status_backend::subscription::Subscriber for $sub_name {
+                        async fn get_solicitation(&self, event: $crate::status_backend::subscription::Identity) -> Option<$crate::data_fetching::components::ComponentSolicitation> {
+                            match event {
+                                $(
+                                    $crate::status_backend::subscription::Identity::$name => {
+                                        let typed = <dyn $crate::status_backend::subscription::Subscriber as cast_trait_object::DynCast<$crate::status_backend::subscription::cast_configs::$name>>::dyn_cast_ref(self).ok()?;
+                                        Some($crate::status_backend::subscription::$name::get_solicitation(typed).await)
+                                    }
+                                )*,
+                            }
+                        }
+
+                        #[allow(private_interfaces)]
+                        async unsafe fn dispatch_untyped(
+                            &mut self,
+                            event: $crate::status_backend::subscription::Identity,
+                            context: $crate::status_backend::TransientSendableUntypedRawBoxPointer
+                        ) -> Option<
+                            Result<
+                                $crate::status_backend::TransientSendableUntypedRawBoxPointer,
+                                $crate::status_backend::error::DispatchError
+                            >
+                        > {
+                            match event {
+                                $(
+                                    $crate::status_backend::subscription::Identity::$name => {
+                                        let typed = <dyn $crate::status_backend::subscription::Subscriber as cast_trait_object::DynCast<$crate::status_backend::subscription::cast_configs::$name>>::dyn_cast_mut(self).ok()?;
+                                        type Context = $crate::status_backend::subscription::type_identity::context::$name;
+                                        let context = context.0 as *mut Context;
+                                        let context = unsafe { Box::from_raw(context) };
+                                        let output = typed.dispatch(*context).await;
+                                        let output = output.map(Box::new).map(Box::into_raw).map(|ptr| $crate::status_backend::TransientSendableUntypedRawBoxPointer(ptr as *mut u8));
+                                        Some(output)
+                                    }
+                                )*,
+                            }
+                        }
+
+                        fn get_identity(&self) -> $crate::status_backend::BackendIdentity {
+                            $crate::status_backend::BackendIdentity::$sub_name
+                        }
+                    }
+                };
+                (
+                    $dollar(#[$dollar sub_meta:meta])*
+                    $vis:vis
+                    $sub_name:ident
+                ) => {
+                    define_subscriber! {
+                        $dollar(#[$dollar sub_meta])*
+                        $vis
+                        $sub_name,
+                    }
+                }
+            }
+
+            pub use define_subscriber;
+        };
+        (@trait@ $(#[$meta:meta])* $name:ident<$context: ty>) => {
+            define!(@trait@ $(#[$meta])* $name<$context, $crate::status_backend::subscription::DefaultReturn>);
+        };
+        (@trait@ $(#[$meta:meta])* $name:ident<_, $return: ty>) => {
+            define!(@trait@ $(#[$meta])* $name<$crate::status_backend::subscription::DefaultContext, $return>);
+        };
+        (@trait@ $(#[$meta:meta])* $name:ident) => {
+            define!(@trait@ $(#[$meta])* $name<$crate::status_backend::subscription::DefaultContext, $crate::status_backend::subscription::DefaultReturn>);
+        };
+        (@trait@ $(#[$meta:meta])* $name:ident<$context: ty, $return: ty>) => {
+            $(#[$meta])*
+            #[async_trait::async_trait]
+            pub trait $name: Subscriber {
+                type Identity: $crate::status_backend::subscription::TypeIdentity;
+
+                async fn dispatch(&mut self, context: $context) -> Result<$return, super::error::DispatchError>;
+
+                async fn get_solicitation(&self) -> super::ComponentSolicitation {
+                    super::ComponentSolicitation::default()
+                }
+            }
+        };
+        (@make_meta@ [$({ $($subscription: tt)* }$($comma: tt)?)*]) => {
+            $(
+                define!(@name@ $($subscription)*)
+                $($comma)?
+            )*
+        };
+        (@context@ $name: ident, <$context: ty, $(tt)*) => {
+            pub type $name = $context;
+        };
+        (@context@ $name: ident, <$context: ty>) => {
+            pub type $name = $context;
+        };
+        (@context@ $name: ident, <_, $return: ty>) => {
+            define!(@context@ $name, <$crate::status_backend::subscription::DefaultContext,);
+        };
+        (@context@ $name: ident,) => {
+            define!(@context@ $name, <$crate::status_backend::subscription::DefaultContext,);
+        };
+        (@returns@ $name: ident, <$context: ty, $return: ty>) => {
+            pub type $name = $return;
+        };
+        (@returns@ $name: ident, <$context: ty>) => {
+            define!(@returns@ $name, <$context, $crate::status_backend::subscription::DefaultReturn>);
+        };
+        (@returns@ $name: ident, <_, $return: ty>) => {
+            define!(@returns@ $name, <(), $return>);
+        };
+        (@returns@ $name: ident,) => {
+            define!(@returns@ $name, <(), $crate::status_backend::subscription::DefaultReturn>);
+        };
+    }
+    
+    define!($, [
+        { TrackStarted<crate::status_backend::BackendContext<crate::data_fetching::AdditionalTrackData>> },
+        { TrackEnded },
+        { ProgressJolt },
+    ], {
+        async fn get_solicitation(&self, event: self::Identity) -> Option<ComponentSolicitation>;
+        #[allow(private_interfaces)]
+        async unsafe fn dispatch_untyped(&mut self, event: self::Identity, value: TransientSendableUntypedRawBoxPointer) -> Option<Result<TransientSendableUntypedRawBoxPointer, DispatchError>>;
+        fn get_identity(&self) -> crate::status_backend::BackendIdentity;
+    });
+
+    #[macro_export]
+    macro_rules! subscribe {
+        ($struct: ident, $ident: ident, { $($t: tt)* }) => {
+            #[async_trait::async_trait]
+            impl $crate::status_backend::subscription::$ident for $struct {
+                type Identity = $crate::status_backend::subscription::type_identity::$ident;
+    
+                $($t)*
+            }
         }
-
-        add!([
-            (discord, "discord"),
-            (lastfm, "lastfm"),
-            (listenbrainz, "listenbrainz"),
-        ]);
-
-        backends
     }
 
+    pub use subscribe;
+}
+
+
+impl Backends {
     #[tracing::instrument(level = "debug")]
-    pub async fn get_solicitations(&self) -> ComponentSolicitation {
+    pub async fn get_solicitations(&self, event: subscription::Identity) -> ComponentSolicitation {
         let backends = self.all();
         let mut solicitation = ComponentSolicitation::default();
         let mut jobs = Vec::with_capacity(backends.len());
         for backend in backends {
             jobs.push(tokio::spawn(async move {
-                backend.lock().await.get_additional_data_solicitation().await
+                backend.lock().await.get_solicitation(event).await
             }));
         }
         for (i, job) in jobs.into_iter().enumerate() {
             match job.await {
-                Ok(got) => solicitation += got,
+                Ok(Some(got)) => solicitation += got,
+                Ok(None) => (),
                 Err(err) => {
-                    let backend = self.all()[i].lock().await.get_name();
+                    let backend = self.all()[i].lock().await.get_identity().get_name();
                     tracing::error!(?err, backend, "error getting solicitation; skipping")
                 },
             };
@@ -277,68 +793,68 @@ impl StatusBackends {
     }
 
     #[tracing::instrument(skip(context), level = "debug")]
-    pub async fn dispatch_track_ended(&self, context: BackendContext<()>) {
+    async fn dispatch<T: subscription::TypeIdentity>(&self, context: T::DispatchContext) -> BackendMap<Result<T::DispatchReturn, DispatchError>> {
         let backends = self.all();
+        let mut outputs = BackendMap::new();
         let mut jobs = Vec::with_capacity(backends.len());
 
         for backend in backends {
             let context = context.clone();
+            let context = Box::into_raw(Box::new(context));
+            let context = TransientSendableUntypedRawBoxPointer(context as *mut u8);
             jobs.push(tokio::spawn(async move {
-                if backend.lock().await.check_eligibility(context.clone()).await {
-                    backend.lock().await.record_as_listened(context).await;
-                }
+                let mut backend = backend.lock().await;
+                let backend = &mut *backend;
+                unsafe { backend.dispatch_untyped(T::IDENTITY, context).await }
+                    .map(|result| (backend.get_identity(), result))
             }));
         }
 
         for (i, job) in jobs.into_iter().enumerate() {
-            if let Err(err) = job.await {
-                let backend = self.all()[i].lock().await.get_name();
-                tracing::error!(?err, backend, "error dispatching track completion")
+            match job.await {
+                Ok(None) => {},
+                Ok(Some((identity, result))) => {
+                    outputs[identity] = Some(result.map(|ptr| {
+                        let ptr = ptr.0 as *mut T::DispatchReturn;
+                        let ptr = unsafe { Box::from_raw(ptr) };
+                        *ptr
+                    }));
+                },
+                Err(err) => {
+                    let backend = self.all()[i].lock().await.get_identity().get_name();
+                    tracing::error!(?err, backend, "error dispatching track completion")
+                }
             }
-        }
+        };
+
+        outputs
     }
 
     #[tracing::instrument(skip(context), level = "debug", fields(track = &context.track.persistent_id))]
     pub async fn dispatch_track_started(&self, context: BackendContext<crate::data_fetching::AdditionalTrackData>) {
-        let backends = self.all();
-        let mut jobs = Vec::with_capacity(backends.len());
-
-        for backend in backends {
-            let context = context.clone();
-            jobs.push(tokio::spawn(async move {
-                backend.lock().await.set_now_listening(context).await
-            }));
-        }
-
-        for (i, job) in jobs.into_iter().enumerate() {
-            if let Err(err) = job.await {
-                let backend = self.all()[i].lock().await.get_name();
-                tracing::error!(?err, backend, "error dispatching track start")
-            }
+        type Variant = subscription::type_identity::TrackStarted;
+        for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
+            error.handle(identity.get_name(), Variant {});
         }
     }
 
-    #[tracing::instrument(skip(context), level = "debug")]
+    #[tracing::instrument(skip(context), level = "debug", fields(track = &context.track.persistent_id))]
+    pub async fn dispatch_track_ended(&self, context: BackendContext<()>) {
+        type Variant = subscription::type_identity::TrackEnded;
+        for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
+            error.handle(identity.get_name(), Variant {});
+        }
+    }
+
+    #[tracing::instrument(skip(context), level = "debug", fields(track = &context.track.persistent_id))]
     pub async fn dispatch_current_progress(&self, context: BackendContext<()>) {
-        let backends = self.all();
-        let mut jobs = Vec::with_capacity(backends.len());
-
-        for backend in backends {
-            let context = context.clone();
-            jobs.push(tokio::spawn(async move {
-                backend.lock().await.update_progress(context).await;
-            }));
-        }
-
-        for (i, job) in jobs.into_iter().enumerate() {
-            if let Err(err) = job.await {
-                let backend = self.all()[i].lock().await.get_name();
-                tracing::error!(?err, backend, "error dispatching progress update")
-            }
+        type Variant = subscription::type_identity::ProgressJolt;
+        for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
+            error.handle(identity.get_name(), Variant {});
         }
     }
 
-    pub async fn new(config: &crate::config::Config<'_>) -> StatusBackends {        
+    pub async fn new(config: &crate::config::Config<'_>) -> Backends {        
         #[cfg(feature = "lastfm")]
         use crate::status_backend::lastfm::*;
 
@@ -376,7 +892,7 @@ impl StatusBackends {
             Some(wrapped)
         } else { None };
 
-        StatusBackends {
+        Backends {
             #[cfg(feature = "lastfm")] lastfm,
             #[cfg(feature = "discord")] discord,
             #[cfg(feature = "listenbrainz")] listenbrainz

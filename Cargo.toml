@@ -44,6 +44,7 @@ osa_apple_music = { path = "./crates/osa_apple_music" }
 futures-util = "0.3.31"
 itunes_api = { path = "./crates/itunes_api" }
 include_dir = "0.7.4"
+cast_trait_object = "0.1.4"
 
 [features]
 default = ["discord", "listenbrainz", "lastfm"]

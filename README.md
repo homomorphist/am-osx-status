@@ -8,7 +8,7 @@ Work-in-progress macOS Apple Music state observer and recorder.
 - ListenBrainz Client
 - Discord Rich Presence (w/ support for custom album art)
 
-Configurable[^1] and relatively lightweight.
+Configurable and relatively lightweight.
 
 ## Workspace Crates
 
