@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 if ! cargo sqlx --version &>/dev/null; then  
     cargo install sqlx-cli --no-default-features --features sqlite-unbundled
 fi

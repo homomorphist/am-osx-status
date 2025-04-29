@@ -45,6 +45,7 @@ itunes_api = { path = "./crates/itunes_api" }
 include_dir = "0.7.4"
 cast_trait_object = "0.1.4"
 sqlx = { version = "0.8.3", features = ["runtime-tokio", "sqlite-unbundled", "macros", "derive", "chrono"] }
+backtrace = "0.3.74"
 
 [features]
 default = ["discord", "listenbrainz", "lastfm"]
@@ -52,3 +53,16 @@ discord = ["dep:discord-presence"]
 listenbrainz = ["dep:brainz"]
 lastfm = ["dep:brainz"]
 tokio_console = []
+
+[profile.dev.package.sqlx]
+opt-level = 3
+
+[profile.dev.package.sqlx-macros]
+opt-level = 3
+
+[profile.test.package.sqlx]
+opt-level = 3
+
+[profile.test.package.sqlx-macros]
+opt-level = 3
+

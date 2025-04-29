@@ -11,7 +11,7 @@ impl DebuggingSession {
     pub fn new(args: &crate::cli::Cli) -> Self {
         use tracing_subscriber::prelude::*;
 
-        let mut layers = Vec::with_capacity(3);
+        let mut layers = Vec::with_capacity(4);
         let mut chrome_guard = None;
 
         if cfg!(debug_assertions) && !args.running_as_service {
@@ -36,9 +36,11 @@ impl DebuggingSession {
             chrome_guard = Some(chrome_guard_unraised);
             layers.push(chrome_layer.boxed());
         }
+        
 
         tracing_subscriber::registry()
             .with(Self::get_filter(args))
+            .with(crate::error_layer::Layer::new())
             .with(layers)
             .init();
     

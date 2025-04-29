@@ -17,6 +17,7 @@ mod config;
 mod cli;
 mod util;
 mod store;
+mod error_layer;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 

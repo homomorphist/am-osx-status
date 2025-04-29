@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 if ! cargo sqlx --version &>/dev/null; then  
     cargo install sqlx-cli --no-default-features --features sqlite-unbundled
 fi
@@ -11,8 +12,8 @@ fi
 
 cargo sqlx database create
 
-export SCRIPT_LOCATION="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-export MIGRATIONS="$SCRIPT_LOCATION/../src/store/sql/migrations"
+DIR_SELF="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+MIGRATIONS="$DIR_SELF/../src/store/sql/migrations"
 
 if [ "$1" == "-s" || "$2" == "-s" ]; then
     echo "Skipping migrations"

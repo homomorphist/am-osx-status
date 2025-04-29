@@ -305,54 +305,57 @@ super::subscribe!(DiscordPresence, TrackStarted, {
     }
 
     async fn dispatch(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) -> Result<(), DispatchError> {
-        use osa_apple_music::track::MediaKind;
-        let super::BackendContext { track, listened, data: additional_info, .. } = context;
-        self.position = listened.lock().await.current.as_ref().map(|position| position.get_expected_song_position());
-        self.duration = track.duration.map(|d| d.as_secs_f32());
+        // use osa_apple_music::track::MediaKind;
+        // let super::BackendContext { track, listened, data: additional_info, .. } = context;
+        // self.position = listened.lock().await.current.as_ref().map(|position| position.get_expected_song_position());
+        // self.duration = track.duration.map(|d| d.as_secs_f32());
 
-        fn make_minimum_length(mut s: String) -> String {
-            if s.len() < 2 {
-                s += "  "; // two spaces
-            }
-            s
-        }
+        // fn make_minimum_length(mut s: String) -> String {
+        //     if s.len() < 2 {
+        //         s += "  "; // two spaces
+        //     }
+        //     s
+        // }
 
-        let mut activity = Activity::new()
-            ._type(match track.media_kind {
-                MediaKind::Song | 
-                MediaKind::Unknown => ActivityType::Listening,
-                MediaKind::MusicVideo => ActivityType::Watching,
-            })
-            .details(make_minimum_length(track.name.clone()))
-            .state(track.artist.clone().map(make_minimum_length).unwrap_or("Unknown Artist".to_owned()))
-            .assets(|_| ActivityAssets {
-                large_text: track.album.clone().map(make_minimum_length),
-                large_image: additional_info.images.track.clone(),
-                small_image: additional_info.images.artist.clone(),
-                small_text: track.artist.clone().map(make_minimum_length),
-            });
+        // let mut activity = Activity::new()
+        //     ._type(match track.media_kind {
+        //         MediaKind::Song | 
+        //         MediaKind::Unknown => ActivityType::Listening,
+        //         MediaKind::MusicVideo => ActivityType::Watching,
+        //     })
+        //     .details(make_minimum_length(track.name.clone()))
+        //     .state(track.artist.clone().map(make_minimum_length).unwrap_or("Unknown Artist".to_owned()))
+        //     .assets(|_| ActivityAssets {
+        //         large_text: track.album.clone().map(make_minimum_length),
+        //         large_image: additional_info.images.track.clone(),
+        //         small_image: additional_info.images.artist.clone(),
+        //         small_text: track.artist.clone().map(make_minimum_length),
+        //     });
 
 
-        if let Some(itunes) = &additional_info.itunes {
-            activity = activity.append_buttons(|button| button
-                .label("Listen on Apple Music")
-                .url(itunes.apple_music_url.clone())
-            )
-        }
+        // if let Some(itunes) = &additional_info.itunes {
+        //     activity = activity.append_buttons(|button| button
+        //         .label("Listen on Apple Music")
+        //         .url(itunes.apple_music_url.clone())
+        //     )
+        // }
 
-        self.activity = Some(activity);
-        self.send_activity().await
+        // self.activity = Some(activity);
+        // self.send_activity().await
+        Err(DispatchError::unauthorized(Some("asdfasdfasdfasfdsda")))
+
     }
 
 });
 super::subscribe!(DiscordPresence, ProgressJolt, {
     async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
-        if self.should_dispatch_progress_update(&context).await {
-            self.send_activity().await
-        } else {
-            tracing::debug!("skipping progress dispatch since it'll delay next song dispatch");
-            Ok(())
-        }
+        // if self.should_dispatch_progress_update(&context).await {
+        //     self.send_activity().await
+        // } else {
+        //     tracing::debug!("skipping progress dispatch since it'll delay next song dispatch");
+        //     Ok(())
+        // }
+        Err(DispatchError::internal_msg("not implemented", false))
     }
 });
 

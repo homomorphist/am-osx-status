@@ -48,6 +48,7 @@ name = "am-osx-status"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "backtrace",
  "bincode",
  "brainz",
  "cast_trait_object",

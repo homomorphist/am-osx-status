@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"name": "Repository",
+			"path": "../"
+		},
+		{
+			"name": "Local Data",
+			"path": "../dev/data"
+		}
+	],
+}

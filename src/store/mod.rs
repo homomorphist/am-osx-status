@@ -4,6 +4,9 @@ use tokio::sync::Mutex;
 mod migrations;
 pub mod entities;
 
+#[cfg(test)]
+pub(crate) mod test_utilities;
+
 pub static DB_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     crate::util::HOME.join("Library/Application Support/am-osx-status/sqlite.db")
 });
@@ -64,9 +67,12 @@ impl GlobalPool {
 
 /// A wrapper around `sqlx::Error` that can be either a reference to a static error or a dynamic error.
 /// A static error would occur when a global pool failed to correctly initialize.
+#[derive(Debug, thiserror::Error)]
 pub enum MaybeStaticSqlError {
-    Owned(sqlx::Error),
-    Static(&'static sqlx::Error)
+    #[error(transparent)]
+    Owned(#[from] sqlx::Error),
+    #[error(transparent)]
+    Static(#[from] &'static sqlx::Error)
 }
 impl core::ops::Deref for MaybeStaticSqlError {
     type Target = sqlx::Error;
@@ -75,15 +81,5 @@ impl core::ops::Deref for MaybeStaticSqlError {
             MaybeStaticSqlError::Owned(e) => e,
             MaybeStaticSqlError::Static(e) => e
         }
-    }
-}
-impl From<sqlx::Error> for MaybeStaticSqlError {
-    fn from(e: sqlx::Error) -> Self {
-        MaybeStaticSqlError::Owned(e)
-    }
-}
-impl From<&'static sqlx::Error> for MaybeStaticSqlError {
-    fn from(e: &'static sqlx::Error) -> Self {
-        MaybeStaticSqlError::Static(e)
     }
 }

@@ -79,6 +79,8 @@ pub mod error {
         use maybe_owned_string::MaybeOwnedString;
 
         pub use cause::Cause;
+
+        use crate::{status_backend::DispatchableTrack, store::{entities::{DeferredTrack, Key}, MaybeStaticSqlError}};
         pub mod cause {
             use super::MaybeOwnedString;
 
@@ -226,11 +228,22 @@ pub mod error {
                 }
             }
 
+            /// Returns a tuple of the track ID and whether it was this operation which added the track was added to the database.
+            /// (If the second element is false, the track was already in the database.)
+            async fn add_to_deferred(&self, backend: &'static str, event: impl crate::subscription::TypeIdentity, track: &DispatchableTrack) -> Result<(Key<DeferredTrack>, bool), MaybeStaticSqlError> {
+                use crate::store::entities::FromKey;
+                Ok(match DeferredTrack::get_with_persistent_id(&track.persistent_id).await? {
+                    Some(track) => (track.id, false),
+                    None => (DeferredTrack::insert(track).await?, true)
+                })
+            }
+            
             /// Log the error and panic if it is fatal.
             pub fn handle(&self, backend: &'static str, event: impl crate::subscription::TypeIdentity) {
                 self.log(backend, event);
                 self.handle_fatal();
             }
+
         }
         impl DispatchError { // constructors
             pub fn internal(error: Box<dyn std::error::Error + Send + Sync>, recovery: Recovery) -> Self {
@@ -539,7 +552,7 @@ impl<T, E> BackendMap<Result<T, E>> {
 
 /// The minimum data required to dispatch a track to a backend.
 /// This can be serialized and deserialized for bulk dispatches at later dates.
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DispatchableTrack {
     pub name: String,
     pub album: Option<String>,
@@ -565,6 +578,22 @@ impl From<osa_apple_music::Track> for DispatchableTrack {
         }
     }
 }
+impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for DispatchableTrack {
+    fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+        Ok(Self {
+            name: row.try_get("name")?,
+            album: row.try_get("album")?,
+            album_artist: row.try_get("album_artist")?,
+            artist: row.try_get("artist")?,
+            persistent_id: row.try_get("persistent_id")?,
+            media_kind: row.try_get("media_kind")?,
+            duration: row.try_get::<Option<f32>, _>("duration")?.map(core::time::Duration::from_secs_f32),
+            track_number: row.try_get("track_number")?,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct BackendContext<A> {
     pub track: Arc<DispatchableTrack>,

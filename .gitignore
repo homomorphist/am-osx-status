@@ -6,3 +6,4 @@ trace-*
 logs/**
 dump*
 config.toml
+dev/data

@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 export DATABASE_PATH="/Users/$USER/Library/Application Support/am-osx-status/sqlite.db"
 
 if [ "$1" == "restore" ]; then
@@ -27,5 +28,3 @@ else
     cp "$DATABASE_PATH" "$DATABASE_PATH.bak"
     echo "Backup created at $DATABASE_PATH.bak"
 fi
-
-

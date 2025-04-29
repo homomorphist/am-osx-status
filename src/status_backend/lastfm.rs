@@ -312,34 +312,36 @@ subscription::define_subscriber!(pub LastFM, {
 });
 subscribe!(LastFM, TrackStarted, {
     async fn dispatch(&mut self, context: super::BackendContext<AdditionalTrackData>) -> Result<(), DispatchError> {
-        let db = context.musicdb.as_ref().as_ref();
-        let track = context.track.as_ref();
-        let artist = extract_first_artist(track, db, &self.client.net).await;
-        let info = Self::track_to_heard(track, &artist).await;
-        self.client.set_now_listening(&info).await?;
-        Ok(())
+        Err(DispatchError::unauthorized(Some("zawg")))
+        // let db = context.musicdb.as_ref().as_ref();
+        // let track = context.track.as_ref();
+        // let artist = extract_first_artist(track, db, &self.client.net).await;
+        // let info = Self::track_to_heard(track, &artist).await;
+        // self.client.set_now_listening(&info).await?;
+        // Ok(())
     }
 });
 subscribe!(LastFM, TrackEnded, {
     async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
-        if !Self::is_eligible(context.track.as_ref(), context.listened).await {
-            return Ok(())
-        }
+        Err(DispatchError::unauthorized(Some("zawg")))
+        // if !Self::is_eligible(context.track.as_ref(), context.listened).await {
+        //     return Ok(())
+        // }
 
-        let db = context.musicdb.as_ref().as_ref();
-        let track = context.track.as_ref();
-        let artist = extract_first_artist(track, db, &self.client.net).await;
-        let response = self.client.scrobble(&[lastfm::scrobble::Scrobble {
-            chosen_by_user: None,
-            timestamp: chrono::Utc::now(),
-            info: Self::track_to_heard(track, &artist).await
-        }]).await?;
+        // let db = context.musicdb.as_ref().as_ref();
+        // let track = context.track.as_ref();
+        // let artist = extract_first_artist(track, db, &self.client.net).await;
+        // let response = self.client.scrobble(&[lastfm::scrobble::Scrobble {
+        //     chosen_by_user: None,
+        //     timestamp: chrono::Utc::now(),
+        //     info: Self::track_to_heard(track, &artist).await
+        // }]).await?;
 
-        if let Some(outcome) = response.results.into_iter().next() {
-            outcome?;
-        }
+        // if let Some(outcome) = response.results.into_iter().next() {
+        //     outcome?;
+        // }
 
-        Ok(())
+        // Ok(())
     }
 });
 
