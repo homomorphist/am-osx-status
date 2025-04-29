@@ -539,7 +539,7 @@ impl<T, E> BackendMap<Result<T, E>> {
 
 /// The minimum data required to dispatch a track to a backend.
 /// This can be serialized and deserialized for bulk dispatches at later dates.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct DispatchableTrack {
     pub name: String,
     pub album: Option<String>,

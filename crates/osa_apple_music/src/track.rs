@@ -143,6 +143,13 @@ pub enum MediaKind {
     MusicVideo,
     Unknown
 }
+#[cfg(feature = "sqlx")]
+impl<'r, DB: sqlx::Database> sqlx::Decode<'r, DB> for MediaKind where &'r str: sqlx::Decode<'r, DB> {
+    fn decode(value: DB::ValueRef<'r>) -> Result<Self, Box<dyn std::error::Error + 'static + Send + Sync>> {
+        let value = <&str as sqlx::Decode<DB>>::decode(value)?;
+        Ok(serde_json::from_str(value).map_err(Box::new)?)
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -39,12 +39,12 @@ bincode = "1.3.3"
 tokio-stream = "0.1.17"
 tokio-util = "0.7.13"
 tokio-serde = { version = "0.9.0", features = ["bincode"] }
-osa_apple_music = { path = "./crates/osa_apple_music" }
+osa_apple_music = { path = "./crates/osa_apple_music", features = ["sqlx"] }
 futures-util = "0.3.31"
 itunes_api = { path = "./crates/itunes_api" }
 include_dir = "0.7.4"
 cast_trait_object = "0.1.4"
-sqlx = { version = "0.8.3", features = ["runtime-tokio", "sqlite-unbundled", "macros"] }
+sqlx = { version = "0.8.3", features = ["runtime-tokio", "sqlite-unbundled", "macros", "derive", "chrono"] }
 
 [features]
 default = ["discord", "listenbrainz", "lastfm"]

@@ -76,9 +76,9 @@ pub enum StoredArtwork {
     Local { path: String }
 }
 
-use std::sync::LazyLock;
+use std::{ops::DerefMut, sync::LazyLock};
 
-use sqlx::pool;
+use sqlx::{pool, Connection};
 static ARTWORKD_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     crate::util::HOME.as_path().join("Library/Containers/com.apple.AMPArtworkAgent/Data/Documents")
 });
@@ -88,8 +88,6 @@ static ARTWORKD_ARTWORK_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
 static ARTWORKD_SQLITE_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     ARTWORKD_PATH.as_path().join("artworkd.sqlite")
 });
-
-
 
 // Merely knowing this function exists has brought me great pain, to say much less of writing it.
 // One day I hope it may be rendered unnecessary. 
@@ -107,18 +105,22 @@ fn get_file_extension(info: &ImageInfo) -> String {
     "jpeg".to_string()
 }
 
+
+static POOL: crate::store::GlobalPool = crate::store::GlobalPool::new(|| {
+    crate::store::GlobalPoolOptions {
+        pool: sqlx::sqlite::SqlitePoolOptions::new(),
+        connect: sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&*ARTWORKD_SQLITE_PATH)
+            .read_only(true),
+    }
+});
+
+
+
 /// ## Parameters
 /// - `persistent_id`: Hexadecimal string containing 8 bytes.
-pub async fn get_artwork(persistent_id: impl AsRef<str>) -> Result<Option<StoredArtwork>, sqlx::Error> {
-    let connect_options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&*ARTWORKD_SQLITE_PATH)
-        .read_only(true);
-
-    // not really a pool, ay? but this'll work fine for now.
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(connect_options).await?;
-
+pub async fn get_artwork(persistent_id: impl AsRef<str>) -> Result<Option<StoredArtwork>, crate::store::MaybeStaticSqlError> {
+    let pool = POOL.get().await?;
     let persistent_id = PersistentId::try_from(persistent_id.as_ref()).expect("bad persistent ID");
     let source = get_source_info(persistent_id, &pool).await?;
     let source = if let Some(source) = source { source } else { return Ok(None) };
