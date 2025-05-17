@@ -1,0 +1,29 @@
+[package]
+name = "unaligned_u16-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.unaligned_u16]
+path = ".."
+features = ["utf16"]
+
+[[bin]]
+name = "cmp"
+path = "targets/cmp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "eq"
+path = "targets/eq.rs"
+test = false
+doc = false
+bench = false

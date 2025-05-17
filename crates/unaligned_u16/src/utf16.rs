@@ -185,7 +185,6 @@ impl PartialOrd<Utf16Str> for &Utf16Str {
 }
 impl core::hash::Hash for Utf16Str {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // TODO: Use `write_length_prefix` when that stabilizes.
         self.bytes().hash(state)
     }
 }
@@ -257,9 +256,10 @@ impl PartialOrd<Utf16Str> for dyn AsRef<str> {
 pub mod iter {
     /// An iterator over the characters of a UTF-16 string.
     /// 
-    /// In debug mode, panics if an invalid character is encountered. In release mode, assumes all characters are valid.
+    /// In debug mode, panics if an invalid character is encountered.
+    /// In release mode, assumes all characters are valid.
     /// 
-    /// Does not implement [`core::iter::DoubleEndedIterator`] or [`core::iter::ExactSizeIterator`] because UTF-16 characters are not fixed-width.
+    /// Does not implement [`core::iter::ExactSizeIterator`] because UTF-16 characters are not fixed-width, and this iterator is intentionally lazy.
     pub struct UnalignedUtf16StrCharacterIterator<'a> {
         inner: core::char::DecodeUtf16<crate::iter::UnalignedU16SliceIterator<'a>>
     }
@@ -336,23 +336,26 @@ pub mod traits {
     }
 }
 
+
+#[macro_export]
+macro_rules! utf16_literal {
+    ($v: expr) => {
+        $crate::utf16::Utf16Str::new($crate::u16_slice_as_u8_slice(&$v.encode_utf16().collect::<Vec<_>>())).expect("bad utf16")
+    };
+}
+
+pub use utf16_literal;
+
 #[cfg(test)]
-mod test {
-    use crate::u16_slice_as_u8_slice;
-    use super::Utf16Str;
-
-    macro_rules! utf16 {
-        ($v: literal) => {
-            Utf16Str::new(u16_slice_as_u8_slice(&$v.encode_utf16().collect::<Vec<_>>())).unwrap()
-        };
-    }
-
+mod tests {
+    use crate::utf16_literal as utf16;
 
     #[test]
     fn eq() {
         assert!(utf16!("jor") == "jor");
         assert!(utf16!("👨‍👩‍👧‍👦") == "👨‍👩‍👧‍👦");
         assert!(utf16!("🙃") == "🙃");
+        assert!(utf16!("🧑🏾‍❤️‍💋‍🧑🏻") == "🧑🏾‍❤️‍💋‍🧑🏻");
     }
 
     #[test]
