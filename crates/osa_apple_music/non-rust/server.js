@@ -127,6 +127,7 @@ function cstr(str) {
  */
 cstr.sized = function(str) {
     const utf8 = [];
+
     for (let i = 0; i < str.length; i++) {
         const code = str.charCodeAt(i);
 
@@ -135,17 +136,29 @@ cstr.sized = function(str) {
         } else if (code < 0x800) {
             utf8.push(0b11000000 | (code >> 6));
             utf8.push(0b10000000 | (code & 0b111111));
-        } else if (code >= 0xD800 && code <= 0xDFFF) {
-            if (code >= 0xDC00) continue; // unpaired low surrogate
-            const hi = code;
-            const lo = str.charCodeAt(++i);
-            if (lo < 0xDC00 || lo > 0xDFFF) continue; // invalid
+        } else if (code >= 0xD800 && code <= 0xDBFF) {
+            if (i + 1 >= str.length) {
+                // Unpaired high surrogate at end
+                utf8.push(0b11101111, 0b10111111, 0b10111101); // U+FFFD
+                continue;
+            }
 
-            const cp = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+            const lo = str.charCodeAt(i + 1);
+            if (lo < 0xDC00 || lo > 0xDFFF) {
+                // Invalid surrogate pair
+                utf8.push(0b11101111, 0b10111111, 0b10111101); // U+FFFD
+                continue;
+            }
+
+            const cp = 0x10000 + ((code - 0xD800) << 10) + (lo - 0xDC00);
             utf8.push(0b11110000 | (cp >> 18));
             utf8.push(0b10000000 | ((cp >> 12) & 0b111111));
             utf8.push(0b10000000 | ((cp >> 6) & 0b111111));
             utf8.push(0b10000000 | (cp & 0b111111));
+            i++; // Advance past the low surrogate
+        } else if (code >= 0xDC00 && code <= 0xDFFF) {
+            // Unpaired low surrogate
+            utf8.push(0b11101111, 0b10111111, 0b10111101); // U+FFFD
         } else {
             utf8.push(0b11100000 | (code >> 12));
             utf8.push(0b10000000 | ((code >> 6) & 0b111111));
@@ -153,30 +166,41 @@ cstr.sized = function(str) {
         }
     }
 
-    const buf = alloc(utf8.length + 1); // +1 null terminator
+    const buf = alloc(utf8.length + 1);
     for (let i = 0; i < utf8.length; i++) {
         buf[i] = utf8[i];
     }
+    buf[utf8.length] = 0;
 
-    return /** @type { PointerWithSize } */ ([buf, utf8.length + 1]);
-}
+    return /** @type {PointerWithSize} */ ([buf, utf8.length + 1]);
+};
 
 /**
  * Decodes a null-terminated UTF-8 C string.
+ * Replaces malformed sequences with U+FFFD.
  * @param { ByteIndexable } bytes
  * @returns { string }
  */
 function uncstr(bytes) {
-    let str = String()
+    let str = "";
     let i = 0;
 
     while (bytes[i] !== 0) {
         const byte1 = bytes[i++];
+        if (byte1 === undefined) {
+            str += "\uFFFD";
+            break;
+        }
 
         if (byte1 < 0x80) {
             str += String.fromCharCode(byte1);
         } else if (byte1 < 0xE0) {
             const byte2 = bytes[i++];
+            if ((byte2 & 0xC0) !== 0x80) {
+                str += "\uFFFD";
+                if (byte2 !== undefined) i--; // step back if not EOF
+                continue;
+            }
             str += String.fromCharCode(
                 ((byte1 & 0b11111) << 6) |
                  (byte2 & 0b111111)
@@ -184,25 +208,53 @@ function uncstr(bytes) {
         } else if (byte1 < 0xF0) {
             const byte2 = bytes[i++];
             const byte3 = bytes[i++];
+            if (
+                (byte2 & 0xC0) !== 0x80 ||
+                (byte3 & 0xC0) !== 0x80
+            ) {
+                str += "\uFFFD";
+                if (byte2 !== undefined) i--;
+                if (byte3 !== undefined) i--;
+                continue;
+            }
             str += String.fromCharCode(
                 ((byte1 & 0b1111) << 12) |
                 ((byte2 & 0b111111) << 6) |
                  (byte3 & 0b111111)
             );
-        } else {
+        } else if (byte1 < 0xF8) {
             const byte2 = bytes[i++];
             const byte3 = bytes[i++];
             const byte4 = bytes[i++];
+            if (
+                (byte2 & 0xC0) !== 0x80 ||
+                (byte3 & 0xC0) !== 0x80 ||
+                (byte4 & 0xC0) !== 0x80
+            ) {
+                str += "\uFFFD";
+                if (byte2 !== undefined) i--;
+                if (byte3 !== undefined) i--;
+                if (byte4 !== undefined) i--;
+                continue;
+            }
+
             const cp =
-                ((byte1 & 0b111) << 18) |
-                ((byte2 & 0b111111) << 12) |
-                ((byte3 & 0b111111) << 6) |
-                 (byte4 & 0b111111)
-                - 0x10000;
+                (((byte1 & 0b111) << 18) |
+                 ((byte2 & 0b111111) << 12) |
+                 ((byte3 & 0b111111) << 6) |
+                  (byte4 & 0b111111)) - 0x10000;
+
+            if (cp < 0 || cp > 0x10FFFF) {
+                str += "\uFFFD";
+                continue;
+            }
+
             str += String.fromCharCode(
                 0xD800 + (cp >> 10),
                 0xDC00 + (cp & 0x3FF)
             );
+        } else {
+            str += "\uFFFD";
         }
     }
 
