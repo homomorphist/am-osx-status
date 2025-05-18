@@ -367,8 +367,7 @@ impl LastFM {
             artist,
             track: &track.name,
             album: track.album.as_deref().map(clean_album),
-            album_artist: if track.album.as_ref().is_some_and(|aa| Some(aa) != track.artist.as_ref()) {
-                // only sent if != track artist
+            album_artist: if track.album_artist.as_ref().is_some_and(|v| v != artist) {
                 Some(track.album_artist.as_ref().unwrap())
             } else { None },
             duration_in_seconds: track.duration.map(|d| d.as_secs()as u32),
