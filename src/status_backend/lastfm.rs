@@ -197,7 +197,7 @@ async fn extract_first_artist<'a, 'b: 'a>(
     }
 
     // First, split by commas to go from "A, B, C & D" to just "A".
-    // If it's in the form "A & B", it'll leave it as be, but that's fine and will be account for in a moment.
+    // If it's in the form "A & B", it'll be left as-is, but this is handled later.
     let mut split_by_commas = track.artists.split(", ");
     let first = split_by_commas.next().unwrap_or(track.artists);
     let split_by_commas = split_by_commas.next().is_some();
@@ -206,6 +206,7 @@ async fn extract_first_artist<'a, 'b: 'a>(
     let left = split.next().unwrap();
 
     if split.next().is_none() {
+        // There's no ampersand, so it's only one artist.
         return left.into()
     }
 
@@ -215,8 +216,8 @@ async fn extract_first_artist<'a, 'b: 'a>(
     //    - "A" by themselves may or may not be in the MusicDB, but we want to return them regardless.
 
     if split_by_commas {
-        // If we split by commas, then there are three or more artists, and the apostrophe for concatenating into a list
-        // should've been at the back. That means this singular artist just has an ampersand in their name.
+        // If we split by commas, then there are three or more artists, and the apostrophe for concatenating into a list should've been at the back.
+        // That means this singular artist just has an ampersand in their name.
         // (i.e. we're in a situation like "A & B, C, D & E", and now know that "A & B" is a single artist since an apostrophe can't appear there for plain ol' lists.)
         return left.into()
     }
@@ -249,13 +250,13 @@ async fn extract_first_artist<'a, 'b: 'a>(
     }
 
     // Without access to any more information, it's our best bet to just
-    // send the track over to listenbrainz and see who they say the primary artist is.
+    // send the track over to ListenBrainz and see who they say the primary artist is.
     if let Some(artist) = search_listenbrainz(&track, net).await {
         return artist.into()
     }
 
     // Realistically, the artist is probably going to not have an ampersand in their name.
-    // We'll just return the stuff to the left it.
+    // We'll just return the stuff to the left.
     left.into()
 }
 
@@ -312,36 +313,34 @@ subscription::define_subscriber!(pub LastFM, {
 });
 subscribe!(LastFM, TrackStarted, {
     async fn dispatch(&mut self, context: super::BackendContext<AdditionalTrackData>) -> Result<(), DispatchError> {
-        Err(DispatchError::unauthorized(Some("zawg")))
-        // let db = context.musicdb.as_ref().as_ref();
-        // let track = context.track.as_ref();
-        // let artist = extract_first_artist(track, db, &self.client.net).await;
-        // let info = Self::track_to_heard(track, &artist).await;
-        // self.client.set_now_listening(&info).await?;
-        // Ok(())
+        let db = context.musicdb.as_ref().as_ref();
+        let track = context.track.as_ref();
+        let artist = extract_first_artist(track, db, &self.client.net).await;
+        let info = Self::track_to_heard(track, &artist).await;
+        self.client.set_now_listening(&info).await?;
+        Ok(())
     }
 });
 subscribe!(LastFM, TrackEnded, {
     async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
-        Err(DispatchError::unauthorized(Some("zawg")))
-        // if !Self::is_eligible(context.track.as_ref(), context.listened).await {
-        //     return Ok(())
-        // }
+        if !Self::is_eligible(context.track.as_ref(), context.listened).await {
+            return Ok(())
+        }
 
-        // let db = context.musicdb.as_ref().as_ref();
-        // let track = context.track.as_ref();
-        // let artist = extract_first_artist(track, db, &self.client.net).await;
-        // let response = self.client.scrobble(&[lastfm::scrobble::Scrobble {
-        //     chosen_by_user: None,
-        //     timestamp: chrono::Utc::now(),
-        //     info: Self::track_to_heard(track, &artist).await
-        // }]).await?;
+        let db = context.musicdb.as_ref().as_ref();
+        let track = context.track.as_ref();
+        let artist = extract_first_artist(track, db, &self.client.net).await;
+        let response = self.client.scrobble(&[lastfm::scrobble::Scrobble {
+            chosen_by_user: None,
+            timestamp: chrono::Utc::now(),
+            info: Self::track_to_heard(track, &artist).await
+        }]).await?;
 
-        // if let Some(outcome) = response.results.into_iter().next() {
-        //     outcome?;
-        // }
+        if let Some(outcome) = response.results.into_iter().next() {
+            outcome?;
+        }
 
-        // Ok(())
+        Ok(())
     }
 });
 
@@ -370,7 +369,7 @@ impl LastFM {
             album: track.album.as_deref().map(clean_album),
             album_artist: if track.album.as_ref().is_some_and(|aa| Some(aa) != track.artist.as_ref()) {
                 // only sent if != track artist
-                Some(track.album.as_ref().unwrap())
+                Some(track.album_artist.as_ref().unwrap())
             } else { None },
             duration_in_seconds: track.duration.map(|d| d.as_secs()as u32),
             track_number: track.track_number.map(|n| n.get() as u32),
