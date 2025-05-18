@@ -83,7 +83,7 @@ static ARTWORKD_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     crate::util::HOME.as_path().join("Library/Containers/com.apple.AMPArtworkAgent/Data/Documents")
 });
 static ARTWORKD_ARTWORK_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
-    ARTWORKD_PATH.as_path().join("artworkd")
+    ARTWORKD_PATH.as_path().join("artwork")
 });
 static ARTWORKD_SQLITE_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     ARTWORKD_PATH.as_path().join("artworkd.sqlite")
