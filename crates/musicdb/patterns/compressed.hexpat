@@ -25,15 +25,15 @@ struct Envelope {
     MusicDbFile file;
     u32 v2;
     u32 v3;
-    u32 v4;
-    u32 v5;
-    u32 v6;
-    u32 v7;
+    u32 track_count;
+    u32 playlist_count;
+    u32 album_count;
+    u32 artist_count;
     u32 max_crypt_size;
     s32 time_offset; // in seconds
     u32 apple_store_id; // ?
     u32 v10;
-    u32 v11;
+    u32 v11; // datetime of some sort ; last modified?
     u32 v12;
     padding[8];
     u32 v13;

@@ -6,10 +6,12 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use byteorder::{LittleEndian, ReadBytesExt};
 use unaligned_u16::utf16::Utf16Str;
 
+use crate::chunk::{Chunk, ReadableChunk, SizedFirstReadableChunk};
+use crate::chunks::CollectionMember;
 use crate::version::AppleMusicVersion;
-use crate::{cloud, CollectionMember, Reader};
+use crate::{cloud, setup_eaters, CursorReadingExtensions};
 
-use super::{convert_timestamp, ContextlessRead};
+use super::{convert_timestamp};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct UnknownBomaError(pub u32);
@@ -97,24 +99,27 @@ pub enum Boma<'a> {
     Book(BomaBook<'a>),
     Unknown(UnknownBoma)
 }
-impl<'a> ContextlessRead<'a> for Boma<'a> {
+impl Chunk for Boma<'_> {
+    const SIGNATURE: crate::chunk::Signature = crate::chunk::Signature::new(*b"boma");
+}
+impl<'a> ReadableChunk<'a> for Boma<'a> {
     type ReadError = std::io::Error;
-    const SIGNATURE: &'static [u8; 4] = b"boma";
 
-    fn read_contents(mut reader: &mut Reader<'a>) -> Result<Self, Self::ReadError> where Self: Sized {
-        reader.advance(4)?;
-        let length = reader.cursor.read_u32::<LittleEndian>()?;
-        let subtype = reader.cursor.read_u32::<LittleEndian>()?;
-
-        Ok(match BomaSubtype::try_from(subtype) {
+    fn read(cursor: &mut Cursor<&'a [u8]>) -> Result<Self, Self::ReadError> where Self: Sized {
+        <Self as ReadableChunk>::read_signature(cursor);
+        cursor.advance(4)?;
+        let length = cursor.read_u32::<LittleEndian>()?;
+        let subtype = cursor.read_u32::<LittleEndian>()?;
+        let subtype =  BomaSubtype::try_from(subtype);
+        Ok(match subtype {
             Ok(subtype) => match subtype {
-                BomaSubtype::TrackNumerics => Self::TrackNumerics(TrackNumerics::read_content(&mut reader.cursor, length)?),
-                BomaSubtype::CollectionItemMember => Self::CollectionMember(CollectionMember::read_content(reader)?),
-                BomaSubtype::Utf16(variant) => Self::Utf16(BomaUtf16::read_variant_content(reader, variant).expect("please handle error")),
-                BomaSubtype::Utf8Xml(variant) => Self::Utf8Xml(BomaUtf8::read_variant_content(reader, length, variant)?),
-                BomaSubtype::Book(variant) => Self::Book(BomaBook::read_variant_content(reader, length, variant)?)
+                BomaSubtype::TrackNumerics => Self::TrackNumerics(TrackNumerics::read_content(cursor, length)?),
+                BomaSubtype::CollectionItemMember => Self::CollectionMember(CollectionMember::read_content(cursor)?),
+                BomaSubtype::Utf16(variant) => Self::Utf16(BomaUtf16::read_variant_content(cursor, variant).expect("please handle error")),
+                BomaSubtype::Utf8Xml(variant) => Self::Utf8Xml(BomaUtf8::read_variant_content(cursor, length, variant)?),
+                BomaSubtype::Book(variant) => Self::Book(BomaBook::read_variant_content(cursor, length, variant)?)
             },
-            Err(UnknownBomaError(subtype)) => Self::Unknown(UnknownBoma::read_variant_content(&mut reader.cursor, length, subtype)?)
+            Err(UnknownBomaError(subtype)) => Self::Unknown(UnknownBoma::read_variant_content(cursor, length, subtype)?)
         })
     }
 }
@@ -131,6 +136,7 @@ impl Boma<'_> {
     }
 }
 
+
 #[derive(Debug)]
 pub struct TrackNumerics<'a> {
     pub bitrate: Option<crate::units::KilobitsPerSecond>,
@@ -139,9 +145,9 @@ pub struct TrackNumerics<'a> {
     /// Duration of the track, in milliseconds.
     pub duration_ms: u32,
 
-    pub cloud_catalog_album_id: Option<crate::id::cloud::Catalog<crate::Album<'a>>>,
-    pub cloud_catalog_artist_id: Option<crate::id::cloud::Catalog<crate::Artist<'a>>>,
-    pub cloud_catalog_track_id: Option<crate::id::cloud::Catalog<crate::Track<'a>>>,
+    pub cloud_catalog_album_id: Option<crate::id::cloud::Catalog<crate::chunks::Album<'a>>>,
+    pub cloud_catalog_artist_id: Option<crate::id::cloud::Catalog<crate::chunks::Artist<'a>>>,
+    pub cloud_catalog_track_id: Option<crate::id::cloud::Catalog<crate::chunks::Track<'a>>>,
 
     /// File size, in bytes.
     pub bytes: u32,
@@ -282,13 +288,13 @@ pub enum BomaUtf16Error<'a> {
 #[derive(Debug)]
 pub struct BomaUtf16<'a>(pub &'a Utf16Str, pub BomaUtf16Variant);
 impl<'a> BomaUtf16<'a> {
-    fn read_variant_content(reader: &mut Reader<'a>, variant: BomaUtf16Variant) -> Result<Self, BomaUtf16Error<'a>> {
+    fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, variant: BomaUtf16Variant) -> Result<Self, BomaUtf16Error<'a>> {
         // r = 0x12 ; have read shared header
         // but we also skip unknown in struct which is also 12 bytes
-        reader.advance(8)?;
-        let byte_length = reader.cursor.read_u32::<LittleEndian>()? as usize;
-        reader.advance(8)?;
-        let slice: &[u8] = reader.read_slice(byte_length)?;
+        cursor.advance(8)?;
+        let byte_length = cursor.read_u32::<LittleEndian>()? as usize;
+        cursor.advance(8)?;
+        let slice: &[u8] = cursor.read_slice(byte_length)?;
         let str = Utf16Str::new(slice).map_err(|err| BomaUtf16Error::InvalidUtf16(err, slice))?;
         Ok(Self(str, variant))
     }
@@ -307,16 +313,16 @@ pub enum BomaUtf8Variant {
 #[derive(Debug)]
 pub struct BomaUtf8<'a>(pub &'a str, pub BomaUtf8Variant);
 impl<'a> BomaUtf8<'a> {
-    pub(crate) fn read_variant_content(reader: &mut Reader<'a>, mut length: u32, variant: BomaUtf8Variant) -> Result<Self, std::io::Error> {
-        reader.advance(4)?;
+    pub(crate) fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, mut length: u32, variant: BomaUtf8Variant) -> Result<Self, std::io::Error> {
+        cursor.advance(4)?;
 
         // awesome.
         if variant == BomaUtf8Variant::TrackLocalFilePathUrl {
-            reader.advance(16)?;
+            cursor.advance(16)?;
             length -= 16;
         }
 
-        let slice = reader.read_slice((length as usize) - 20)?;
+        let slice = cursor.read_slice((length as usize) - 20)?;
         Ok(Self(unsafe { str::from_utf8_unchecked(slice) }, variant))
     }
 }
@@ -364,7 +370,7 @@ pub enum BookValue<'a> {
 #[derive(Debug)]
 pub struct BomaBook<'a>(Vec<BookValue<'a>>, BookVariant);
 impl<'a> BomaBook<'a> {
-    pub(crate) fn read_variant_content(reader: &mut Reader<'a>, length: u32, variant: BookVariant) -> Result<Self, std::io::Error> {
+    pub(crate) fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, length: u32, variant: BookVariant) -> Result<Self, std::io::Error> {
         const V5: AppleMusicVersion = AppleMusicVersion {
             major: 1,
             minor: 5,
@@ -372,23 +378,23 @@ impl<'a> BomaBook<'a> {
             revision: 0,
         };
 
-        if reader.version.unwrap() >= V5 && variant != BookVariant::Variant0 {
-            // not a book, some other boma. TODO: fix
-            reader.advance(length as i64 - 16)?;
-            return Ok(Self(vec![], variant))
-        }
+        // if cursor.version.unwrap() >= V5 && variant != BookVariant::Variant0 {
+        //     // not a book, some other boma. TODO: fix
+        //     cursor.advance(length as i64 - 16)?;
+        //     return Ok(Self(vec![], variant))
+        // }
 
-        reader.advance(4)?;
-        assert_eq!(&reader.read_signature(), b"book");
+        cursor.advance(4)?;
+        assert_eq!(&cursor.read_signature()?, b"book");
         let mut values = vec![];
-        let destination = reader.cursor.position() - 24 + length as u64;
-        reader.advance(48)?;
-        while reader.cursor.position() != destination {
-            let length = reader.cursor.read_u32::<LittleEndian>()? as usize;
-            let indicator = reader.cursor.read_u32::<LittleEndian>()?; // ?
-            let slice = reader.read_slice(length)?;
+        let destination = cursor.position() - 24 + length as u64;
+        cursor.advance(48)?;
+        while cursor.position() != destination {
+            let length = cursor.read_u32::<LittleEndian>()? as usize;
+            let indicator = cursor.read_u32::<LittleEndian>()?; // ?
+            let slice = cursor.read_slice(length)?;
             let padding = -((length % 4) as i64) & 3; // align to 4 bytes, moving 0-3
-            reader.advance(padding);
+            cursor.advance(padding);
 
             let has_two_sequential_zeros = slice.windows(2).filter(|v| v == &[0, 0]).take(1).count() == 1;
 

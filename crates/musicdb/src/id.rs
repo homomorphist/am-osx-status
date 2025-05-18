@@ -5,10 +5,21 @@ pub use persistent::Id as PersistentId;
 pub mod persistent {
     use super::*;
 
-    /// A persistent ID is an ID for an entity stored within the database. It is unchanging over time,
-    /// and is always present for an entity, no matter if it's local or cloud-based.
+    /// A persistent ID is an ID for an entity stored within the database.
+    /// It is unchanging over time, and is always present for an entity, no matter if it's local or cloud-based.
+    /// 
+    /// TBD: Is it shared per-machine or per-cloud-sync?
     pub struct Id<T>(u64, PhantomData<T>);
     impl<T> Id<T> {
+        // todo: ctor should be unsafe (cuz not positively present or tied to type)
+        
+        pub fn from_hex(value: &str) -> Result<Self, core::num::ParseIntError> {
+            Ok(Id::new(u64::from_str_radix(value, 16)?))       
+        }
+
+
+        pub fn new(raw: u64) -> Self { Self(raw, PhantomData) }
+
         pub fn get_raw(&self) -> u64 {
             self.0
         }
@@ -27,9 +38,6 @@ pub mod persistent {
         fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
             state.write_u64(self.0);
         }
-    }
-    impl<T> Id<T> {
-        fn new(raw: u64) -> Self { Self(raw, PhantomData) }
     }
     impl<T> From<u64> for Id<T> {
         fn from(value: u64) -> Self {

@@ -9,6 +9,9 @@ pub enum VersionParseError {
 }
 
 
+/// A specific version of a MacOS Apple Music installation.
+/// It possesses four components: major, minor, patch and revision.
+/// Exact semantics are unknown; assumptions of SemVer were made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppleMusicVersion {
     pub major: u8,
