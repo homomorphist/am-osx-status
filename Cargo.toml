@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/*", "crates/brainz/crates/*"]
+exclude = ["crates/unaligned_u16/fuzz"]
 
 [package]
 name = "am-osx-status"

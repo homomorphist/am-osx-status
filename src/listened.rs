@@ -20,9 +20,12 @@ impl TimeDeltaExtension for TimeDelta {
     }
 }
 
+/// Represents a chunk of time that has been listened to.
 #[derive(Debug)]
 pub struct ListenedChunk {
-    started_at_song_position: f32, // seconds
+    /// The position in the song when this chunk started, in seconds.
+    started_at_song_position: f32,
+    /// The actual time when this chunk started.
     started_at: DateTime,
     duration: chrono::TimeDelta 
 }

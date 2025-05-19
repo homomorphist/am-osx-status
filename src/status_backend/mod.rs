@@ -614,7 +614,7 @@ impl<A> Clone for BackendContext<A> {
     }
 }
 
-struct TransientSendableUntypedRawBoxPointer(*mut u8);
+struct TransientSendableUntypedRawBoxPointer(*mut u8); // are we so fr
 unsafe impl Send for TransientSendableUntypedRawBoxPointer {}
 
 pub use subscription::{Subscriber, subscribe};

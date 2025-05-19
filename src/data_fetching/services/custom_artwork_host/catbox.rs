@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use crate::status_backend::DispatchableTrack;
 
+// TODO: Persist this to a disk? I don't wanna spam any APIs when I keep restarting a program.
 #[derive(Debug)]
 struct Entry {
     url: String,
@@ -12,7 +13,6 @@ pub struct CatboxHost(HashMap</* album key */ String, Entry>);
 #[async_trait::async_trait]
 impl super::CustomArtworkHost for CatboxHost {
     async fn get_for_track(&self, track: &DispatchableTrack) -> Result<Option<String>, super::RetrievalError> {
-        // do i really gotta clone here ??
         if let Some(entry) = self.0.get(&Self::key_for_track(track)) {
             const EXTERNAL_ACCESS_DELAY: chrono::Duration = chrono::Duration::seconds(5);
             let did_expire =  entry.expires_at < chrono::Utc::now() + EXTERNAL_ACCESS_DELAY; // or will expire in next 5 seconds

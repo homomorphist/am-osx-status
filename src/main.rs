@@ -49,7 +49,7 @@ fn watch_for_termination() -> (
     )
 }
 
-#[tokio::main(worker_threads = 4)]
+#[tokio::main(worker_threads = 1)]
 async fn main() -> ExitCode {
     let args = Box::leak(Box::new(<cli::Cli as clap::Parser>::parse()));
     let config = config::Config::get(args).await;

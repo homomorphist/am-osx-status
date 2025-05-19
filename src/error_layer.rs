@@ -1,8 +1,6 @@
 pub struct Layer;
 impl<S> tracing_subscriber::Layer<S> for Layer where S: tracing::Subscriber {
     fn enabled(&self, metadata: &tracing::Metadata<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) -> bool {
-        dbg!(metadata);
-
         true
     }
     fn on_event(
@@ -10,13 +8,8 @@ impl<S> tracing_subscriber::Layer<S> for Layer where S: tracing::Subscriber {
         event: &tracing::Event<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        println!("Got event!");
-        println!("  level={:?}", event.metadata().level());
-        println!("  target={:?}", event.metadata().target());
-        println!("  name={:?}", event.metadata().name());
         let mut visitor = Visitor { dispatch_error: None };
         event.record(&mut visitor);
-        dbg!(visitor.dispatch_error);
     }
 }
 impl Layer {

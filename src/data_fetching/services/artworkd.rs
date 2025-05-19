@@ -91,18 +91,22 @@ static ARTWORKD_SQLITE_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
 
 // Merely knowing this function exists has brought me great pain, to say much less of writing it.
 // One day I hope it may be rendered unnecessary. 
-fn get_file_extension(info: &ImageInfo) -> String {
+fn get_file_extension(info: &ImageInfo) -> maybe_owned_string::MaybeOwnedString {
     if info.kind == Kind::UserCustomAlbumArt {
         let folder = &*ARTWORKD_ARTWORK_PATH;
         for file in std::fs::read_dir(folder).expect("cannot read album art folder") {
             let file = file.expect("cannot read album art file").file_name();
             if file.to_string_lossy().starts_with(&info.hash_string) {
-                return std::path::Path::new(&file).extension().expect("file has no extension").to_string_lossy().to_string()
+                return std::path::Path::new(&file).extension()
+                    .expect("file has no extension")
+                    .to_string_lossy()
+                    .to_string()
+                    .into()
             }
         }
     };
 
-    "jpeg".to_string()
+    "jpeg".into()
 }
 
 
