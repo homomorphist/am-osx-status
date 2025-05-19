@@ -157,7 +157,7 @@ impl MaybeOwnedString<'_> {
 }
 
 #[cfg(feature = "serde")]
-impl<'de> serde::de::Deserialize<'de> for MaybeOwnedString<'de> {
+impl<'a, 'de: 'a> serde::de::Deserialize<'de> for MaybeOwnedString<'a> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::de::Deserializer<'de>, {
         use serde::de::Error;
         struct Visitor;

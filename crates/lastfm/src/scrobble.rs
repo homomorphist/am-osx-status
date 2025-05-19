@@ -67,11 +67,13 @@ pub struct ScrobbleEnrichmentParameters {
 
 
 pub mod response {
+    use maybe_owned_string::MaybeOwnedString;
+
     use super::*;
 
     pub struct ScrobbleServerResponse<'a> {
         json: core::pin::Pin<String>,
-        pub results: Vec<Result<TimestampedAcknowledgement<&'a str>, ScrobbleError>>,
+        pub results: Vec<Result<TimestampedAcknowledgement<MaybeOwnedString<'a>>, ScrobbleError>>,
         pub counts: raw::ResponseAttributes,
     }
     impl<'a> ScrobbleServerResponse<'a> {
@@ -98,8 +100,8 @@ pub mod response {
                         vec.push(Err(code))
                     } else {
                         let timestamp = response.timestamp.parse().expect("bad timestamp");
-                        let mut album: Option<MaybeCorrected<&str>> = None;
-                        let mut album_artist: Option<MaybeCorrected<&str>> = None;
+                        let mut album: Option<MaybeCorrected<MaybeOwnedString>> = None;
+                        let mut album_artist: Option<MaybeCorrected<MaybeOwnedString>> = None;
 
                         let track = MaybeCorrected {
                             value: response.track.text,
@@ -149,7 +151,7 @@ pub mod response {
     
     pub struct ServerUpdateNowPlayingResponse<'a> {
         json: core::pin::Pin<String>,
-        pub result: Acknowledgement<&'a str>,
+        pub result: Acknowledgement<MaybeOwnedString<'a>>,
     }
     impl<'a> ServerUpdateNowPlayingResponse<'a> {
         pub fn new(json: String) -> Result<Self, serde_json::Error> {
@@ -176,8 +178,8 @@ pub mod response {
                     corrected: response.artist.corrected
                 };
 
-                let mut album: Option<MaybeCorrected<&str>> = None;
-                let mut album_artist: Option<MaybeCorrected<&str>> = None;
+                let mut album: Option<MaybeCorrected<MaybeOwnedString>> = None;
+                let mut album_artist: Option<MaybeCorrected<MaybeOwnedString>> = None;
                 
                 if !response.album.text.is_empty() {
                     album = Some(MaybeCorrected {
@@ -280,8 +282,8 @@ pub mod response {
 
     pub(crate) mod raw {
         use super::*;
+        use maybe_owned_string::MaybeOwnedString;
         use serde::*;
-
 
         #[derive(Debug, Deserialize)]
         #[serde(untagged)]
@@ -300,8 +302,8 @@ pub mod response {
 
         #[derive(Debug, Deserialize)]
         pub struct MaybeCorrected<'a> {
-            #[serde(rename = "#text", default)]  // not present on albums if omitted but always present on album artist if omitted ?? idk. regardless, empty string means omitted
-            pub text: &'a str,
+            #[serde(borrow, rename = "#text", default)]  // not present on albums if omitted but always present on album artist if omitted ?? idk. regardless, empty string means omitted
+            pub text: MaybeOwnedString<'a>,
             #[serde(deserialize_with = "deserialize_numeric_bool_string")]
             pub corrected: bool,
         }
