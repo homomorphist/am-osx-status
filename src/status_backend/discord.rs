@@ -236,13 +236,8 @@ impl DiscordPresence {
 
     #[tracing::instrument(skip(self), level = "debug")]
     async fn send_activity(&mut self) -> Result<(), DispatchError> {
-        let activity = if let Some(activity) = self.activity.clone() { activity } else {
-            return Err(DispatchError::internal_msg("no activity to dispatch", false))
-        };
-
-        let client = if let Some(client) = self.client.as_mut() { client } else {
-            return Err(DispatchError::internal_msg("cannot dispatch without client", true))
-        };
+        let activity = self.activity.clone().ok_or(DispatchError::internal_msg("no activity to dispatch", false))?;
+        let client = self.client.as_mut().ok_or(DispatchError::internal_msg("cannot dispatch without client", true))?;
 
         client.set_activity(|_| activity.timestamps(|mut activity| {
             if let Some(position) = self.position {
@@ -332,12 +327,12 @@ super::subscribe!(DiscordPresence, TrackStarted, {
                 small_text: track.artist.clone().map(make_minimum_length),
             });
 
-
         if let Some(itunes) = &additional_info.itunes {
-            activity = activity.append_buttons(|button| button
-                .label("Listen on Apple Music")
-                .url(itunes.apple_music_url.clone())
-            )
+            activity = activity
+                .append_buttons(|button| button
+                    .label("Check it out!")
+                    .url(format!("https://song.link/{}&app=music", itunes.apple_music_url))
+                );
         }
 
         self.activity = Some(activity);
@@ -353,7 +348,6 @@ super::subscribe!(DiscordPresence, ProgressJolt, {
             tracing::debug!("skipping progress dispatch since it'll delay next song dispatch");
             Ok(())
         }
-        // Err(DispatchError::internal_msg("not implemented", false))
     }
 });
 
