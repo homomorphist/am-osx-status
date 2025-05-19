@@ -163,16 +163,14 @@ async fn extract_first_artist<'a, 'b: 'a>(
     let track = Into::<FirstArtistQuery>::into(track);
 
     // TODO: Create a `brainz` abstraction.
-    async fn search_listenbrainz(track: &FirstArtistQuery<'_>, net: &reqwest::Client) -> Option<String> {
-        let query = format!("artist:\"{}\" AND recording:\"{}\"",
-            urlencoding::encode(track.artists),
-            urlencoding::encode(track.name)
-        );
-        
+    async fn from_listenbrainz(track: &FirstArtistQuery<'_>, net: &reqwest::Client) -> Option<String> {
         use super::listenbrainz::DEFAULT_PROGRAM_INFO;
         let request = net.get("https://musicbrainz.org/ws/2/recording/")
             .header("User-Agent", &DEFAULT_PROGRAM_INFO.to_user_agent())
-            .query(&[("query", query)]);
+            .query(&[("query", format!("artist:\"{}\" AND recording:\"{}\"",
+                track.artists,
+                track.name
+            ))]);
 
         let response = request.send().await.inspect_err(|err| {
             tracing::error!(?err, "failed to send request to ListenBrainz");
@@ -251,7 +249,7 @@ async fn extract_first_artist<'a, 'b: 'a>(
 
     // Without access to any more information, it's our best bet to just
     // send the track over to ListenBrainz and see who they say the primary artist is.
-    if let Some(artist) = search_listenbrainz(&track, net).await {
+    if let Some(artist) = from_listenbrainz(&track, net).await {
         return artist.into()
     }
 

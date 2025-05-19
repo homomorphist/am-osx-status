@@ -3,13 +3,13 @@
 pub struct Quality(u16);
 impl Quality {
     /// The maximum quality level, representing a very compressed and likely low-quality image.
-    pub const MIN_INCLUSIVE: u16 = 0;
+    pub const MIN: u16 = 0;
     /// The maximum quality level, representing a minimally compressed and likely high-quality image.
-    pub const MAX_INCLUSIVE: u16 = 999;
+    pub const MAX: u16 = 999;
 
     /// Returns whether the given value would be a valid quality.
     pub fn test(value: &u16) -> bool {
-        (Self::MIN_INCLUSIVE..=Self::MAX_INCLUSIVE).contains(value)
+        (Self::MIN..=Self::MAX).contains(value)
     }
 
     /// Returns the inner stored value.
@@ -56,8 +56,8 @@ impl core::error::Error for OutOfRangeError {}
 impl core::fmt::Display for OutOfRangeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "quality out of bounds: must satisfy range [{}, {}]",
-            Quality::MIN_INCLUSIVE,
-            Quality::MAX_INCLUSIVE
+            Quality::MIN,
+            Quality::MAX
         )
     }
 }
