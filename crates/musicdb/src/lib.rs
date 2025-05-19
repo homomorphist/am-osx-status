@@ -311,14 +311,14 @@ pub(crate) fn xxd(mut slice: &[u8]) -> String {
             out.push_str("\x1b[0m"); // reset
         }
 
-        out.push_str(&format!("{} | ", row));
+        out.push_str(&format!("{row} | "));
 
 
         for byte in line {
             if *byte == 0 {
                 out.push_str("\x1b[2;30m00 \x1b[0m")
             } else {
-                out.push_str(&format!("{:02x} ", byte));
+                out.push_str(&format!("{byte:02x} "));
             }
         }
 

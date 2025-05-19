@@ -166,7 +166,7 @@ impl<'a> Details<'a> {
         let (file_extension, language) = if let Some(parameters_delimiter) = maybe_parameters_delimiter {
             let file_extension = read!(url, delimit_at: parameters_delimiter);
 
-            if &url[0..=1].as_bytes() != b"l=" || url.find('&').is_some() {
+            if &url.as_bytes()[0..=1] != b"l=" || url.find('&').is_some() {
                 return Err(DetailsParseError::UnknownUrlParameter)
             }
 
@@ -334,8 +334,8 @@ impl PoolOrSagaSpecifier {
 impl core::fmt::Display for PoolOrSagaSpecifier {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Pool(pool) => write!(f, "{}", pool),
-            Self::Saga(saga) => write!(f, "{}", saga),
+            Self::Pool(pool) => write!(f, "{pool}"),
+            Self::Saga(saga) => write!(f, "{saga}"),
         }
     }
 }
@@ -450,8 +450,8 @@ impl core::fmt::Display for MzStaticImage<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "http{}://", if self.https { "s" } else { "" })?;
         write!(f, "{}.mzstatic.com/", self.subdomain)?;
-        if let Some(prefix) = self.prefix { write!(f, "{}/", prefix)?; }
-        if let Some(accelerator_directives) = self.accelerator_directives { write!(f, "{}/", accelerator_directives)?; }
+        if let Some(prefix) = self.prefix { write!(f, "{prefix}/")?; }
+        if let Some(accelerator_directives) = self.accelerator_directives { write!(f, "{accelerator_directives}/")?; }
         write!(f, "{}/{}/{}", self.pool, self.asset_token, self.parameters)
     }
 }

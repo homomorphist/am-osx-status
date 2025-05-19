@@ -101,7 +101,7 @@ impl<PS: AsRef<str>> Client<PS> {
         if let Some(token) = token {
             use reqwest::header::*;
             let mut headers = HeaderMap::with_capacity(1);
-            let mut header = HeaderValue::from_str(&format!("Token {}", token)).expect("bad token"); header.set_sensitive(true);
+            let mut header = HeaderValue::from_str(&format!("Token {token}")).expect("bad token"); header.set_sensitive(true);
             let header = headers.insert(HeaderName::from_static("authorization"), header);
             client = client.default_headers(headers)
         }
@@ -129,7 +129,7 @@ impl<PS: AsRef<str>> Client<PS> {
 
         // TODO: Make use of the defined payload limits in the constants file.
         
-        let response = self.net.post(format!("{}/submit-listens", API_ROOT)).body(body).send().await?;
+        let response = self.net.post(format!("{API_ROOT}/submit-listens")).body(body).send().await?;
         Ok((response.status(), response.text().await?))
     }
 

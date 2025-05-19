@@ -111,6 +111,8 @@ impl<'a> UnalignedU16Slice {
         Some(unsafe { self.get_unchecked(index) })
     }
 
+    /// # Safety
+    /// - The index must be less than the length of the slice.
     pub unsafe fn get_unchecked(&self, index: usize) -> u16 {
         let real = index * 2;
         let u8 = self.bytes();

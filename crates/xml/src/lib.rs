@@ -348,7 +348,7 @@ pub enum Node<'a, A: NodeArena<'a>> {
 }
 impl<'a, A: NodeArena<'a>> Node<'a, A> {
     pub fn parse(input: &Span<'a>, arena: &mut A) -> Result<Option<Read<A::NodeReference>>, NodeParseError<'a, A>> {
-        if input.len() == 0 { return Ok(None) }
+        if input.is_empty() { return Ok(None) }
 
         let node = if let Some(opener) = SectionOpener::parse(input).map_err(|err| NodeParseError::BadSectionOpener(err))? {
             match opener {
@@ -526,14 +526,14 @@ mod tests {
                     length: 8, // "<gender>".len()
                     lifetime: _,
                 }
-            } if tag_ref_in == input.as_ptr()));
+            } if core::ptr::eq(tag_ref_in, input.as_ptr())));
             assert_eq!(&output.get_name_span(), "gender");
             assert!(matches!(output.get_name_span(), Span {
                 top: name_ref_in,
                 offset: 1, // '<'.len_utf8(),
                 length: 6, // "gender".len()
                 lifetime: _,
-            } if name_ref_in == input.as_ptr()));
+            } if core::ptr::eq(name_ref_in, input.as_ptr())));
         }
     
         #[test]

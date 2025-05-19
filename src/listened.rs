@@ -89,7 +89,7 @@ impl Listened {
         self.contiguous.iter()
             .enumerate()
             .filter(|(_, chunk)| chunk.started_at_song_position < current.started_at_song_position)
-            .last().map(|(i, _)| i + 1).unwrap_or_default()
+            .next_back().map(|(i, _)| i + 1).unwrap_or_default()
     }
 
     pub fn flush_current(&mut self) {

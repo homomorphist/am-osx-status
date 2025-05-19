@@ -31,7 +31,7 @@ impl tracing::field::Visit for Visitor {
 
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         if field.name() == "error_box_ptr" {
-            let ptr = u64::from_str_radix(&format!("{:?}", value)["0x".len()..], 16).expect("failed to parse pointer");
+            let ptr = u64::from_str_radix(&format!("{value:?}")["0x".len()..], 16).expect("failed to parse pointer");
             let ptr = ptr as *mut crate::status_backend::error::DispatchError;
             self.dispatch_error = Some(unsafe { Box::from_raw(ptr) });
         }

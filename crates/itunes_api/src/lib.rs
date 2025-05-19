@@ -68,7 +68,7 @@ pub enum RequestError {
 
 // TODO: reuse client.
 pub async fn lookup_artist(id: u32) -> Result<Option<Artist>, RequestError> {
-    let url = format!("{}/lookup?id={}", ITUNES_API_BASE_URL, id);
+    let url = format!("{ITUNES_API_BASE_URL}/lookup?id={id}");
     let response = reqwest::get(&url).await?.text().await?;
     let response = serde_json::from_str::<Results<Artist>>(&response)?;
     Ok(response.results.into_iter().next())
@@ -90,7 +90,7 @@ pub async fn search_songs(query: &str, limit: usize) -> Result<Vec<Track>, Reque
         .append_pair("limit", &limit.to_string());
 
     let res = reqwest::get(url).await.map_err(RequestError::NetworkFailed)?;
-    let text = res.text().await.or_else(|_| Err(RequestError::DeserializationFailed(serde_json::Error::custom("could not decode response"))))?;
+    let text = res.text().await.map_err(|_| RequestError::DeserializationFailed(serde_json::Error::custom("could not decode response")))?;
     serde_json::from_str::<ITunesSongSearchOutcome>(&text)
         .map(|outcome: ITunesSongSearchOutcome| outcome.results)
         .map_err(RequestError::DeserializationFailed)

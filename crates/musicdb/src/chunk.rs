@@ -65,7 +65,7 @@ pub(crate) trait CursorReadingExtensions<'a>: Seek + Read + 'a {
     }
 
     fn read_cstr_block<const N: usize>(&mut self) -> Result<&'a core::ffi::CStr, std::io::Error> {
-        if !self.peek_exact::<{ N }>()?.iter().any(|&b| b == 0) {
+        if !self.peek_exact::<{ N }>()?.contains(&0) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "string did not terminate in allocated block",
@@ -118,10 +118,8 @@ impl<'a, 'b, T: ReadableChunk<'b>> ContiguousChunkReader<'a, 'b, T> {
 impl<'b, T: ReadableChunk<'b> + crate::id::persistent::Possessor> ContiguousChunkReader<'_, 'b, T> {
     fn collect_into_hashmap(self) -> std::collections::HashMap<T::Id, T> {
         let mut map = std::collections::HashMap::with_capacity(self.remaining);
-        for item in self {
-            if let Ok(item) = item {
-                map.insert(item.get_persistent_id(), item);
-            }
+        for item in self.flatten() {
+            map.insert(item.get_persistent_id(), item);
         }
         map
     }

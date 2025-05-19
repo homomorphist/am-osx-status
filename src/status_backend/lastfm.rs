@@ -220,29 +220,28 @@ async fn extract_first_artist<'a, 'b: 'a>(
         return left.into()
     }
 
-    if let Some(db) = db {
-        if let Some(track) = db.get(track.id) {
-            // So, the `cloud_catalog_artist_id` is the actual Apple Music ID for the artist.
-            // Multiple client "artists" can map to that singular "real" artist; the real one, or any of the various collaboration artists.
-            if let Some(cloud_artist_id) = track.numerics.cloud_catalog_artist_id {
-                let matching_artists = db.artists().values().filter(|artist| artist.cloud_catalog_id == Some(cloud_artist_id)).collect::<Vec<_>>();
-                // But we can know for certain that it *is* a single artist if we check their name and there isn't an ampersand in it.
-                for artist in matching_artists {
-                    if let Some(name) = &artist.name {
-                        if !name.chars().any(|c| c == '&') {
-                            return name.to_string().into()
-                        }
+    if let Some(db) = db && let Some(track) = db.get(track.id) {
+        // So, the `cloud_catalog_artist_id` is the actual Apple Music ID for the artist.
+        // Multiple client "artists" can map to that singular "real" artist; the real one, or any of the various collaboration artists.
+        if let Some(cloud_artist_id) = track.numerics.cloud_catalog_artist_id {
+            let matching_artists = db.artists().values()
+                .filter(|artist| artist.cloud_catalog_id == Some(cloud_artist_id)).collect::<Vec<_>>();
+            // But we can know for certain that it *is* a single artist if we check their name and there isn't an ampersand in it.
+            for artist in matching_artists {
+                if let Some(name) = &artist.name {
+                    if !name.chars().any(|c| c == '&') {
+                        return name.to_string().into()
                     }
                 }
+            }
 
-                // Well, we seemingly didn't have the original artist in the library, but
-                // we can leverage the fact that an iTunes lookup will always return the singular
-                // primary artist.
-                if let Some(cloud) = itunes_api::lookup_artist(cloud_artist_id.into()).await.inspect_err(|err| {
-                    tracing::error!(?err, "failed to lookup artist in iTunes API");
-                }).ok().flatten() {
-                    return cloud.name.into()
-                }
+            // Well, we seemingly didn't have the original artist in the library, but
+            // we can leverage the fact that an iTunes lookup will always return the singular
+            // primary artist.
+            if let Some(cloud) = itunes_api::lookup_artist(cloud_artist_id.into()).await.inspect_err(|err| {
+                tracing::error!(?err, "failed to lookup artist in iTunes API");
+            }).ok().flatten() {
+                return cloud.name.into()
             }
         }
     }
@@ -274,10 +273,10 @@ async fn artist_extraction() {
 
     fn prepare_query<'a>(track_name: &'a str, artists: &'a str, db: &'a musicdb::MusicDB) -> FirstArtistQuery<'a> {
         let artist_id = db.artists().values().find(|artist| artist.name.is_some_and(|v| v == artists)).unwrap_or_else(|| {
-            panic!("missing required track for testing: artist(s) not found: \"{}\"", artists)
+            panic!("missing required track for testing: artist(s) not found: \"{artists}\"")
         }).persistent_id;
         let track  = db.tracks().values().find(|track| track.name.is_some_and(|v| v == track_name) && track.artist_id == artist_id).unwrap_or_else(|| {
-            panic!("missing required track for testing: track not found: \"{}\" by \"{}\"", track_name, artists)
+            panic!("missing required track for testing: track not found: \"{track_name}\" by \"{artists}\"")
         });
 
         let track_id = track.persistent_id;

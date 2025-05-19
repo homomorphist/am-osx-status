@@ -294,7 +294,7 @@ impl core::fmt::Display for Framing {
 
         match self {
             Self::PDCXS { variant, .. } => {
-                write!(f, "{:02}", variant)
+                write!(f, "{variant:02}")
             }
             _ => Ok(()),
         }

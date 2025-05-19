@@ -318,7 +318,7 @@ impl core::str::FromStr for EqualizerPreset {
             "Small Speakers" => EqualizerPreset::SmallSpeakers,
             "Spoken Word" => EqualizerPreset::SpokenWord,
 
-            _ => panic!("Unknown equalizer preset: {}", s)
+            _ => panic!("Unknown equalizer preset: {s}")
         })
     }
 }
@@ -327,7 +327,7 @@ impl core::fmt::Display for EqualizerPreset {
         let mut string = serde_json::to_string(self).unwrap();
         debug_assert_eq!(string.pop(), Some('"'));
         debug_assert_eq!(string.remove(0), '"');
-        write!(f, "{}", string)
+        write!(f, "{string}")
     }
 }
 
@@ -691,7 +691,7 @@ mod tests {
     #[ignore = "must be manually run with the correct environment setup"]
     async fn test_real_world()  {
         let track = Track::get_now_playing().await;
-        println!("{:#?}", track);
+        println!("{track:#?}");
         assert!(track.is_ok());
     }
 }

@@ -31,15 +31,13 @@ impl AdditionalTrackData {
             }
         }
 
-        if solicitation.list.contains(&Component::ArtistImage) {
-            if let Some(db) = musicdb {
-                let id = musicdb::PersistentId::try_from(id).expect("bad id");
-                images.artist = db.tracks().get(&id)
-                    .and_then(|track| db.get(track.artist_id))
-                    .and_then(|artist| artist.artwork_url.as_ref())
-                    .filter(|artwork| artwork.parameters.effect != Some(mzstatic::image::effect::Effect::SquareFitCircle)) // ugly auto-generated
-                    .map(|artwork| artwork.to_string())
-            }
+        if solicitation.list.contains(&Component::ArtistImage) && let Some(db) = musicdb {
+            let id = musicdb::PersistentId::try_from(id).expect("bad id");
+            images.artist = db.tracks().get(&id)
+                .and_then(|track| db.get(track.artist_id))
+                .and_then(|artist| artist.artwork_url.as_ref())
+                .filter(|artwork| artwork.parameters.effect != Some(mzstatic::image::effect::Effect::SquareFitCircle)) // ugly auto-generated
+                .map(|artwork| artwork.to_string())
         }
 
         if solicitation.list.contains(&Component::AlbumImage) {
@@ -51,13 +49,11 @@ impl AdditionalTrackData {
                 }).ok()
             }
             
-            if images.track.is_none() {
-                if let Some(db) = musicdb {
-                    let id = musicdb::PersistentId::try_from(id).expect("bad id");
-                    images.track = db.tracks().get(&id)
-                        .and_then(|track| track.artwork.as_ref())
-                        .map(|artwork| artwork.to_string())
-                }
+            if images.track.is_none() && let Some(db) = musicdb {
+                let id = musicdb::PersistentId::try_from(id).expect("bad id");
+                images.track = db.tracks().get(&id)
+                    .and_then(|track| track.artwork.as_ref())
+                    .map(|artwork| artwork.to_string())
             }
 
             if images.track.is_none() {

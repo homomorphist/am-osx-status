@@ -64,7 +64,7 @@ async fn migrate() {
     let last = get_last_run_epoch().await;
 
     for migration in migrations {
-        if last.map_or(true, |v| v < migration.epoch) {
+        if last.is_none_or(|v| v < migration.epoch) {
             sqlx::query(migration.sql_up)
                 .execute(&pool)
                 .await

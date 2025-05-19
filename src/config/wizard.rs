@@ -81,13 +81,13 @@ pub mod io {
         let auth = match client.generate_authorization_token().await {
             Ok(auth) => auth,
             Err(error) => {
-                eprintln!("Error: {}", error);
+                eprintln!("Error: {error}");
                 eprintln!("Continuing with last.fm support disabled. This can be reconfigured later.");
                 return None;
             }
         };
         let auth_url = auth.generate_authorization_url(client);
-        println!("Continue after authorizing the application: {}", auth_url);
+        println!("Continue after authorizing the application: {auth_url}");
         if prompt_bool("Have you authorized the application?") {
             match auth.generate_session_key(client).await {
                 Ok(key) => Some(crate::status_backend::lastfm::Config {
@@ -96,7 +96,7 @@ pub mod io {
                     session_key: Some(key)
                 }),
                 Err(error) => {
-                    ferror!("couldn't create session key: {}", error);
+                    ferror!("couldn't create session key: {error}");
                 }
             }
         } else { None }

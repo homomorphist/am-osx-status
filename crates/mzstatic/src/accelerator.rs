@@ -35,7 +35,7 @@ impl core::fmt::Display for ReadError<'_> {
         match self {
             Self::BadNumeric { variant, .. } => write!(f, "parse-int error while reading {variant}-value"),
             Self::ExpectedDelimiterAfterR => write!(f, "expected delimiter after r-value"),
-            Self::UnknownRegion(err) => write!(f, "{}", err)
+            Self::UnknownRegion(err) => write!(f, "{err}")
         }
     }
 }

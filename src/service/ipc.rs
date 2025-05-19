@@ -146,7 +146,7 @@ impl Listener {
         let listener = match UnixListener::bind(path) {
             Ok(listener) => Ok(listener),
             Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => Err(DuplicateReceiverError),
-            Err(err) => panic!("cannot create receiver: {:?}", err)
+            Err(err) => panic!("cannot create receiver: {err:?}")
         }?;
 
         let address = listener.local_addr().expect("no local address for ipc socket");
