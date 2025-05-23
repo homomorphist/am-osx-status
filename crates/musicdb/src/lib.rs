@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
-#![allow(unused)]
-use std::{collections::HashMap, fmt::{Debug}, hash::Hash, io::{Cursor, Read, Seek, SeekFrom}, marker::PhantomData, ops::Deref, path::Path, pin::Pin, ptr::null};
-use byteorder::{LittleEndian, ReadBytesExt};
+use std::{fmt::Debug, io::Cursor, path::Path, pin::Pin};
+pub(crate) type Utf16Str = unaligned_u16::utf16::Utf16Str<unaligned_u16::endian::LittleEndian>;
+
 
 pub mod chunk;
 mod chunks;
@@ -16,9 +16,8 @@ use boma::*;
 use chunk::*;
 pub use chunks::*;
 
-
-const ENCRYPTION_KEY: &[u8] = b"BHUILuilfghuila3";
 #[cfg(not(feature = "tracing"))]
+#[allow(unused)]
 mod tracing {
     // mock
     pub struct Span;
@@ -51,17 +50,6 @@ pub(crate) fn convert_timestamp(seconds: u32) -> Option<chrono::DateTime<chrono:
     Some(chrono::Utc.timestamp_opt(seconds as i64 - EPOCH_OFFSET, 0).unwrap())
 }
 
-trait DbAccess<'a> {
-    fn get<T: id::persistent::Possessor>(&self, id: PersistentId<T>) -> Option<&'a T>;
-
-    // fn library(&self) -> &LibraryMaster<'a>;
-    fn albums(&self) -> &AlbumMap<'a>;
-    fn artists(&self) -> &ArtistMap<'a>;
-    fn accounts(&self) -> Option<&AccountInfoList<'a>>;
-    fn tracks(&self) -> &TrackMap<'a>;
-    fn collections(&self) -> &CollectionMap<'a>;
-}
-
 #[derive(Debug)]
 struct HeaderRepeat {}
 impl Chunk for HeaderRepeat {
@@ -75,7 +63,6 @@ impl<'a> SizedFirstReadableChunk<'a> for HeaderRepeat {
         Ok(Self {})
     }
 }
-
 
 #[derive(Debug)]
 pub struct MusicDbView<'a> {
@@ -196,22 +183,11 @@ pub struct MusicDB {
     path: std::path::PathBuf
 }
 
-
-use flate2::read;
-use mzstatic::image::MzStaticImage;
-use maybe_owned_string::MaybeOwnedString;
-use serde::Deserialize;
-use version::AppleMusicVersion;
-use unaligned_u16::utf16::Utf16Str;
-use crate::chunk::CursorReadingExtensions;
-
-
-
 impl MusicDB {
     pub fn read_path(path: impl AsRef<Path>) -> MusicDB {
         let path = path.as_ref().to_path_buf();
         let data = &mut std::fs::read(&path).unwrap()[..];
-        let (decoded, header) = encoded::decode_in_place(data).unwrap();
+        let (decoded, _) = encoded::decode_in_place(data).unwrap();
         let data = Pin::new(decoded);
 
         // Obtain a slice of the data with a lifetime promoted to that of the returned instance (not actually 'static, but 'self).
@@ -243,9 +219,8 @@ impl MusicDB {
         *self = Self::read_path(self.path.as_path())
     }
     pub fn default_path() -> std::path::PathBuf {
-        #[allow(deprecated)] // This binary is MacOS-exclusive; this function only has unexpected behavior on Windows.
-        let home = std::env::home_dir().unwrap();
-        home.as_path().join("Music/Music/Music Library.musiclibrary/Library.musicdb")
+        std::env::home_dir().expect("no user home directory detected").as_path()
+            .join("Music/Music/Music Library.musiclibrary/Library.musicdb")
     }
 }
 impl core::default::Default for MusicDB {
@@ -292,6 +267,7 @@ impl MusicDB {
     }
 }
 
+#[allow(unused)]
 pub(crate) fn xxd(mut slice: &[u8]) -> String {
     let mut out = String::new();
     const HEX_PER_LINE: usize = 32;

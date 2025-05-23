@@ -83,7 +83,6 @@ pub mod cloud {
 
     pub use library::Id as Library;
     pub mod library {
-        use maybe_owned_string::MaybeOwnedString;
         use serde::{Serialize, Deserialize};
         use super::*;
 

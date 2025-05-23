@@ -20,9 +20,7 @@
 //! 
 use std::io::Read;
 
-use byteorder::{ReadBytesExt, LittleEndian as LE};
-
-use crate::chunk::{CursorReadingExtensions, ReadableChunk, Signature, SizedFirstReadableChunk};
+use crate::chunk::{ReadableChunk, Signature, SizedFirstReadableChunk};
 
 /// A key used to decrypt the iTunes and Apple Music library files, [known publicly since at least 2010][kafsemo].
 /// 
@@ -70,7 +68,7 @@ fn decrypt_in_place(bytes: &mut [u8]) -> Result<&mut [u8], aes::cipher::block_pa
     use ecb::cipher::{KeyInit, BlockDecryptMut};
     type Padding = aes::cipher::block_padding::NoPadding;
     type Decryptor = ecb::Decryptor<aes::Aes128>;
-    Decryptor::new(KEY.into()).decrypt_padded_mut::<Padding>(bytes);
+    Decryptor::new(KEY.into()).decrypt_padded_mut::<Padding>(bytes)?;
     Ok(bytes)
 }
 
@@ -117,6 +115,7 @@ impl Read for ReadableDualJoined<'_> {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct PackedFileInfo<'a> {
     header_size: u32,
@@ -140,19 +139,19 @@ impl<'a> SizedFirstReadableChunk<'a> for PackedFileInfo<'a> {
         crate::chunk::setup_eaters!(cursor, start_position, header_size);
 
         let encoded_content_size = u32!()?;
-        let format_major = u16!()?;
-        let format_minor = u16!()?;
+        let _format_major = u16!()?;
+        let _format_minor = u16!()?;
         let app_version = cstr_block!(0x20)?;
         let _persistent_id = u64!()?;
         let _file_variant = u32!()?;
-        skip!(4); // ?
-        skip!(4); // ?
+        skip!(4)?; // ?
+        skip!(4)?; // ?
         let track_count = u32!()?;
         let playlist_count = u32!()?;
         let collection_count = u32!()?;
         let artist_count = u32!()?;
         let max_encrypted_byte_count = u32!()?;
-        skip_to_end!();
+        skip_to_end!()?;
 
         Ok(Self {
             header_size,

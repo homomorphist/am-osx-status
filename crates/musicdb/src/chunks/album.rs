@@ -1,5 +1,3 @@
-use byteorder::{LittleEndian as LE, ReadBytesExt};
-use unaligned_u16::utf16::Utf16Str;
 use super::derive_map;
 use crate::{*, chunk::*};
 
@@ -26,7 +24,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Album<'a> {
         skip!(4)?; // appendage byte length
         let boma_count = u32!()?;
         let persistent_id = id!(Album)?;
-        skip_to_end!();
+        skip_to_end!()?;
 
         let mut album_name = None;
         let mut artist_name = None;

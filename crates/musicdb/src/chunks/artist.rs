@@ -1,6 +1,4 @@
-use unaligned_u16::utf16::Utf16Str;
-
-use crate::{boma::{Boma, BomaUtf16, BomaUtf16Variant, BomaUtf8, BomaUtf8Variant}, chunk::{Chunk, Signature, SizedFirstReadableChunk}, id, setup_eaters, PersistentId};
+use crate::{boma::*, chunk::*, id, setup_eaters, PersistentId, Utf16Str};
 
 use super::derive_map;
 
@@ -35,7 +33,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Artist<'a> {
         let cloud_catalog_id = u32!()?;
         let cloud_catalog_id: Option<std::num::NonZero<u32>> = core::num::NonZeroU32::new(cloud_catalog_id);
         let cloud_catalog_id = cloud_catalog_id.map(|c| unsafe { id::cloud::Catalog::new_unchecked(c) });
-        skip_to_end!();
+        skip_to_end!()?;
 
         
         let mut cloud_library_id = None;

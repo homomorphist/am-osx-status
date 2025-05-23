@@ -13,16 +13,14 @@ derive_list!(pub LibraryMaster, crate::Boma<'a>, *b"plma");
 
 use std::marker::PhantomData;
 
-use byteorder::{LittleEndian as LE, ReadBytesExt as _};
-
-use crate::chunk::{Chunk, ReadableChunk, Signature, SizedFirstReadableChunk};
+use crate::{id, setup_eaters, chunk::*};
 
 #[derive(Debug)]
 pub struct SectionBoundary<T>  {
     // r0x0..3 ; b"hsma"
     // boundary_length: u32, // r0x4..7
     // section_length: u32, // r0x8..12
-    subtype: T, // r0x12..15
+    _subtype: T, // r0x12..15
     // ; ...zeros, len-12
 }
 impl<T> Chunk for SectionBoundary<T> {
@@ -36,7 +34,7 @@ impl<T: From<u32>> SizedFirstReadableChunk<'_> for SectionBoundary<T> {
         skip!(4)?; // len of section
         let subtype = T::from(u32!()?);
         skip_to_end!()?;
-        Ok(Self { subtype })
+        Ok(Self { _subtype: subtype })
     }
 }
 
@@ -53,13 +51,11 @@ impl<T: core::fmt::Debug> From<std::io::Error> for ListReadError<T> {
     }
 }
 
-use crate::{id, setup_eaters};
-use crate::chunk::CursorReadingExtensions;
 
 pub struct List<'a, T>(pub Vec<T>, PhantomData<&'a ()>);
 #[allow(private_bounds)]
 impl<'a, T: ReadableChunk<'a>> List<'a, T> {
-    pub(crate) fn read_contents(cursor: &mut std::io::Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, ListReadError<<T as ReadableChunk<'a>>::ReadError>> {
+    pub(crate) fn read_contents(cursor: &mut std::io::Cursor<&'a [u8]>, _: u64, length: u32) -> Result<Self, ListReadError<<T as ReadableChunk<'a>>::ReadError>> {
         setup_eaters!(cursor, offset, length);
         let item_count = u32!().map_err(ListReadError::BadListHeader)? as usize;
         // dbg!(offset, length, item_count);

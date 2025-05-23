@@ -1,7 +1,7 @@
 #[cfg(feature = "cli")]
 fn main() {
     use args::*;
-    use musicdb::{MusicDB, *};
+    use musicdb::MusicDB;
 
     match Arguments::parse().command {
         Command::Decrypt { path, output } => {

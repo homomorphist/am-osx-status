@@ -1,6 +1,7 @@
 use crate::{boma::*, chunk::*, id, setup_eaters, PersistentId};
-use super::{album::Album, artist::Artist, derive_list};
+use super::derive_list;
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct Account<'a> {
     bomas: Vec<Boma<'a>>,
@@ -13,11 +14,12 @@ impl<'a> SizedFirstReadableChunk<'a> for Account<'a> {
     type ReadError = std::io::Error;
 
     fn read_sized_content(cursor: &mut std::io::Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, Self::ReadError> {
+        // TODO
         setup_eaters!(cursor, offset, length);
         skip!(4)?; // appendage byte length
         let boma_count = u32!()?;
         let persistent_id = id!(Account)?;
-        skip_to_end!();
+        skip_to_end!()?;
         let bomas = cursor.reading_chunks::<Boma>(boma_count as usize).collect::<Result<_, _>>()?;
         Ok(Self { bomas, persistent_id })
     }
@@ -30,5 +32,10 @@ impl<'a> id::persistent::Possessor for Account<'a> {
         self.persistent_id
     }
 }
+impl id::cloud::library::Possessor for Account<'_> {
+    #[allow(private_interfaces)]
+    const IDENTITY: id::cloud::library::PossessorIdentity = id::cloud::library::PossessorIdentity::Account;
+}
+
 
 derive_list!(pub AccountInfoList, Account<'a>, *b"Lsma");

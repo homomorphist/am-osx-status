@@ -1,10 +1,7 @@
-use std::io::Seek;
-
 use maybe_owned_string::MaybeOwnedString;
-use unaligned_u16::utf16::Utf16Str;
 
-use crate::{boma::*, chunk::*, convert_timestamp, id, setup_eaters, PersistentId};
-use super::{album::Album, artist::Artist, derive_list, track::Track};
+use crate::{boma::*, chunk::*, convert_timestamp, id, setup_eaters, PersistentId, Utf16Str};
+use super::{derive_list, track::Track};
 
 
 #[derive(thiserror::Error, Debug)]
@@ -69,14 +66,6 @@ impl<'a> TryFrom<&'a str> for CollectionInfo<'a> {
     }
 }
 
-
-enum CollectionType {
-    Library, // contains all songs
-    Apple,
-    User,
-}
-
-
 #[derive(Debug)]
 pub struct Collection<'a> {
     pub name: &'a Utf16Str,
@@ -90,7 +79,6 @@ impl<'a> Chunk for Collection<'a> {
     const SIGNATURE: Signature = Signature::new(*b"lpma");
 }
 
-
 impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
     type ReadError = CollectionReadError<'a>;
 
@@ -102,7 +90,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
         skip!(26 - (12 + 4))?;
         let persistent_id = id!(Collection)?;
         skip!(40 - (26 + 8))?;
-        let is_master = u8!()? == 1;
+        let _is_master = u8!()? == 1;
         skip!(134 - (40 + 1))?;
         let modification_date = convert_timestamp(u32!()?);
         skip!(186 - (134 + 4))?;
@@ -111,7 +99,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
         let creation_date = convert_timestamp(u32!()?);
 
 
-        skip_to_end!();
+        skip_to_end!()?;
         let mut tracks = Vec::with_capacity(track_count as usize);
         let mut name = None;
         let mut info = None::<CollectionInfo<'a>>;
@@ -121,9 +109,10 @@ impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
                 Boma::Utf16(BomaUtf16(new_name, BomaUtf16Variant::PlaylistName)) => name = Some(new_name),
                 Boma::Utf8Xml(BomaUtf8(read_info, BomaUtf8Variant::PlistPlaylistInfo)) => info = Some(CollectionInfo::try_from(read_info).map_err(CollectionReadError::Deserialization)?),
                 Boma::CollectionMember(member) => tracks.push(member),
-                boma => {
+                _boma => {
                     // 201 has magic "SLst" header
-                    // tracing::warn!("Unexpected subtype present: {:?}", boma.get_subtype());
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!("Unexpected subtype present: {:?}", _boma.get_subtype());
                 }
             }
         }
@@ -147,7 +136,14 @@ impl<'a> id::persistent::Possessor for Collection<'a> {
         self.persistent_id
     }
 }
-
+impl id::cloud::catalog::Possessor for Collection<'_> {
+    #[allow(private_interfaces)]
+    const IDENTITY: id::cloud::catalog::PossessorIdentity = id::cloud::catalog::PossessorIdentity::Collection;
+}
+impl id::cloud::library::Possessor for Collection<'_> {
+    #[allow(private_interfaces)]
+    const IDENTITY: id::cloud::library::PossessorIdentity = id::cloud::library::PossessorIdentity::Collection;
+}
 
 #[derive(Debug)]
 pub struct CollectionMember<'a> {

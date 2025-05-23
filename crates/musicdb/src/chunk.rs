@@ -13,6 +13,7 @@ pub trait Chunk {
     }
 }
 
+#[allow(unused)]
 pub(crate) trait CursorReadingExtensions<'a>: Seek + Read + 'a {
     fn get_position(&self) -> u64;
     fn get_slice(&self) -> &'a [u8];
@@ -115,15 +116,6 @@ impl<'a, 'b, T: ReadableChunk<'b>> ContiguousChunkReader<'a, 'b, T> {
         Self { cursor, remaining, _type: core::marker::PhantomData }
     }
 }
-impl<'b, T: ReadableChunk<'b> + crate::id::persistent::Possessor> ContiguousChunkReader<'_, 'b, T> {
-    fn collect_into_hashmap(self) -> std::collections::HashMap<T::Id, T> {
-        let mut map = std::collections::HashMap::with_capacity(self.remaining);
-        for item in self.flatten() {
-            map.insert(item.get_persistent_id(), item);
-        }
-        map
-    }
-}
 impl<'b, T: ReadableChunk<'b>> Iterator for ContiguousChunkReader<'_, 'b, T> {
     type Item = Result<T, T::ReadError>;
 
@@ -151,21 +143,21 @@ impl<'b, T: ReadableChunk<'b>> core::iter::ExactSizeIterator for ContiguousChunk
 macro_rules! setup_eaters {
     ($cursor: ident, $start_position: ident, $length: ident) => {
         use $crate::chunk::CursorReadingExtensions;
-        use byteorder::ReadBytesExt;
+        #[allow(unused)] use byteorder::ReadBytesExt as _;
         $crate::chunk::setup_eaters!($cursor, $start_position, $length, ext: false);
     };
     ($cursor: ident, $start_position: ident, $length: ident, ext: false) => {
-        macro_rules! skip { ($count: expr) => { $cursor.advance($count) } }
-        macro_rules! skip_to_end { () => { $cursor.advance($length as i64 - ($cursor.position() - $start_position) as i64) } }
-        macro_rules! u64 { () => { $cursor.read_u64::<byteorder::LittleEndian>() } };
-        macro_rules! u32 { () => { $cursor.read_u32::<byteorder::LittleEndian>() } };
-        macro_rules! u16 { () => { $cursor.read_u16::<byteorder::LittleEndian>() } };
-        macro_rules!  u8 { () => { $cursor.read_u8() } };
-        macro_rules! cstr_block { ($size: literal) => {{ $cursor.read_cstr_block::<{ $size }>() }}}
-        macro_rules! id { ($type: ty) => {{ 
+        #[allow(unused)] macro_rules! skip { ($count: expr) => { $cursor.advance($count) } }
+        #[allow(unused)] macro_rules! skip_to_end { () => { $cursor.advance($length as i64 - ($cursor.position() - $start_position) as i64) } }
+        #[allow(unused)] macro_rules! u64 { () => { $cursor.read_u64::<byteorder::LittleEndian>() } }
+        #[allow(unused)] macro_rules! u32 { () => { $cursor.read_u32::<byteorder::LittleEndian>() } }
+        #[allow(unused)] macro_rules! u16 { () => { $cursor.read_u16::<byteorder::LittleEndian>() } }
+        #[allow(unused)] macro_rules!  u8 { () => { $cursor.read_u8() } }
+        #[allow(unused)] macro_rules! cstr_block { ($size: literal) => {{ $cursor.read_cstr_block::<{ $size }>() }}}
+        #[allow(unused)] macro_rules! id { ($type: ty) => {{ 
             $cursor.read_u64::<byteorder::LittleEndian>()
                 .map($crate::id::persistent::Id::<$type>::new)
-        }}};
+        }}}
     };
 }
 
@@ -279,7 +271,6 @@ pub trait ReadableChunk<'a>: Chunk {
     /// Reads the chunk if the cursor is placed upon the correct signature.
     /// Returns `None` if the signature does not match.
     fn read_optional(cursor: &mut Cursor<&'a [u8]>) -> Result<Option<Self>, Self::ReadError> where Self: Sized {
-        let start_position = cursor.position();
         let signature = cursor.peek_signature()?;
         if signature != Self::SIGNATURE { return Ok(None); }
         Self::read(cursor).map(Some)
@@ -305,7 +296,7 @@ pub trait ReadableChunk<'a>: Chunk {
 
     /// Skips any appendages that this chunk may have.
     /// By default, this does nothing.
-    fn skip_extras(cursor: &mut Cursor<&'a [u8]>) {}
+    fn skip_extras(_cursor: &mut Cursor<&'a [u8]>) {}
 }
 
 /// Utility trait for chunks that specify their fixed size as the first four bytes of their content immediately after the signature.
@@ -323,7 +314,7 @@ pub trait SizedFirstReadableChunk<'a>: Chunk {
 
     /// Skips any appendages that this chunk may have.
     /// By default, this does nothing.
-    fn skip_extras(cursor: &mut Cursor<&'a [u8]>) {}
+    fn skip_extras(_cursor: &mut Cursor<&'a [u8]>) {}
 }
 impl<'a, T: SizedFirstReadableChunk<'a>> ReadableChunk<'a> for T {
     type ReadError = <Self as SizedFirstReadableChunk<'a>>::ReadError;

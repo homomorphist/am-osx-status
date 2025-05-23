@@ -4,7 +4,7 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use unaligned_u16::utf16::Utf16Str;
+use crate::Utf16Str;
 
 use crate::chunk::{Chunk, ReadableChunk, SizedFirstReadableChunk};
 use crate::chunks::CollectionMember;

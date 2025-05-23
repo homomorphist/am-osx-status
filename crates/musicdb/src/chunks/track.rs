@@ -1,9 +1,8 @@
 use maybe_owned_string::MaybeOwnedString;
 use mzstatic::image::MzStaticImage;
-use unaligned_u16::utf16::Utf16Str;
 
-use crate::{boma::*, chunk::*, id, setup_eaters, PersistentId};
-use super::{album::Album, artist::Artist, derive_map};
+use crate::{boma::*, chunk::*, id, setup_eaters, PersistentId, Utf16Str};
+use super::{album::Album, artist::Artist, derive_map, AlbumMap, ArtistMap};
 
 
 #[derive(thiserror::Error, Debug)]
@@ -24,6 +23,7 @@ pub enum TrackReadError {
 pub struct Track<'a> {
     pub name: Option<&'a Utf16Str>,
     pub persistent_id: <Track<'a> as id::persistent::Possessor>::Id,
+    pub cloud_id: Option<id::cloud::Library<Track<'a>, MaybeOwnedString<'a>>>,
     pub album_id: <Album<'a> as id::persistent::Possessor>::Id,
     pub album_name: Option<&'a Utf16Str>,
     pub album_artist_name: Option<&'a Utf16Str>,
@@ -96,6 +96,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
         let mut fairplay_info = None;
         let mut artwork = None;
         let mut local_file_path = None;
+        let mut cloud_id = None;
 
         macro_rules! match_boma_utf16_or {
             ($boma: expr, [$(($variant: ident, $variable: ident)$(,)?)*], $fallback: expr) => {
@@ -154,14 +155,28 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
                     
                         artwork = raw.cloud_artwork_token.and_then(|v| MzStaticImage::with_pool_and_token(v).ok())
                     }
-                    Boma::Utf8Xml(BomaUtf8(v, BomaUtf8Variant::PlistCloudDownloadInformation)) => {
-                        // cloud universal library id, redownload params 
+                    Boma::Utf8Xml(BomaUtf8(value, BomaUtf8Variant::PlistCloudDownloadInformation)) => {
+                        use serde::Deserialize as _;
+
+                        #[derive(serde::Deserialize, Debug)]
+                        #[serde(rename_all = "kebab-case", bound = "'a: 'de, 'de: 'a")] //
+                        #[allow(unused)]
+                        struct Raw<'a> {
+                            redownload_params: Option<MaybeOwnedString<'a>>,
+                            cloud_universal_library_id: Option<MaybeOwnedString<'a>>,
+                        }
+
+
+                        let mut deserializer = plist::serde::Deserializer::parse(value).unwrap().expect("a value should be present");
+                        let raw = Raw::deserialize(&mut deserializer).unwrap(); // TODO: Handle
+                        cloud_id = raw.cloud_universal_library_id.and_then(|v| unsafe { id::cloud::Library::new_unchecked(v) }.into());
                     } 
                     Boma::Utf8Xml(BomaUtf8(_, BomaUtf8Variant::TrackLocalFilePathUrl)) => {},
                     boma => {
                         let subtype = boma.get_subtype();
                         // IDK what 23 is yet
                         if subtype != Err(UnknownBomaError(23)) {
+                            #[cfg(feature = "tracing")]
                             tracing::warn!("unexpected unknown boma {:?} on {persistent_id:?}", boma.get_subtype());
                         }
                     }
@@ -173,6 +188,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
         Ok(Self {
             artwork,
             name,
+            cloud_id,
             album_id,
             album_name,
             persistent_id,
@@ -217,14 +233,14 @@ impl id::cloud::library::Possessor for Track<'_> {
     const IDENTITY: id::cloud::library::PossessorIdentity = id::cloud::library::PossessorIdentity::Track;
 }
 
-// impl<'a> Track<'a> {
-//     pub fn get_artist_on(&'a self, artists: impl Into<&'a ArtistMap<'a>> + 'a) -> Option<&'a Artist<'a>> {
-//         Into::<&'a ArtistMap<'a>>::into(artists).get(&self.artist_id)
-//     }
-//     pub fn get_album_on(&'a self, albums: impl Into<&'a AlbumMap<'a>> + 'a) -> Option<&'a Album<'a>> {
-//         Into::<&'a AlbumMap<'a>>::into(albums).get(&self.album_id)
-//     }
-// }
+impl<'a> Track<'a> {
+    pub fn get_artist_on(&'a self, artists: impl Into<&'a ArtistMap<'a>> + 'a) -> Option<&'a Artist<'a>> {
+        Into::<&'a ArtistMap<'a>>::into(artists).get(&self.artist_id)
+    }
+    pub fn get_album_on(&'a self, albums: impl Into<&'a AlbumMap<'a>> + 'a) -> Option<&'a Album<'a>> {
+        Into::<&'a AlbumMap<'a>>::into(albums).get(&self.album_id)
+    }
+}
 
 derive_map!(pub TrackMap, Track<'a>, *b"ltma");
 
