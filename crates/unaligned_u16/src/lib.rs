@@ -1,5 +1,8 @@
 #[cfg(feature = "utf16")]
 pub mod utf16;
+pub mod endian;
+
+use endian::Endianness;
 
 pub mod error {
     /// An error indicating that the byte-length of the slice was not a multiple of two.
@@ -26,22 +29,68 @@ pub mod error {
 pub mod iter {
     use super::UnalignedU16Slice;
 
-    #[repr(transparent)]
-    pub struct UnalignedU16SliceIterator<'a>(&'a UnalignedU16Slice);
+    type EndianMarkedU16SliceAddress<'a> = ointers::NotNull<u8, 0, true, 0>; 
+
+    pub struct UnalignedU16SliceIterator<'a> {
+        ptr: EndianMarkedU16SliceAddress<'a>,
+        len: usize,
+        _lifetime: core::marker::PhantomData<&'a ()>,
+    }
     impl<'a> UnalignedU16SliceIterator<'a> {
-        pub fn new(slice: &'a super::UnalignedU16Slice) -> Self {
-            Self(slice)
+        pub fn new(slice: &'a super::UnalignedU16Slice, endianness: super::Endianness) -> Self {
+            let ointer: EndianMarkedU16SliceAddress<'a> = unsafe { ointers::NotNull::new({
+                let ptr = core::ptr::addr_of!(slice.0) as *mut u8;
+                core::ptr::NonNull::new_unchecked(ptr)
+            }) };
+
+            let ointer = ointer.steal(match endianness {
+                super::Endianness::Little => 0,
+                super::Endianness::Big =>    1,
+            });
+
+            Self {
+                ptr: ointer,
+                len: slice.len(),
+                _lifetime: core::marker::PhantomData,
+            }
+        }
+        fn as_slice(&self) -> &'a UnalignedU16Slice {
+            unsafe {
+                UnalignedU16Slice::new_unchecked(
+                    core::slice::from_raw_parts(
+                        self.ptr.as_non_null().as_ptr(),
+                        self.len,
+                    )
+                )
+            }
+        }
+        fn endianness(&self) -> super::Endianness {
+            match self.ptr.stolen() {
+                0 => super::Endianness::Little,
+                1 => super::Endianness::Big,
+                _ => unreachable!(),
+            }
+        }
+        fn shift(&mut self, amount: usize) {
+            let stolen = self.ptr.stolen();
+            self.ptr = unsafe {
+                ointers::NotNull::new_stealing(
+                    self.ptr.as_non_null().add(amount),
+                    stolen,
+                )
+            };
         }
         pub fn remaining(&self) -> usize {
-            self.0.len()
+            self.len / 2
         }
     }
     impl Iterator for UnalignedU16SliceIterator<'_> {
         type Item = u16;
         fn next(&mut self) -> Option<Self::Item> {
-            if self.0.is_empty() { return None }
-            let u16 = self.0.get(0).unwrap();
-            self.0 = unsafe { UnalignedU16Slice::new_unchecked(&self.0.bytes()[2..]) };
+            let slice = self.as_slice();
+            if slice.is_empty() { return None }
+            let u16 = unsafe { slice.get_unchecked(0, self.endianness()) };
+            self.shift(2);
             Some(u16)
         }
         fn size_hint(&self) -> (usize, Option<usize>) {
@@ -51,16 +100,16 @@ pub mod iter {
     }
     impl ExactSizeIterator for UnalignedU16SliceIterator<'_> {
         fn len(&self) -> usize {
-            self.0.len()
+            self.len / 2
         }
     }
     impl core::iter::FusedIterator for UnalignedU16SliceIterator<'_> {}
     impl DoubleEndedIterator for UnalignedU16SliceIterator<'_> {
         fn next_back(&mut self) -> Option<Self::Item> {
-            if self.0.is_empty() { return None }
-            let len = self.0.len();
-            let u16 = self.0.get(len - 1).unwrap();
-            self.0 = &self.0[..len - 1];
+            let slice = self.as_slice();
+            if slice.is_empty() { return None }
+            let u16 = unsafe { slice.get_unchecked(slice.len() - 1, self.endianness()) };
+            self.len -= 2;
             Some(u16)
         }
     }
@@ -77,59 +126,67 @@ pub fn u16_slice_as_u8_slice(slice: &[u16]) -> &[u8] {
 #[repr(transparent)]
 pub struct UnalignedU16Slice([u8]);
 impl<'a> UnalignedU16Slice {
-    pub fn new(slice: &[u8]) -> Result<&Self, error::BadByteLength> {
+    pub const fn new(slice: &[u8]) -> Result<&Self, error::BadByteLength> {
         if slice.len() % 2 != 0 { return Err(error::BadByteLength) }
         Ok(unsafe { Self::new_unchecked(slice) })
     }
 
     /// # Safety
     /// - The provided slice must have a length that is a multiple of two.
-    pub unsafe fn new_unchecked(slice: &[u8]) -> &Self {
+    pub const unsafe fn new_unchecked(slice: &[u8]) -> &Self {
         unsafe { core::mem::transmute(slice) }
     }
 
     /// Returns the amount of `u16` elements.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.bytes().len() / 2
     }
 
     /// Returns true if the slice is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    pub fn byte_len(&self) -> usize {
+    pub const fn byte_len(&self) -> usize {
         self.bytes().len()
     }
 
-    pub fn bytes(&self) -> &[u8] {
+    pub const fn bytes(&self) -> &[u8] {
         &self.0
     }
 
-    pub fn get(&self, index: usize) -> Option<u16> {
+    pub const fn get(&self, index: usize, endianness: Endianness) -> Option<u16> {
         if index >= self.len() { return None }
-        Some(unsafe { self.get_unchecked(index) })
+        Some(unsafe { self.get_unchecked(index, endianness) })
     }
-
+    
     /// # Safety
     /// - The index must be less than the length of the slice.
-    pub unsafe fn get_unchecked(&self, index: usize) -> u16 {
+    pub const unsafe fn get_unchecked(&self, index: usize, endianness: Endianness) -> u16 {
+        const unsafe fn get_element_const_unchecked<T>(slice: &[T], index: usize) -> u8 {
+            let offset = index * core::mem::size_of::<T>();
+            let offset = slice.as_ptr().add(offset);
+            core::ptr::read(offset as *const u8)
+        }
+
         let real = index * 2;
         let u8 = self.bytes();
-        ((*u8.get_unchecked(real + 1) as u16) << 8) |
-          *u8.get_unchecked(real)     as u16
+        match endianness {
+            Endianness::Little => {
+                ((get_element_const_unchecked(u8, real + 1) as u16) << 8) |
+                  get_element_const_unchecked(u8, real)     as u16
+            }
+            Endianness::Big => {
+                ((get_element_const_unchecked(u8, real) as u16) << 8) |
+                  get_element_const_unchecked(u8, real + 1) as u16
+            }
+        }
     }
 
-    pub fn iter(&'a self) -> iter::UnalignedU16SliceIterator<'a> {
-        self.into_iter()
+    pub fn iter(&'a self, endianness: Endianness) -> iter::UnalignedU16SliceIterator<'a> {
+        iter::UnalignedU16SliceIterator::new(self, endianness)
     }
 }
-// impl core::ops::Deref for UnalignedU16Slice {
-//     type Target = [u8];
-//     fn deref(&self) -> &Self::Target {
-//         &self.0
-//     }
-// }
 impl<'a> TryFrom<&'a [u8]> for &'a UnalignedU16Slice {
     type Error = error::BadByteLength;
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
@@ -152,13 +209,6 @@ impl<'a> TryFrom<&'a UnalignedU16Slice> for &'a [u16] {
     fn try_from(value: &'a UnalignedU16Slice) -> Result<Self, Self::Error> {
         let (unaligned, aligned, _) = unsafe { value.0.align_to::<u16>() };
         if unaligned.is_empty() { Ok(aligned) } else { Err(error::AlignmentError) }
-    }
-}
-impl<'a> IntoIterator for &'a UnalignedU16Slice {
-    type Item = u16;
-    type IntoIter = iter::UnalignedU16SliceIterator<'a>;
-    fn into_iter(self) -> Self::IntoIter {
-        iter::UnalignedU16SliceIterator::new(self)
     }
 }
 
@@ -220,14 +270,14 @@ mod tests {
     fn iter() {
         let slice = [0x01, 0x02, 0x03, 0x04];
         let unaligned = UnalignedU16Slice::new(&slice).unwrap();
-        let mut iter = unaligned.iter();
+        let mut iter = unaligned.iter(Endianness::Big);
         assert_eq!(iter.len(), 2);
         assert_eq!(iter.next(), Some(0x0201));
         assert_eq!(iter.next(), Some(0x0403));
         assert_eq!(iter.len(), 0);
         assert_eq!(iter.next(), None);
 
-        let mut iter = unaligned.iter();
+        let mut iter = unaligned.iter(Endianness::Big);
         assert_eq!(iter.next_back(), Some(0x0403));
         assert_eq!(iter.next_back(), Some(0x0201));
         assert_eq!(iter.next_back(), None);
@@ -238,9 +288,9 @@ mod tests {
     fn get() {
         let slice = [0x01, 0x02, 0x03, 0x04];
         let unaligned = UnalignedU16Slice::new(&slice).unwrap();
-        assert_eq!(unaligned.get(0), Some(0x0201));
-        assert_eq!(unaligned.get(1), Some(0x0403));
-        assert_eq!(unaligned.get(2), None);
+        assert_eq!(unaligned.get(0, Endianness::Little), Some(0x0201));
+        assert_eq!(unaligned.get(1, Endianness::Little), Some(0x0403));
+        assert_eq!(unaligned.get(2, Endianness::Little), None);
     }
 
     #[test]
