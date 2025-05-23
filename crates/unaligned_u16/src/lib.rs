@@ -44,13 +44,13 @@ pub mod iter {
             }) };
 
             let ointer = ointer.steal(match endianness {
-                super::Endianness::Little => 0,
-                super::Endianness::Big =>    1,
+                super::Endianness::Little => 1 << (core::mem::size_of::<usize>() * 8 - 1),
+                super::Endianness::Big =>    0,
             });
 
             Self {
                 ptr: ointer,
-                len: slice.len(),
+                len: slice.byte_len(),
                 _lifetime: core::marker::PhantomData,
             }
         }
@@ -66,10 +66,10 @@ pub mod iter {
         }
         fn endianness(&self) -> super::Endianness {
             match self.ptr.stolen() {
-                0 => super::Endianness::Little,
-                1 => super::Endianness::Big,
-                _ => unreachable!(),
+                0 => super::Endianness::Big,
+                _ => super::Endianness::Little,
             }
+
         }
         fn shift(&mut self, amount: usize) {
             let stolen = self.ptr.stolen();
@@ -91,6 +91,7 @@ pub mod iter {
             if slice.is_empty() { return None }
             let u16 = unsafe { slice.get_unchecked(0, self.endianness()) };
             self.shift(2);
+            self.len -= 2;
             Some(u16)
         }
         fn size_hint(&self) -> (usize, Option<usize>) {
@@ -270,17 +271,24 @@ mod tests {
     fn iter() {
         let slice = [0x01, 0x02, 0x03, 0x04];
         let unaligned = UnalignedU16Slice::new(&slice).unwrap();
-        let mut iter = unaligned.iter(Endianness::Big);
+        let mut iter = unaligned.iter(Endianness::Little);
         assert_eq!(iter.len(), 2);
         assert_eq!(iter.next(), Some(0x0201));
         assert_eq!(iter.next(), Some(0x0403));
         assert_eq!(iter.len(), 0);
         assert_eq!(iter.next(), None);
 
-        let mut iter = unaligned.iter(Endianness::Big);
+        let mut iter = unaligned.iter(Endianness::Little);
         assert_eq!(iter.next_back(), Some(0x0403));
         assert_eq!(iter.next_back(), Some(0x0201));
         assert_eq!(iter.next_back(), None);
+        assert_eq!(iter.next(), None);
+
+        let mut iter = unaligned.iter(Endianness::Big);
+        assert_eq!(iter.len(), 2);
+        assert_eq!(iter.next(), Some(0x0102));
+        assert_eq!(iter.next(), Some(0x0304));
+        assert_eq!(iter.len(), 0);
         assert_eq!(iter.next(), None);
     }
 

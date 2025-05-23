@@ -1,6 +1,7 @@
 pub struct BigEndian;
 pub struct LittleEndian;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Endianness {
     Little,
     Big,
