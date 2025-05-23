@@ -562,4 +562,24 @@ mod tests {
         }
     }
 
+    mod elements {
+        use crate::arena::vec::VecNodeArena;
+
+        use super::*;
+        
+        #[test]
+        fn several_in_a_row() {
+            let input = "<tag>hello</tag><tag>world</tag>";
+            let span = Span::new_root(input);
+            let mut arena = VecNodeArena::default();
+            let mut after = span;
+            let mut children = Vec::new();
+            while let Some(node) = Node::parse(&after, &mut arena).unwrap() {
+                let Read { value: index, consumed_bytes } = node;
+                after = unsafe { after.slice_bytes_inclusive(consumed_bytes, None) };
+                children.push(index);
+            }
+            // TODO
+        }
+    }
 }

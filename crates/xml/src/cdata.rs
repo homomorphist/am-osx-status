@@ -155,7 +155,7 @@ impl From<Escape> for char {
 #[derive(Debug, PartialEq)]
 struct EscapeInfo {
     pub character: Escape,
-    /// The length of the escape, in characters (synonymous in this case with bytes, as only ASCII is used t escape),
+    /// The length of the escape, in characters (synonymous in this case with bytes, as only ASCII is used to escape),
     /// including the indicator (`&`) and terminator (`;`).
     pub length: usize,
     pub position: usize,
@@ -439,6 +439,12 @@ impl<'a> XmlCharacterData<'a> {
     }
     pub fn is_just_whitespace(&self) -> Result<bool, &CharacterEntityDecodingError> {
         Ok(self.get()?.trim_matches(crate::defs::WHITESPACE).is_empty())
+    }
+    pub fn raw(&self) -> &str {
+        match self {
+            Self::Plain(text) => text,
+            Self::WithEntities(inner) => inner.get_unescaped()
+        }
     }
 }
 impl PartialEq<str> for XmlCharacterData<'_> {

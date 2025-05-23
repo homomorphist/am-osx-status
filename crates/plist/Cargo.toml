@@ -9,7 +9,7 @@ thiserror = "2.0.10"
 xml = { path = "../xml/" }
 
 [dev-dependencies]
-serde = { version = "1.0.214" }
+serde = { version = "1.0.214", features = ["derive"] }
 
 [features]
 serde = ["dep:serde"]

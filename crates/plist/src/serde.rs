@@ -25,6 +25,31 @@ impl<'de> Deserializer<'de> {
             stack: vec![index]
         }))
     }
+
+    pub fn reconstruct(self) -> String {
+        let mut out = String::new();
+
+        fn write_node<'a>(arena: &VecNodeArena<'a>, index: NodeIndex, out: &mut String) {
+            match arena.get(&index) {
+                Node::Element(element) => {
+                    out.push_str(&format!("<{}>", element.tag_name()));
+                    for child in &element.children {
+                        write_node(arena, *child, out);
+                    }
+                    out.push_str(&format!("</{}>", element.tag_name()));
+                }
+                Node::Text(text, _) => {
+                    out.push_str(text.raw());
+                }
+                Node::Comment(comment) => {
+                    out.push_str(&format!("<!--{}-->", comment.as_str()));
+                }
+            }
+        }
+
+        write_node(&self.arena, self.stack[0], &mut out);
+        out
+    }
 }
 
 
@@ -136,7 +161,9 @@ impl<'de> serde::de::Deserializer<'de> for &mut Deserializer<'de> {
                         value
                     },
                     "dict" => {
-                        self.goto_first_child()?;
+                        if self.goto_first_child()?.is_none() {
+                            return visitor.visit_map(DictionarySequence::empty())
+                        }
                         let value = visitor.visit_map(DictionarySequence::new(self));
                         self.stack.pop();
                         value
@@ -240,10 +267,11 @@ impl<'de> Deserializer<'de> {
         Some(self.arena.get(&index))
     }
 
-    pub fn goto_first_child(&mut self) -> Result<&Node<'de, NA<'de>>, Error<'de>> {
-        let index = *self.current_as_element()?.children.first().expect("FIXME handle this case");
-        self.stack.push(index);
-        Ok(self.arena.get(&index))
+    pub fn goto_first_child(&mut self) -> Result<Option<&Node<'de, NA<'de>>>, Error<'de>> {
+        Ok(self.current_as_element()?.children.first().copied().map(|index| {
+            self.stack.push(index);
+            self.arena.get(&index)
+        }))
     }
 }
 
@@ -270,13 +298,18 @@ impl<'de> serde::de::SeqAccess<'de> for ArraySeq<'_, 'de> {
 
 
 struct DictionarySequence<'a, 'de> {
-    deserializer: &'a mut Deserializer<'de>,
+    deserializer: Option<&'a mut Deserializer<'de>>,
 }
 impl<'a, 'de> DictionarySequence<'a, 'de> {
     fn new(deserializer: &'a mut Deserializer<'de>) -> Self {
-        // TODO: Precalculate length.
         Self {
-            deserializer,
+            deserializer: Some(deserializer),
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            deserializer: None,
         }
     }
 }
@@ -284,25 +317,51 @@ impl<'de> serde::de::MapAccess<'de> for DictionarySequence<'_, 'de> {
     type Error = Error<'de>;
     
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error> where K: serde::de::DeserializeSeed<'de> {
-        // TODO: Return `None` if none remaining.
-        if !self.deserializer.skip_whitespace()? { return Ok(None) }
+        let deserializer = if let Some(deserializer) = self.deserializer.as_mut() {
+            deserializer.skip_whitespace()?;
+            deserializer
+        } else { return Ok(None) };
 
-        let element = self.deserializer.current_as_element_or_else(Error::ExpectedValue)?;
+
+        let element = deserializer.current_as_element_or_else(Error::ExpectedValue)?;
         if element.tag_name() != "key" {
-            return Err(Error::ExpectedKey(self.deserializer.take_current_node()))
+            return Err(Error::ExpectedKey(deserializer.take_current_node()))
         }
 
-        seed.deserialize(&mut *self.deserializer).map(Some)
+        seed.deserialize(&mut **deserializer).map(Some)
     }
 
     fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error> where V: serde::de::DeserializeSeed<'de> {
-        self.deserializer.skip_whitespace()?;
+        let deserializer = unsafe { self.deserializer.as_mut().unwrap_unchecked() };
+        deserializer.skip_whitespace()?;
 
-        let element = self.deserializer.current_as_element_or_else(Error::ExpectedValue)?;
+        let element = deserializer.current_as_element_or_else(Error::ExpectedValue)?;
         if element.tag_name() == "key" {
-            return Err(Error::ExpectedValue(self.deserializer.take_current_node()))
+            return Err(Error::ExpectedValue(deserializer.take_current_node()))
         }
 
-        seed.deserialize(&mut *self.deserializer)
+        let deserialized = seed.deserialize(&mut **deserializer).expect("ok");
+        if deserializer.goto_next_sibling().is_none() {
+            self.deserializer = None;
+        }
+
+        Ok(deserialized)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::Deserialize;
+
+    #[test]
+    fn basic() {
+        let input = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict><key>value</key><string>jor</string></dict>\n</plist>\n";
+        let mut deserializer = super::Deserializer::parse(input)
+            .expect("failed to parse")
+            .expect("failed to parse");
+        #[allow(unused)]
+        #[derive(serde::Deserialize)]
+        struct Test { value: Option<String> }
+        Test::deserialize(&mut deserializer).expect("failed to deserialize");
     }
 }
