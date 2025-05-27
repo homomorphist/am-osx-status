@@ -214,6 +214,10 @@ impl MusicDB {
         // 'static => 'self
         unsafe { core::mem::transmute(&self.view) }
     }
+    pub fn get_view_mut(&mut self) -> &mut MusicDbView<'_> {
+        // 'static => 'self
+        unsafe { core::mem::transmute(&mut self.view) }
+    }
     pub fn update_view(&mut self)  {
         // TODO: Persistent handle? I dunno.
         *self = Self::read_path(self.path.as_path())

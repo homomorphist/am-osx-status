@@ -96,6 +96,7 @@ pub mod cloud {
 
         /// A cloud library resource-typed ID is an ID for a library entity (one which is scoped to the user) stored within the cloud.
         /// It is a short string prefixed with one to two letters (the namespace) and a full stop.
+        // TODO: Document local-synced IDs. ("l.z-")
         pub struct Id<
             T, // possessor type,
             S, // string type

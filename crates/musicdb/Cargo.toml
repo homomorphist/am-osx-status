@@ -27,6 +27,6 @@ tracing = ["dep:tracing"]
 cli = ["dep:clap"]
 
 [[bin]]
-name = "cli"
+name = "musicdb"
 path = "src/main.rs"
 required-features = ["cli"]
