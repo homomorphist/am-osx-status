@@ -290,19 +290,19 @@ async fn artist_extraction() {
 
     // Has one artist. Nothing unusual.
     let pictures_of_space = prepare_query("Pictures of Space", "The Age of Rockets", &db);
-    assert_eq!(extract_first_artist(pictures_of_space, Some(&db), &net).await, "The Age of Rockets".into());
+    assert_eq!(extract_first_artist(pictures_of_space, Some(&db), &net).await, "The Age of Rockets");
 
     // Has one artist, but the artist has an ampersand in their name.
     let endless_embrace = prepare_query("Endless Embrace", "MYTH & ROID", &db);
-    assert_eq!(extract_first_artist(endless_embrace, Some(&db), &net).await, "MYTH & ROID".into());
+    assert_eq!(extract_first_artist(endless_embrace, Some(&db), &net).await, "MYTH & ROID");
 
     // Has two artists; the first should be returned.
     let fallen_kingdom = prepare_query("Fallen Kingdom", "CaptainSparklez & TryHardNinja", &db);
-    assert_eq!(extract_first_artist(fallen_kingdom, Some(&db), &net).await, "CaptainSparklez".into());
+    assert_eq!(extract_first_artist(fallen_kingdom, Some(&db), &net).await, "CaptainSparklez");
 
     // Has three artists; the first should be returned.
     let mesmerizer = prepare_query("Mesmerizer", "Satsuki, Hatsune Miku & Kasane Teto", &db);
-    assert_eq!(extract_first_artist(mesmerizer, Some(&db), &net).await, "Satsuki".into());
+    assert_eq!(extract_first_artist(mesmerizer, Some(&db), &net).await, "Satsuki");
 } 
 
 subscription::define_subscriber!(pub LastFM, {

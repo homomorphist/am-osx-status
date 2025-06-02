@@ -108,6 +108,31 @@ impl PartialEq for MaybeOwnedString<'_> {
         lhs.eq(rhs)
     }
 }
+impl PartialEq<str> for MaybeOwnedString<'_> {
+    fn eq(&self, other: &str) -> bool {
+        let lhs = AsRef::<str>::as_ref(self);
+        lhs.eq(other)
+    }
+}
+impl PartialEq<&str> for MaybeOwnedString<'_> {
+    fn eq(&self, other: &&str) -> bool {
+        let lhs = AsRef::<str>::as_ref(self);
+        lhs.eq(*other)
+    }
+}
+impl PartialEq<String> for MaybeOwnedString<'_> {
+    fn eq(&self, other: &String) -> bool {
+        let lhs = AsRef::<str>::as_ref(self);
+        lhs.eq(other.as_str())
+    }
+}
+impl PartialEq<MaybeOwnedString<'_>> for dyn AsRef<str> {
+    fn eq(&self, other: &MaybeOwnedString<'_>) -> bool {
+        let rhs = AsRef::<str>::as_ref(other);
+        let lhs = self.as_ref();
+        lhs.eq(rhs)
+    }
+}
 impl Eq for MaybeOwnedString<'_> {}
 impl core::hash::Hash for MaybeOwnedString<'_> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
