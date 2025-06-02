@@ -55,9 +55,17 @@ pub enum ConfigurationAction {
     /// Run the configuration wizard. This will clear any existing settings.
     Wizard,
 
-    /// Print the location of the configuration file that would be used in the current context, and why it's being used.
+    /// Print the location of the configuration file that would be used in the current context.
     #[clap(visible_alias("which"))]
-    Where,
+    Where {
+        /// Explain why the configuration file is being used, and if there were any issues trying to read it.
+        /// This will be enabled by default if standard output is detected as a terminal.
+        #[arg(short = 'r', long = "reason", aliases = ["why", "explain"])]
+        show_reason: Option<bool>,
+        /// Escape special characters (such as spaces) in the path.
+        #[arg(short, long, default_value = "false")]
+        escape: bool,
+    },
 
     /// Configure the Discord presence.
     Discord {

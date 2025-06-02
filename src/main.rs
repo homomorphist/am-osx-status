@@ -167,23 +167,40 @@ async fn main() -> ExitCode {
             use cli::{ConfigurationAction, DiscordConfigurationAction};
 
             match action {
-                ConfigurationAction::Where => {
-                    match config {
-                        Ok(config) => {
-                            println!("{}", config.path.to_string_lossy());
-                            println!("this path was {}", config.path.describe_for_choice_reasoning_suffix());
-                        },
-                        Err(err) => {
+                ConfigurationAction::Where { show_reason, escape} => {
+                    let path = match &config {
+                        Ok(config) => &config.path,
+                        Err(error) => error.path()
+                    };
+
+                    let path_str = path.to_string_lossy();
+                    let path_str = if !escape { path_str } else {
+                        String::from(path_str)
+                            .replace(' ', "\\ ")
+                            .into()
+                    };
+
+                    use std::io::IsTerminal;
+                    let show_reason = match show_reason {
+                        Some(show) => *show,
+                        None => std::io::stdout().is_terminal()
+                    };
+
+                    println!("{path_str}");
+                    if show_reason {
+                        use config::ConfigRetrievalError;
+                        eprint!("This path is used because it is {}", path.describe_for_choice_reasoning_suffix());
+                        if let Err(err) = &config {
                             use std::borrow::Cow;
-                            let path = err.path();
-                            println!("{}", path.to_string_lossy());
-                            eprintln!("this path was {} but {}", path.describe_for_choice_reasoning_suffix(), match err {
+                            eprintln!(", but {}", match err {
                                 ConfigRetrievalError::DeserializationFailure { .. } => Cow::Borrowed("it couldn't be successfully deserialized"),
                                 ConfigRetrievalError::NotFound { .. } => Cow::Borrowed(if path.was_auto() { "it currently doesn't exist" } else { "it couldn't be found" }),
                                 ConfigRetrievalError::PermissionDenied(_) => Cow::Borrowed("the required permissions to read it are not available"),
                                 ConfigRetrievalError::UnknownFs { inner, .. } => Cow::Owned(format!("an unknown error occurred trying to read it ({inner})"))
-                            })
-                        },
+                            });
+                        } else {
+                            eprintln!(".");
+                        }
                     }
                 },
                 ConfigurationAction::Wizard => {
