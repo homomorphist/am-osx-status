@@ -1,4 +1,4 @@
-use itunes_api::search_songs;
+use itunes_api::Client;
 use serde::Deserialize;
 
 use unicode_normalization::UnicodeNormalization;
@@ -21,9 +21,10 @@ fn does_track_match_search(track: &crate::status_backend::DispatchableTrack, fou
         && (normalize(&found.collection_name) == collection)
 }
 
-pub async fn find_track(track: &crate::status_backend::DispatchableTrack) -> Result<Option<itunes_api::Track>, itunes_api::RequestError> {
+pub async fn find_track(track: &crate::status_backend::DispatchableTrack) -> Result<Option<itunes_api::Track>, itunes_api::Error> {
     let query: String = format!("{} {}", track.artist.clone().unwrap_or_default(), track.name);
-    let songs = search_songs(&query, 10).await?;
+    let client = Client::new(reqwest::Client::new()); // TODO: use a shared client.
+    let songs = client.search_songs(&query, 10).await?;
     if songs.len() == 1 { return Ok(songs.into_iter().next()) }
     Ok(songs.into_iter().find(|result| does_track_match_search(track, result)))
 }

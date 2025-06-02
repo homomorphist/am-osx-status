@@ -238,7 +238,8 @@ async fn extract_first_artist<'a, 'b: 'a>(
             // Well, we seemingly didn't have the original artist in the library, but
             // we can leverage the fact that an iTunes lookup will always return the singular
             // primary artist.
-            if let Some(cloud) = itunes_api::lookup_artist(cloud_artist_id.into()).await.inspect_err(|err| {
+            let client = itunes_api::Client::new(net.clone());
+            if let Some(cloud) = client.lookup_artist(cloud_artist_id.into()).await.inspect_err(|err| {
                 tracing::error!(?err, "failed to lookup artist in iTunes API");
             }).ok().flatten() {
                 return cloud.name.into()
