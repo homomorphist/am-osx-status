@@ -204,10 +204,17 @@ async fn main() -> ExitCode {
                 },
                 ConfigurationAction::Discord { action } => {
                     let mut config = get_config_or_error!();
-                    match action {
-                        DiscordConfigurationAction::Enable => config.backends.discord = true,
-                        DiscordConfigurationAction::Disable => config.backends.discord = false
-                    };
+                    if let Some(c) = config.backends.discord.as_mut() {
+                        match action {
+                            DiscordConfigurationAction::Enable => c.enabled = true,
+                            DiscordConfigurationAction::Disable => c.enabled = false,
+                        }
+                    } else {
+                        match action {
+                            DiscordConfigurationAction::Enable => config::wizard::io::prompt_discord(&mut config.backends.discord, true).await,
+                            DiscordConfigurationAction::Disable => {}
+                        }
+                    }
                     config.save_to_disk().await;
                 }
             }

@@ -955,12 +955,15 @@ impl Backends {
         });
 
         #[cfg(feature = "discord")]
-        let discord = if config.backends.discord {
-            let wrapped = Arc::new(Mutex::new(DiscordPresence::new().await));
-            let weak = Arc::downgrade(&wrapped);
-            DiscordPresence::enable_auto_reconnect(weak).await;
-            Some(wrapped)
-        } else { None };
+        let discord = match config.backends.discord.as_ref().copied() {
+            Some(config) if config.enabled => {
+                let wrapped = Arc::new(Mutex::new(DiscordPresence::new(config).await));
+                let weak = Arc::downgrade(&wrapped);
+                DiscordPresence::enable_auto_reconnect(weak).await;
+                Some(wrapped)
+            },
+            _ => None
+        };
 
         Backends {
             #[cfg(feature = "lastfm")] lastfm,

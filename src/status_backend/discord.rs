@@ -6,7 +6,84 @@ use crate::data_fetching::components::{Component, ComponentSolicitation};
 
 use super::error::DispatchError;
 
-const APPLICATION_ID: u64 = 1286481105410588672; // "Apple Music"
+macro_rules! define_activities {
+    (
+        $(#[$meta: meta])*
+        $vis: vis
+        $name: ident {
+            $(
+                $(#[$activity_meta: meta])*
+                $activity: ident = $num_id: literal # $display: literal
+            ),*,
+        }
+    ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[repr(u64)]
+        $(#[$meta])*
+        $vis enum $name {
+            $(
+                $(#[$activity_meta])*
+                $activity = $num_id
+            ),*
+        }
+
+        impl $name {
+            #[allow(clippy::cast_enum_truncation)]
+            pub const VARIANT_COUNT: usize = {
+                0 + $({
+                    1 - {
+                        // No-op: simply for correct repetition.
+                        $name::$activity as usize - $name::$activity as usize
+                    }
+                } +)* 0
+            };
+
+            pub const VARIANTS: [Self; Self::VARIANT_COUNT] = [
+                $(
+                    $name::$activity,
+                )*
+            ];
+
+            pub const fn get_display_text(self) -> &'static str {
+                match self {
+                    $($name::$activity => $display),*,
+                }
+            }
+            pub const fn get_id(self) -> u64 {
+                match self {
+                    $($name::$activity => $num_id),*,
+                }
+            }
+
+            pub fn default_as_u64() -> u64 {
+                Self::default() as u64
+            }
+        }
+    };
+}
+define_activities! {
+    #[derive(Default)]
+    pub EnumeratedApplicationIdentifier {
+        #[default]
+        AppleMusic     = 1286481105410588672 # "Apple Music",
+        Music          = 1376721849622335519 #       "Music",
+        MusicLowercase = 1376721968874782731 #       "music",
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
+pub struct Config {
+    pub enabled: bool,
+    #[serde(default = "EnumeratedApplicationIdentifier::default_as_u64")]
+    pub application_id: u64,
+}
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            application_id: EnumeratedApplicationIdentifier::default_as_u64(),
+        }
+    }
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum ConnectError {
@@ -34,6 +111,7 @@ pub enum DiscordPresenceState {
 }
 
 super::subscription::define_subscriber!(pub DiscordPresence, {
+    config: Config,
     client: Option<discord_presence::Client>,
     state: Arc<Mutex<DiscordPresenceState>>,
     state_channel: tokio::sync::broadcast::Sender<DiscordPresenceState>,
@@ -49,23 +127,18 @@ impl Debug for DiscordPresence {
         f.debug_struct(Self::NAME).finish()
     }
 }
-impl Default for DiscordPresence {
-    fn default() -> Self {
-        Self::disconnected()
-    }
-}
 impl DiscordPresence {
     #[tracing::instrument(level = "debug")]
-    pub async fn new() -> Self {
-        let instance = Self::disconnected();
+    pub async fn new(config: Config) -> Self {
+        let instance = Self::disconnected(config);
         let instance = instance.try_connect(CONNECTION_ATTEMPT_TIMEOUT).await;
         instance.unwrap_or_else(|_| {
             tracing::warn!("client creation timed out; assuming Discord isn't open");
-            Self::disconnected()
+            Self::disconnected(config)
         })
     }
 
-    pub fn disconnected() -> Self {
+    pub fn disconnected(config: Config) -> Self {
         let (tx, mut rx) = tokio::sync::broadcast::channel(4);
 
         let state = Arc::new(Mutex::new(DiscordPresenceState::Disconnected));
@@ -78,6 +151,7 @@ impl DiscordPresence {
         });
 
         Self {
+            config,
             client: None,
             state,
             state_channel: tx,
@@ -98,7 +172,7 @@ impl DiscordPresence {
     /// not `tokio::select!` safe
     #[tracing::instrument(skip(self), level = "debug")]
     pub async fn connect_in_place(&mut self) {
-        let client = discord_presence::Client::new(APPLICATION_ID);            
+        let client = discord_presence::Client::new(self.config.application_id);            
         if let Some(old_client) = self.client.replace(client) {
             // TODO: i assume this will set fire the tx and thus set state to disconnected, but i haven't tested
             if let Err(error) = old_client.shutdown() {

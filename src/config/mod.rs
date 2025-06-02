@@ -27,11 +27,6 @@ impl<'a> ConfigRetrievalError<'a> {
     }
 }
 
-fn ret_true() -> bool {
-    true
-}
-
-
 #[derive(Serialize, Deserialize)]
 pub struct Config<'a> {
     #[serde(skip)]
@@ -85,7 +80,7 @@ impl<'a> Config<'a> {
     }
 
     pub async fn edit_with_wizard(&mut self)  {
-        self.backends.discord = wizard::io::prompt_bool("Enable Discord Rich Presence?");
+        wizard::io::prompt_discord(&mut self.backends.discord, false).await;
         wizard::io::prompt_lastfm(&mut self.backends.lastfm).await;
         wizard::io::prompt_listenbrainz(&mut self.backends.listenbrainz).await;
     }
@@ -118,8 +113,8 @@ impl<'a> Config<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct ConfigurableBackends {
     #[cfg(feature = "discord")]
-    #[cfg_attr(feature = "discord", serde(default = "ret_true"))]
-    pub discord: bool,
+    #[cfg_attr(feature = "discord", serde(default))]
+    pub discord: Option<crate::status_backend::discord::Config>,
     #[cfg(feature = "lastfm")]
     #[cfg_attr(feature = "lastfm", serde(default))]
     pub lastfm: Option<crate::status_backend::lastfm::Config>,
@@ -131,7 +126,7 @@ impl Default for ConfigurableBackends {
     fn default() -> Self {
         Self {
             #[cfg(feature = "discord")]
-            discord: true,
+            discord: Some(crate::status_backend::discord::Config::default()),
             #[cfg(feature = "lastfm")]
             lastfm: None,
             #[cfg(feature = "listenbrainz")]
