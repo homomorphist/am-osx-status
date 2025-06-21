@@ -250,12 +250,12 @@ struct PollingContext {
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
     musicdb: Arc<Option<musicdb::MusicDB>>,
     jxa: osa_apple_music::Session,
-    /// The number of polls.
-    /// A value of one means the first poll is ongoing; it's not zero-based because it's incremented at the start of the poll function.
+    /// The number of polls that have been performed since the start of the application.
     polls: u64,
-    /// Sequential `PlayerState::Paused` occurrences.
-    /// Used to detect when the state is *actually* considered paused, since sometimes the paused state is returned during buffer.
-    sequential_pause_states: u64
+    /// When the `PlayerState::Paused` started. If not paused, this is `None`.
+    /// Used to detect when the state is *actually* considered paused, since sometimes the paused state is returned during the buffering of a song.
+    /// If we clear the status in that case, any ratelimits may mean that the display of a new song takes longer.
+    paused_at: Option<std::time::Instant>
 }
 impl PollingContext {
     async fn from_config(config: &config::Config<'_>, terminating: Arc<AtomicBool>) -> Self {
@@ -267,7 +267,7 @@ impl PollingContext {
             custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
             musicdb: Arc::new(Some(tracing::trace_span!("musicdb read").in_scope(MusicDB::default))),
             polls: 0,
-            sequential_pause_states: 0,
+            paused_at: if config.backends.discord.is_some() { Some(std::time::Instant::now()) } else { None },
             jxa: osa_apple_music::Session::new(
                 crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket")
             ).await.expect("failed to create `osa_apple_music` session")
@@ -307,11 +307,8 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     };
 
     use osa_apple_music::application::PlayerState;
-    if app.state == PlayerState::Paused {
-        context.sequential_pause_states += 1;
-    } else {
-        context.sequential_pause_states = 0;
-    }
+    context.paused_at = if app.state == PlayerState::Paused && context.paused_at.is_none() { Some(std::time::Instant::now()) } else { None };
+    context.polls += 1;
 
     match app.state {
         PlayerState::FastForwarding | PlayerState::Rewinding => unimplemented!(),
@@ -341,9 +338,9 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
         PlayerState::Paused => {
             // Three sequential pause states (including this one) are required to consider
             // the state to actually be paused, as opposed to just buffer.
-            const THRESHOLD_CONSIDER_TRULY_PAUSED: u64 = 3;
+            const THRESHOLD_CONSIDER_TRULY_PAUSED: core::time::Duration = core::time::Duration::from_secs(5);
 
-            if context.sequential_pause_states >= THRESHOLD_CONSIDER_TRULY_PAUSED {
+            if context.paused_at.is_some_and(|p| p.elapsed() >= THRESHOLD_CONSIDER_TRULY_PAUSED) {
                 #[cfg(feature = "discord")]
                 if let Some(presence) = context.backends.discord.clone() {
                     if let Err(error) = presence.lock().await.clear().await {
