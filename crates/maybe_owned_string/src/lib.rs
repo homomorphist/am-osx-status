@@ -142,7 +142,7 @@ impl core::hash::Hash for MaybeOwnedString<'_> {
         })
     }
 }
-impl MaybeOwnedString<'_> {
+impl<'a> MaybeOwnedString<'a> {
     /// Whether this is a string slice reference.
     pub const fn is_borrowed(&self) -> bool {
         matches!(self, Self::Borrowed(_))
@@ -160,6 +160,11 @@ impl MaybeOwnedString<'_> {
         } else {
             None
         }
+    }
+
+    /// Create a new borrowed [`MaybeOwnedString`] which points to this string slice.
+    pub fn borrowed(&'a self) -> MaybeOwnedString<'a> {
+        Self::Borrowed(self.as_ref())
     }
 }
 

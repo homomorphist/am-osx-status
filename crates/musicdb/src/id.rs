@@ -110,6 +110,13 @@ pub mod cloud {
                     Err(BadNamespaceError)
                 }
             }
+
+            pub fn get_raw(&self) -> &S {
+                &self.0
+            }
+            pub fn into_raw(self) -> S {
+                self.0
+            }
         }
         impl<T, S> Id<T, S> {
             /// # Safety

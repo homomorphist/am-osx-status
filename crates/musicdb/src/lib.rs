@@ -121,7 +121,7 @@ impl<'a> MusicDbView<'a> {
     /// 
     /// Only works for IDs with their datatype attached at the type-level, such as IDs which were retrieved from the DB itself.
     #[allow(clippy::missing_transmute_annotations)]
-    fn get<T: id::persistent::Possessor>(&self, id: PersistentId<T>) -> Option<&'a T> {
+    pub fn get<T: id::persistent::Possessor>(&self, id: PersistentId<T>) -> Option<&'a T> {
         match T::IDENTITY {
             id::persistent::PossessorIdentity::Account => {
                 let id: PersistentId<Account<'a>> = unsafe { core::mem::transmute(id) };

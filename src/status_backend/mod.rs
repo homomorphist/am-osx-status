@@ -558,6 +558,7 @@ pub struct DispatchableTrack {
     pub album: Option<String>,
     pub album_artist: Option<String>,
     pub artist: Option<String>,
+    /// Uppercase hexadecimal representation of the track's persistent ID.
     pub persistent_id: String,
     pub duration: Option<core::time::Duration>,
     pub media_kind: osa_apple_music::track::MediaKind,
@@ -593,6 +594,82 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for DispatchableTrack {
         })
     }
 }
+
+pub mod uncensor {
+    use super::*;
+
+    /// Attempt to uncensor a title utilizing a combination of the display name and the sorting name.
+    /// 
+    /// This takes advantage of the fact that Apple does not censor words within the sorting name.
+    /// 
+    /// However, care must be taken regarding the fact that a sorting name strips out certain
+    /// prefixes, such as "The", which will need to be re-added like they are within the display name.
+    pub fn heuristically_uncensor_name<'a>(display: &str, sorting: &'a str) -> Option<MaybeOwnedString<'a>> {
+        fn do_names_match_lhs_wildcarded(display: &str, sorting: &str) -> bool {
+            if display == sorting {
+                return true;
+            }
+    
+            if display.len() != sorting.len() {
+                return false;
+            }
+    
+            for (canon, censored) in sorting.chars().zip(display.chars()) {
+                match (canon, censored) {
+                    (_, '*') => continue, // true value unknown; treat as wildcard
+                    (l, r) if l == r => continue,
+                    _ => return false
+                }
+            }
+    
+            true
+        }
+    
+        const NO_PREFIX: &str = "";
+    
+        [NO_PREFIX, "The ", "A ", "An "]
+            .iter()
+            .flat_map(|prefix| display.strip_prefix(prefix).map(|stripped| (prefix, stripped)))
+            .filter(|(prefix, stripped)| do_names_match_lhs_wildcarded(stripped, sorting))
+            .map(|(prefix, _)| match prefix.len() {
+                0 => MaybeOwnedString::Borrowed(sorting),
+                _ => MaybeOwnedString::Owned(format!("{prefix}{sorting}"))
+            }).next()
+    }
+    pub use heuristically_uncensor_name as heuristically;
+
+    pub async fn uncensor_name_itunes(track: &DispatchableTrack) -> Option<String> {
+        crate::data_fetching::services::itunes::find_track(track)
+            .await
+            .inspect_err(|err| {
+                tracing::error!(error = ?err, "failed to fetch track info from iTunes");
+            }).ok().flatten().map(|track| track.name)
+    }
+    pub use uncensor_name_itunes as with_itunes;
+
+    pub async fn uncensor_track<'a>(track: &'a DispatchableTrack) -> Option<MaybeOwnedString<'a>> {
+        if let Some(name) = heuristically_uncensor_name(&track.name, &track.persistent_id) {
+            Some(name)
+        } else {
+            uncensor_name_itunes(track).await.map(MaybeOwnedString::Owned)
+        }
+    }
+    pub use uncensor_track as track;
+
+    #[cfg(test)]
+    mod tests {
+        use super::heuristically_uncensor_name;
+
+        #[test]
+        fn heuristically() {
+            assert!(heuristically_uncensor_name(    "f**k", "fuck") == Some(    "fuck".into()));
+            assert!(heuristically_uncensor_name("The f**k", "fuck") == Some("The fuck".into()));
+            assert!(heuristically_uncensor_name("The foo",  "foo" ) == Some("The foo" .into()));
+            assert!(heuristically_uncensor_name(  "A foo",  "foo" ) == Some(  "A foo" .into()));
+        }
+    }
+}
+
 
 #[derive(Debug)]
 pub struct BackendContext<A> {
