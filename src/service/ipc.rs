@@ -107,13 +107,14 @@ pub mod packets {
     #[derive(serde::Serialize, serde::Deserialize, Debug)]
     pub struct Hello {
         pub version: usize,
-        pub process: libc::pid_t
+        /// The process ID of the process sending this packet (the one constructing this).
+        pub process: u32,
     }
     impl Hello {
         pub fn new() -> Self {
             Hello {
                 version: IPC_VERSION,
-                process: *OWN_PID
+                process: OWN_PID.as_u32()
             }
         }
     }

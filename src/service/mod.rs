@@ -49,7 +49,7 @@ impl ServiceController {
     fn get_processes(&self) -> impl Iterator<Item = &sysinfo::Process> {
         self.system
             .processes_by_exact_name(std::ffi::OsStr::new(clap::crate_name!()))
-            .filter(|process| process.pid().as_u32() != *crate::util::OWN_PID as u32)
+            .filter(|process| process.pid() != *crate::util::OWN_PID)
     }
 
     pub fn start(&self, config: impl Into<OsString>, force: bool) -> Result<(), ServiceStartFailure> {

@@ -7,7 +7,9 @@ pub static HOME: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     std::env::home_dir().expect("no home directory env detected")
 });
 
-pub static OWN_PID: LazyLock<libc::pid_t> = LazyLock::new(|| unsafe { libc::getpid() });
+pub static OWN_PID: LazyLock<sysinfo::Pid> = LazyLock::new(|| {
+    sysinfo::get_current_pid().expect("unsupported platform")
+});
 
 macro_rules! ferror {
     ($($t: tt)*) => {
