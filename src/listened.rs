@@ -85,6 +85,18 @@ impl Listened {
         self.current.as_ref().map(|c| c.started_at)
     }
 
+    /// Returns the index in which a [`CurrentListened`] should be placed
+    /// which would result it being correctly ordered in terms of when
+    /// the song started.
+    /// 
+    /// ## Example
+    /// Returning an index considering the current listen chunk has a start position of 8:
+    /// <pre>
+    ///   [1, 5, 6, 10, 20, 32] # Start times
+    ///             ^-- An index of three (zero-indexed) would be best
+    ///                 to preserve proper ordering, so that'd what'd be returned.
+    /// </pre>
+    // TODO: Utilize a binary search for this.
     fn find_index_for_current(&self, current: &CurrentListened) -> usize {
         self.contiguous.iter()
             .enumerate()
@@ -92,6 +104,8 @@ impl Listened {
             .next_back().map(|(i, _)| i + 1).unwrap_or_default()
     }
 
+    /// Rid the current listening session to place it into the ordered
+    /// array of listening sessions.
     pub fn flush_current(&mut self) {
         if let Some(current) = self.current.take() {
             let index = self.find_index_for_current(&current);

@@ -262,6 +262,24 @@ async fn main() -> ExitCode {
 }
 
 #[derive(Debug)]
+struct SessionStatistics {
+    started_at: chrono::DateTime<chrono::Utc>,
+    polls: u64,
+    osa_fetches_track: u64,
+    osa_fetches_player: u64,
+}
+impl Default for SessionStatistics {
+    fn default() -> Self {
+        Self {
+            started_at: chrono::Utc::now(),
+            polls: 0,
+            osa_fetches_player: 0,
+            osa_fetches_track: 0
+        }
+    }
+}
+
+#[derive(Debug)]
 struct PollingContext {
     terminating: Arc<AtomicBool>,
     backends: status_backend::Backends,
@@ -270,12 +288,11 @@ struct PollingContext {
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
     musicdb: Arc<Option<musicdb::MusicDB>>,
     jxa: osa_apple_music::Session,
-    /// The number of polls that have been performed since the start of the application.
-    polls: u64,
     /// When the `PlayerState::Paused` started. If not paused, this is `None`.
     /// Used to detect when the state is *actually* considered paused, since sometimes the paused state is returned during the buffering of a song.
     /// If we clear the status in that case, any ratelimits may mean that the display of a new song takes longer.
-    paused_at: Option<std::time::Instant>
+    paused_at: Option<std::time::Instant>,
+    statistics: SessionStatistics
 }
 impl PollingContext {
     async fn from_config(config: &config::Config<'_>, terminating: Arc<AtomicBool>) -> Self {
@@ -286,11 +303,11 @@ impl PollingContext {
             listened: Arc::new(Mutex::new(Listened::new())),
             custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
             musicdb: Arc::new(Some(tracing::trace_span!("musicdb read").in_scope(MusicDB::default))),
-            polls: 0,
             paused_at: if config.backends.discord.is_some() { Some(std::time::Instant::now()) } else { None },
             jxa: osa_apple_music::Session::new(
                 crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket")
-            ).await.expect("failed to create `osa_apple_music` session")
+            ).await.expect("failed to create `osa_apple_music` session"),
+            statistics: SessionStatistics::default(),
         }
     }
 
@@ -307,6 +324,8 @@ impl PollingContext {
 async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     let mut guard = context.lock().await;
     let context = guard.deref_mut();
+
+    context.statistics.polls += 1;
 
     let app = match tracing::trace_span!("app status retrieval").in_scope(|| context.jxa.application()).await {
         Ok(app) => Arc::new(app),
@@ -326,9 +345,10 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
         }
     };
 
+    
     use osa_apple_music::application::PlayerState;
     context.paused_at = if app.state == PlayerState::Paused && context.paused_at.is_none() { Some(std::time::Instant::now()) } else { None };
-    context.polls += 1;
+    context.statistics.osa_fetches_player += 1;
 
     match app.state {
         PlayerState::FastForwarding | PlayerState::Rewinding => unimplemented!(),
@@ -356,11 +376,14 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
             }
         }
         PlayerState::Paused => {
-            // Three sequential pause states (including this one) are required to consider
-            // the state to actually be paused, as opposed to just buffer.
+            // Since buffer is considered "paused", we give a little wiggle room before actually considering
+            // the player as being deliberately paused, since a dispatch might result in a ratelimit being
+            // imposed which would prevent the dispatch of the next song from having its effects visible
+            // right away, as is the case for a Discord status.
             const THRESHOLD_CONSIDER_TRULY_PAUSED: core::time::Duration = core::time::Duration::from_secs(5);
 
             if context.paused_at.is_some_and(|p| p.elapsed() >= THRESHOLD_CONSIDER_TRULY_PAUSED) {
+                // TODO: Make this a dispatched event.
                 #[cfg(feature = "discord")]
                 if let Some(presence) = context.backends.discord.clone() {
                     if let Err(error) = presence.lock().await.clear().await {
@@ -391,6 +414,8 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                     return;
                 }
             };
+
+            context.statistics.osa_fetches_track += 1;
 
             // buffering / loading intermissions
             if track.kind.is_none() && (

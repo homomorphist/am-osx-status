@@ -8,8 +8,9 @@ CREATE TABLE IF NOT EXISTS session (
     ver_crate  TEXT NOT NULL, -- semver of this crate
     ver_music  TEXT NOT NULL, -- semver-ish (has four parts) of the Apple Music application
     ver_os     TEXT NOT NULL, -- semver of the operating system
-    osa_polls_track  INTEGER NOT NULL DEFAULT(0), -- # jxa polls for current track
-    osa_polls_music  INTEGER NOT NULL DEFAULT(0), -- # jxa polls for app status
+                polls   INTEGER NOT NULL DEFAULT(0),
+    osa_fetches_track   INTEGER NOT NULL DEFAULT(0), -- # jxa fetches for current track
+    osa_fetches_player  INTEGER NOT NULL DEFAULT(0), -- # jxa fetches for player/app status
     started_at  INTEGER NOT NULL DEFAULT(unixepoch('subsec') * 1000), 
       ended_at  INTEGER
 ) STRICT;
