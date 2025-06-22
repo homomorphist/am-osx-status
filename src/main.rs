@@ -8,6 +8,8 @@ use tracing::Instrument;
 use listened::Listened;
 use util::ferror;
 
+use crate::service::{ServiceRestartFailure, ServiceStopFailure};
+
 mod status_backend;
 mod listened;
 mod debugging;
@@ -139,24 +141,42 @@ async fn main() -> ExitCode {
 
             let controller = service::ServiceController::new();
 
-            match action {
-                ServiceAction::Start => if let Err(err) = controller.start(get_config_os_string!(), false) {
-                    ferror!("could not start service: {}", err)
-                }
-                ServiceAction::Stop => if let Err(err) = controller.stop() {
-                    ferror!("couldn't stop service: {}", err)
-                },
-                ServiceAction::Restart => if let Err(err) = controller.restart(get_config_os_string!()) {
-                    ferror!("couldn't restart service: {}", err)
-                },
-                ServiceAction::Reload => {
+            #[derive(thiserror::Error, Debug)]
+            enum ServiceFailure {
+                #[error("could not start service: {0}")]
+                Start(#[from] ServiceStartFailure),
+                #[error("could not stop service: {0}")]
+                Stop(#[from] ServiceStopFailure),
+                #[error("could not restart service: {0}")]
+                Restart(#[from] ServiceRestartFailure),
+                #[error("could not reload service: {0}")]
+                Reload(#[from] ServiceIpcError)
+            }
+
+            #[derive(thiserror::Error, Debug)]
+            enum ServiceIpcError {
+                #[error("failed to dispatch IPC packet ({0})")]
+                Dispatch(#[from] std::io::Error),
+                #[error("failed to establish IPC connection ({0})")]
+                Connection(std::io::Error),
+            }
+
+            if let Err(error) = match action {
+                ServiceAction::Start => controller.start(get_config_os_string!(), false).map_err(ServiceFailure::from),
+                ServiceAction::Stop => controller.stop().map_err(ServiceFailure::from),
+                ServiceAction::Restart => controller.restart(get_config_os_string!()).map_err(ServiceFailure::from),
+                ServiceAction::Reload => async {
                     use ipc::{Packet, PacketConnection};
                     let path = get_config_or_error!().socket_path;
-                    let mut connection = PacketConnection::from_path(path).await.unwrap_or_else(|err| ferror!("could not establish ipc connection: {}", err));
-                    connection.send(Packet::hello()).await.unwrap();
-                    connection.send(Packet::ReloadConfiguration).await.unwrap();
-                }
-            };
+                    let mut connection = PacketConnection::from_path(path).await.map_err(ServiceIpcError::Connection)?;
+                    connection.send(Packet::hello()).await?;
+                    connection.send(Packet::ReloadConfiguration).await?;
+                    Ok::<_, ServiceIpcError>(())
+                }.await.map_err(ServiceFailure::from)
+            } {
+                tracing::error!(%error);
+                ferror!("{error}");
+            }
         },
         Command::Configure { ref action } => {
             tokio::spawn(async {
