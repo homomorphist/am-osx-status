@@ -1,6 +1,6 @@
 # am-osx-status
 
-Work-in-progress macOS Apple Music state observer and recorder.
+Horribly unstable macOS Apple Music state observer and recorder.
 
 ## Features
 
