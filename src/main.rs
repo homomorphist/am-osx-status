@@ -300,7 +300,14 @@ impl PollingContext {
             backends: status_backend::Backends::new(config).await,
             last_track: None,
             listened: Arc::new(Mutex::new(Listened::new())),
-            custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
+            custom_artwork_host: {
+                // TODO: Make this configurable: ranked list of preferred hosts,
+                //       progressively falling back if upload fails.
+                #[cfg(feature = "catbox")]
+                { Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())) }
+                #[cfg(not(feature = "catbox"))]
+                { None }
+            },
             musicdb: Arc::new(Some(tracing::trace_span!("musicdb read").in_scope(MusicDB::default))),
             paused: None,
             jxa: osa_apple_music::Session::new(

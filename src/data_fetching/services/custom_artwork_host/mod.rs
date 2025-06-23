@@ -1,5 +1,6 @@
 use crate::status_backend::DispatchableTrack;
 
+#[cfg(feature = "catbox")]
 pub mod catbox;
 
 #[derive(thiserror::Error, Debug)]

@@ -10,7 +10,7 @@ edition = "2024"
 [dependencies]
 async-trait = "0.1.83"
 brainz = { path = "./crates/brainz/", optional = true }
-catbox = "0.8.2"
+catbox = { version = "0.8.2", optional = true }
 chrono = "0.4.38"
 clap = { version = "4.5.18", features = ["cargo", "derive"] }
 console-subscriber = "0.4.0"
@@ -46,10 +46,12 @@ sqlx = { version = "0.8.3", features = ["runtime-tokio", "sqlite-unbundled", "ma
 backtrace = "0.3.74"
 
 [features]
-default = ["discord", "listenbrainz", "lastfm"]
+default = ["all"]
+all = ["discord", "listenbrainz", "lastfm", "catbox"]
 discord = ["dep:discord-presence"]
 listenbrainz = ["dep:brainz"]
 lastfm = ["dep:lastfm"]
+catbox = ["dep:catbox"]
 tokio_console = []
 
 [profile.dev.package.sqlx]
