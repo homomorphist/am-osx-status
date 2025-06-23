@@ -470,8 +470,9 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                 match listened.current.as_ref() {
                     None => listened.set_new_current(position),
                     Some(current) => {
+                        const MAX_DRIFT_BEFORE_REDISPATCH: f32 = 2.; // seconds;
                         let expected = current.get_expected_song_position();
-                        if (expected - position).abs() >= 2. {
+                        if (expected - position).abs() >= MAX_DRIFT_BEFORE_REDISPATCH {
                             listened.flush_current();
                             listened.set_new_current(position);
                             drop(listened); // give up lock
