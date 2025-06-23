@@ -190,17 +190,17 @@ impl Debug for DiscordPresence {
 impl DiscordPresence {
     #[tracing::instrument(level = "debug")]
     pub async fn new(config: Config) -> Arc<Mutex<Self>> {
-        let instance = Self::disconnected(config);
+        let instance = Self::disconnected(config).await;
         match DiscordPresence::try_connect_in_place(instance.clone(), CONNECTION_ATTEMPT_TIMEOUT).await {
             Ok(()) => instance,
             Err(ConnectError::TimedOut) => {
                 tracing::warn!("client creation timed out; assuming Discord isn't open");
-                Self::disconnected(config)
+                Self::disconnected(config).await
             }
         }
     }
 
-    pub fn disconnected(config: Config) -> Arc<Mutex<Self>> {
+    pub async fn disconnected(config: Config) -> Arc<Mutex<Self>> {
         let (tx, mut rx) = tokio::sync::broadcast::channel(4);
 
         let state = Arc::new(Mutex::new(DiscordPresenceState::Disconnected));
@@ -226,19 +226,29 @@ impl DiscordPresence {
             pending_clear: core::mem::MaybeUninit::uninit(),
         }));
 
+        let init_completed = Arc::new(tokio::sync::Notify::new());
+        let init_completed_sender = init_completed.clone();
         let that_for_clear = Arc::downgrade(&this);
         let pending_clear = PendingStatusClear::default();
         let pending_clear = tokio::spawn(async move {
+            let act = if let Some(that) = that_for_clear.upgrade() {
+                let mut that = that.lock().await;
+                that.pending_clear.write(pending_clear);
+                init_completed_sender.notify_waiters();
+                unsafe { that.pending_clear.assume_init_mut() }.act.clone()
+            } else { panic!("dropped before initialization") };
+
             loop {
-                pending_clear.act.notified().await;
+                act.notified().await;
                 if let Some(that) = that_for_clear.upgrade() {
                     if let Err(error) = that.lock().await.clear().await {
                         tracing::error!(?error, "unable to clear discord status")
                     }
-
                 }
             }
         });
+
+        init_completed.notified().await;;
 
         let that_for_reconnect = Arc::downgrade(&this);
         DiscordPresence::enable_auto_reconnect(that_for_reconnect);
