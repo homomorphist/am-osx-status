@@ -239,6 +239,7 @@ async fn main() -> ExitCode {
                         },
                     }
                 },
+                #[cfg(feature = "discord")]
                 ConfigurationAction::Discord { action } => {
                     let mut config = get_config_or_error!();
                     if let Some(c) = config.backends.discord.as_mut() {
@@ -288,10 +289,7 @@ struct PollingContext {
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
     musicdb: Arc<Option<musicdb::MusicDB>>,
     jxa: osa_apple_music::Session,
-    /// When the `PlayerState::Paused` started. If not paused, this is `None`.
-    /// Used to detect when the state is *actually* considered paused, since sometimes the paused state is returned during the buffering of a song.
-    /// If we clear the status in that case, any ratelimits may mean that the display of a new song takes longer.
-    paused_at: Option<std::time::Instant>,
+    paused: Option<bool>,
     statistics: SessionStatistics
 }
 impl PollingContext {
@@ -303,7 +301,7 @@ impl PollingContext {
             listened: Arc::new(Mutex::new(Listened::new())),
             custom_artwork_host: Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())),
             musicdb: Arc::new(Some(tracing::trace_span!("musicdb read").in_scope(MusicDB::default))),
-            paused_at: if config.backends.discord.is_some() { Some(std::time::Instant::now()) } else { None },
+            paused: None,
             jxa: osa_apple_music::Session::new(
                 crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket")
             ).await.expect("failed to create `osa_apple_music` session"),
@@ -346,20 +344,12 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     };
 
     
-    use osa_apple_music::application::PlayerState;
-    context.paused_at = if app.state == PlayerState::Paused && context.paused_at.is_none() { Some(std::time::Instant::now()) } else { None };
     context.statistics.osa_fetches_player += 1;
-
+    context.backends.dispatch_status(app.state.into()).await;
+    use osa_apple_music::application::PlayerState;
     match app.state {
-        PlayerState::FastForwarding | PlayerState::Rewinding => unimplemented!(),
+        PlayerState::FastForwarding | PlayerState::Rewinding => unimplemented!("unforeseen player state"),
         PlayerState::Stopped => {
-            #[cfg(feature = "discord")]
-            if let Some(presence) = context.backends.discord.clone() {
-                if let Err(error) = presence.lock().await.clear().await {
-                    tracing::error!(?error, "unable to clear discord status")
-                }
-            }
-            
             context.listened.lock().await.flush_current();
             
             if let Some(previous) = context.last_track.clone() {
@@ -375,26 +365,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                 }).await;
             }
         }
-        PlayerState::Paused => {
-            // Since buffer is considered "paused", we give a little wiggle room before actually considering
-            // the player as being deliberately paused, since a dispatch might result in a ratelimit being
-            // imposed which would prevent the dispatch of the next song from having its effects visible
-            // right away, as is the case for a Discord status.
-            const THRESHOLD_CONSIDER_TRULY_PAUSED: core::time::Duration = core::time::Duration::from_secs(5);
-
-            if context.paused_at.is_some_and(|p| p.elapsed() >= THRESHOLD_CONSIDER_TRULY_PAUSED) {
-                // TODO: Make this a dispatched event.
-                #[cfg(feature = "discord")]
-                if let Some(presence) = context.backends.discord.clone() {
-                    if let Err(error) = presence.lock().await.clear().await {
-                        tracing::error!(?error, "unable to clear discord status")
-                    }
-                }
-
-                context.listened.lock().await.flush_current();
-            }
-        },
-
+        PlayerState::Paused => {},
         PlayerState::Playing => {
             let track = match context.jxa.now_playing().instrument(tracing::trace_span!("track retrieval")).await {
                 Ok(Some(track)) => track,

@@ -691,6 +691,28 @@ impl<A> Clone for BackendContext<A> {
     }
 }
 
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum DispatchedApplicationStatus {
+    Playing,
+    /// The music stopped and there is no more music that will start playing soon.
+    // TODO: uhh fact-check this it's been so long
+    Stopped,
+    /// A temporary pause in track playback; the boolean indicating whether this has started or ended.
+    /// This may not be a result of user action— this may also be dispatched when encountering playback buffering issues.
+    Paused,
+}
+impl From<osa_apple_music::application::PlayerState> for DispatchedApplicationStatus {
+    fn from(value: osa_apple_music::application::PlayerState) -> Self {
+        use osa_apple_music::application::PlayerState;
+        match value {
+            PlayerState::Playing => Self::Playing,
+            PlayerState::Paused => Self::Paused,
+            PlayerState::Stopped => Self::Stopped,
+            _ => unimplemented!("unforeseen player state")
+        }
+    }
+}
+
 struct TransientSendableUntypedRawBoxPointer(*mut u8); // are we so fr
 unsafe impl Send for TransientSendableUntypedRawBoxPointer {}
 
@@ -892,6 +914,7 @@ pub mod subscription {
         { TrackStarted<crate::status_backend::BackendContext<crate::data_fetching::AdditionalTrackData>> },
         { TrackEnded },
         { ProgressJolt },
+        { ApplicationStatusUpdate<crate::status_backend::DispatchedApplicationStatus> },
     ], {
         async fn get_solicitation(&self, event: self::Identity) -> Option<ComponentSolicitation>;
         #[allow(private_interfaces)]
@@ -1001,6 +1024,15 @@ impl Backends {
         }
     }
 
+    #[tracing::instrument(level = "debug")]
+    pub async fn dispatch_status(&self, status: DispatchedApplicationStatus) {
+        type Variant = subscription::type_identity::ApplicationStatusUpdate;
+        for (identity, error) in self.dispatch::<Variant>(status).await.into_errors_iter() {
+            error.handle(identity.get_name(), Variant {});
+        }
+    }
+
+
     pub async fn new(config: &crate::config::Config<'_>) -> Backends {        
         #[cfg(feature = "lastfm")]
         use crate::status_backend::lastfm::*;
@@ -1033,12 +1065,7 @@ impl Backends {
 
         #[cfg(feature = "discord")]
         let discord = match config.backends.discord.as_ref().copied() {
-            Some(config) if config.enabled => {
-                let wrapped = Arc::new(Mutex::new(DiscordPresence::new(config).await));
-                let weak = Arc::downgrade(&wrapped);
-                DiscordPresence::enable_auto_reconnect(weak).await;
-                Some(wrapped)
-            },
+            Some(config) if config.enabled => Some(DiscordPresence::new(config).await),
             _ => None
         };
 

@@ -68,12 +68,14 @@ pub enum ConfigurationAction {
     },
 
     /// Configure the Discord presence.
+    #[cfg(feature = "discord")]
     Discord {
         #[command(subcommand)]
         action: DiscordConfigurationAction
     },
 }
 
+#[cfg(feature = "discord")]
 #[derive(Subcommand)]
 pub enum DiscordConfigurationAction {
     /// Enable the Discord presence.

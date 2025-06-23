@@ -101,6 +101,65 @@ pub enum UpdateError {
     NotConnected
 }
 
+
+            // Since buffer is considered "paused", we give a little wiggle room before actually considering
+            // the player as being deliberately paused, since a dispatch might result in a ratelimit being
+            // imposed which would prevent the dispatch of the next song from having its effects visible
+            // right away, as is the case for a Discord status.
+            const THRESHOLD_CONSIDER_TRULY_PAUSED: core::time::Duration = core::time::Duration::from_secs(5);
+
+
+/// A cancelable status clear that will occur after [`THRESHOLD`](Self::THRESHOLD) amount of time.
+/// 
+/// A [`Pause`](super::subscription::Pause) can get dispatched during
+/// not just deliberate user intent, but also the time when waiting
+/// for a song to load.
+/// If we immediately clear the status when this occurs, the ratelimit
+/// imposed by Discord means that it will take some time before the
+/// status gets correctly set to the new song.
+/// As such, a delay is used to ensure that the pause lasts a reasonable
+/// duration that is unlikely to just be buffering or a quick pause before
+/// making the decision to clear the status.
+#[derive(Default)]
+struct PendingStatusClear {
+    intent: Arc<core::sync::atomic::AtomicBool>,
+    cancel: Arc<tokio::sync::Notify>,
+    pub act: Arc<tokio::sync::Notify> // hook
+}
+// TODO: this probably has a race condition lol
+impl PendingStatusClear {
+    /// The amount of time a pause needs to last for before the status is cleared.
+    pub const THRESHOLD: core::time::Duration = core::time::Duration::from_secs(5);
+
+    fn signal(&mut self) {
+        if self.intent.load(core::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+
+        let act = self.act.clone();
+        let cancel = self.cancel.clone();
+        let intends_to_clear = self.intent.clone();
+        self.intent.store(true, core::sync::atomic::Ordering::Relaxed);
+        tokio::spawn(async move {
+            let sleep = tokio::time::sleep(Self::THRESHOLD);
+            let cancelled = cancel.notified();
+            tokio::select!{
+                _ = cancelled => {},
+                _ = sleep => {
+                    act.notify_waiters();
+                    intends_to_clear.store(false, core::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        });
+    }
+
+    fn cancel(&mut self) {
+        self.intent.store(false, core::sync::atomic::Ordering::Relaxed);
+        self.cancel.clone().notify_waiters();
+    }
+}
+
+
 const CONNECTION_ATTEMPT_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(3);
 const TRY_AGAIN_DEBOUNCE: tokio::time::Duration = tokio::time::Duration::from_secs(7);
 
@@ -121,6 +180,7 @@ super::subscription::define_subscriber!(pub DiscordPresence, {
     activity: Option<discord_presence::models::Activity>,
     position: Option<f32>,
     duration: Option<f32>,
+    pending_clear: core::mem::MaybeUninit<PendingStatusClear>,
 });
 impl Debug for DiscordPresence {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -129,16 +189,18 @@ impl Debug for DiscordPresence {
 }
 impl DiscordPresence {
     #[tracing::instrument(level = "debug")]
-    pub async fn new(config: Config) -> Self {
+    pub async fn new(config: Config) -> Arc<Mutex<Self>> {
         let instance = Self::disconnected(config);
-        let instance = instance.try_connect(CONNECTION_ATTEMPT_TIMEOUT).await;
-        instance.unwrap_or_else(|_| {
-            tracing::warn!("client creation timed out; assuming Discord isn't open");
-            Self::disconnected(config)
-        })
+        match DiscordPresence::try_connect_in_place(instance.clone(), CONNECTION_ATTEMPT_TIMEOUT).await {
+            Ok(()) => instance,
+            Err(ConnectError::TimedOut) => {
+                tracing::warn!("client creation timed out; assuming Discord isn't open");
+                Self::disconnected(config)
+            }
+        }
     }
 
-    pub fn disconnected(config: Config) -> Self {
+    pub fn disconnected(config: Config) -> Arc<Mutex<Self>> {
         let (tx, mut rx) = tokio::sync::broadcast::channel(4);
 
         let state = Arc::new(Mutex::new(DiscordPresenceState::Disconnected));
@@ -150,7 +212,7 @@ impl DiscordPresence {
             }
         });
 
-        Self {
+        let this = Arc::new(Mutex::new(Self {
             config,
             client: None,
             state,
@@ -161,7 +223,28 @@ impl DiscordPresence {
             activity: None,
             position: None,
             duration: None,
-        }
+            pending_clear: core::mem::MaybeUninit::uninit(),
+        }));
+
+        let that_for_clear = Arc::downgrade(&this);
+        let pending_clear = PendingStatusClear::default();
+        let pending_clear = tokio::spawn(async move {
+            loop {
+                pending_clear.act.notified().await;
+                if let Some(that) = that_for_clear.upgrade() {
+                    if let Err(error) = that.lock().await.clear().await {
+                        tracing::error!(?error, "unable to clear discord status")
+                    }
+
+                }
+            }
+        });
+
+        let that_for_reconnect = Arc::downgrade(&this);
+        DiscordPresence::enable_auto_reconnect(that_for_reconnect);
+
+
+        this
     }
 
     pub async fn connect(mut self) -> Self {
@@ -231,7 +314,7 @@ impl DiscordPresence {
     }
 
 
-    pub async fn enable_auto_reconnect(instance: Weak<Mutex<Self>>) {
+    async fn enable_auto_reconnect(instance: Weak<Mutex<Self>>) {
         let mut rx = if let Some(instance) = instance.upgrade() {
             let lock = instance.lock().await;
 
@@ -424,4 +507,17 @@ super::subscribe!(DiscordPresence, ProgressJolt, {
         }
     }
 });
+super::subscribe!(DiscordPresence, ApplicationStatusUpdate, {
+    async fn dispatch(&mut self, status: super::DispatchedApplicationStatus) -> Result<(), DispatchError> {
+        use super::DispatchedApplicationStatus;
+        let pending_clear = unsafe { self.pending_clear.assume_init_mut() };
+        match status != DispatchedApplicationStatus::Playing {
+            true  => pending_clear.signal(),
+            false => pending_clear.cancel(),
+        };
+        Ok(())
+    }
+});
+
+
 
