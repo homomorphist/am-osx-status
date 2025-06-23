@@ -5,6 +5,12 @@ use services::{artworkd::{get_artwork, StoredArtwork}};
 
 pub mod components;
 
+#[cfg(feature = "musicdb")]
+type MusicDB = musicdb::MusicDB;
+#[cfg(not(feature = "musicdb"))]
+type MusicDB = ();
+
+
 #[derive(Debug)]
 pub struct AdditionalTrackData {
     pub itunes: Option<itunes_api::Track>,
@@ -14,7 +20,7 @@ impl AdditionalTrackData {
     pub async fn from_solicitation(
         solicitation: ComponentSolicitation,
         track: &crate::status_backend::DispatchableTrack,
-        musicdb: Option<&musicdb::MusicDB>,
+        musicdb: Option<&MusicDB>,
         host: Option<&mut Box<dyn crate::data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
     ) -> Self {
         let mut itunes: Option<itunes_api::Track> = None;
@@ -31,6 +37,7 @@ impl AdditionalTrackData {
             }
         }
 
+        #[cfg(feature = "musicdb")]
         if solicitation.list.contains(&Component::ArtistImage) && let Some(db) = musicdb {
             let id = musicdb::PersistentId::try_from(id).expect("bad id");
             images.artist = db.tracks().get(&id)
@@ -49,6 +56,7 @@ impl AdditionalTrackData {
                 }).ok()
             }
             
+            #[cfg(feature = "musicdb")]
             if images.track.is_none() && let Some(db) = musicdb {
                 let id = musicdb::PersistentId::try_from(id).expect("bad id");
                 images.track = db.tracks().get(&id)

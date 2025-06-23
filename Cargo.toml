@@ -17,7 +17,7 @@ console-subscriber = "0.4.0"
 discord-presence = { version = "1.5.0", features = ["activity_type"], optional = true }
 lastfm = { path = "./crates/lastfm", optional = true }
 maybe_owned_string = { path = "./crates/maybe_owned_string/" }
-musicdb = { path = "./crates/musicdb/", features = ["tracing"] }
+musicdb = { path = "./crates/musicdb/", features = ["tracing"], optional = true }
 mzstatic = { path = "./crates/mzstatic/" }
 reqwest = "0.12.7"
 serde = { version = "1.0.214", features = ["derive"] }
@@ -47,11 +47,12 @@ backtrace = "0.3.74"
 
 [features]
 default = ["all"]
-all = ["discord", "listenbrainz", "lastfm", "catbox"]
+all = ["discord", "listenbrainz", "lastfm", "catbox", "musicdb"]
 discord = ["dep:discord-presence"]
 listenbrainz = ["dep:brainz"]
 lastfm = ["dep:lastfm"]
 catbox = ["dep:catbox"]
+musicdb = ["dep:musicdb"]
 tokio_console = []
 
 [profile.dev.package.sqlx]

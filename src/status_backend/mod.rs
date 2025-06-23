@@ -690,7 +690,11 @@ pub struct BackendContext<A> {
     pub app: Arc<osa_apple_music::ApplicationData>,
     pub data: Arc<A>,
     pub listened: Arc<Mutex<crate::listened::Listened>>,
+
+    #[cfg(feature = "musicdb")]
     pub musicdb: Arc<Option<musicdb::MusicDB>>,
+    #[cfg(not(feature = "musicdb"))]
+    pub musicdb: Arc<Option<()>>,
 }
 impl<A> Clone for BackendContext<A> {
     fn clone(&self) -> Self {

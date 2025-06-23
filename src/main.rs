@@ -1,7 +1,6 @@
 #![allow(unused)]
 use std::{ops::DerefMut, process::ExitCode, sync::{atomic::AtomicBool, Arc}, time::Duration};
 use config::{ConfigPathChoice, ConfigRetrievalError};
-use musicdb::MusicDB;
 use status_backend::{subscription, BackendContext, DispatchableTrack};
 use tokio::sync::Mutex;
 use tracing::Instrument;
@@ -288,7 +287,12 @@ struct PollingContext {
     pub last_track: Option<Arc<DispatchableTrack>>,
     pub listened: Arc<Mutex<Listened>>,
     custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
+
+    #[cfg(feature = "musicdb")]
     musicdb: Arc<Option<musicdb::MusicDB>>,
+    #[cfg(not(feature = "musicdb"))]
+    musicdb: Arc<Option<()>>,
+
     jxa: osa_apple_music::Session,
     paused: Option<bool>,
     statistics: SessionStatistics
@@ -308,7 +312,14 @@ impl PollingContext {
                 #[cfg(not(feature = "catbox"))]
                 { None }
             },
-            musicdb: Arc::new(Some(tracing::trace_span!("musicdb read").in_scope(MusicDB::default))),
+            musicdb: {
+                // TODO: Make this configurable at runtime as well.
+                //       Also, allow providing a custom path...? I dunno, why not.
+                #[cfg(feature = "musicdb")]
+                { Arc::new(Some(tracing::trace_span!("musicdb read").in_scope(musicdb::MusicDB::default))) }
+                #[cfg(not(feature = "musicdb"))]
+                { Arc::new(None) }
+            },
             paused: None,
             jxa: osa_apple_music::Session::new(
                 crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket")

@@ -62,7 +62,6 @@ dependencies = [
  "include_dir",
  "itunes_api",
  "lastfm",
- "libc",
  "maybe_owned_string",
  "musicdb",
  "mzstatic",
