@@ -371,6 +371,7 @@ macro_rules! use_backends {
                         #[cfg(feature = $feature)]
                         Self::$ident => stringify!($ident),
                     )*
+                    _ => panic!("feature doesn't exist")
                 }
             }
             pub const fn get_holey_index(&self) -> u16 {
@@ -379,6 +380,7 @@ macro_rules! use_backends {
                         #[cfg(feature = $feature)]
                         Self::$ident => $id,
                     )*
+                    _ => panic!("feature doesn't exist")
                 }
             }
             pub const fn from_holey_index(index: u16) -> Option<Self> {
@@ -393,12 +395,19 @@ macro_rules! use_backends {
         }
 
         
-        #[derive(Debug, Default)]
+        #[derive(Debug)]
         pub struct BackendMap<T> {
             $(
                 #[cfg(feature = $feature)]
                 pub $name: Option<T>,
             )*
+
+            _type: core::marker::PhantomData<T>
+        }
+        impl<T> Default for BackendMap<T> {
+            fn default() -> Self {
+                Self::new()
+            }
         }
         impl<'a, T> BackendMap<T> {
             pub fn new() -> Self {
@@ -407,6 +416,8 @@ macro_rules! use_backends {
                         #[cfg(feature = $feature)]
                         $name: None,
                     )*
+
+                    _type: core::marker::PhantomData
                 }
             }
 
@@ -477,6 +488,7 @@ macro_rules! use_backends {
             pub struct BackendMapIntoIterator<T> {
                 inner: BackendMap<T>,
                 index: usize,
+                _type: core::marker::PhantomData<T>,
             }
             impl<T> IntoIterator for BackendMap<T> {
                 type Item = (BackendIdentity, Option<T>);
@@ -485,6 +497,7 @@ macro_rules! use_backends {
                     BackendMapIntoIterator {
                         inner: self,
                         index: 0,
+                        _type: core::marker::PhantomData
                     }
                 }
             }
@@ -965,7 +978,7 @@ impl Backends {
     #[tracing::instrument(skip(context), level = "debug")]
     async fn dispatch<T: subscription::TypeIdentity>(&self, context: T::DispatchContext) -> BackendMap<Result<T::DispatchReturn, DispatchError>> {
         let backends = self.all();
-        let mut outputs = BackendMap::new();
+        let mut outputs  = BackendMap::<Result<<T as subscription::TypeIdentity>::DispatchReturn, DispatchError>>::new();
         let mut jobs = Vec::with_capacity(backends.len());
 
         for backend in backends {

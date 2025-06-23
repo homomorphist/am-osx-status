@@ -17,6 +17,7 @@ pub enum ConfigPathChoice<'a> {
     /// This has the second-highest priority, overriding the default path but not one passed through a CLI flag.
     Environmental(std::ffi::OsString),
     /// Automatically determined path file based on the home directory, located in `~/Library/Application Support/am-osx-status/`.
+    /// This is the default, hence the name.
     Automatic(std::path::PathBuf)
 }
 impl<'a> ConfigPathChoice<'a> {

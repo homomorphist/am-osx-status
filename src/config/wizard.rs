@@ -91,108 +91,124 @@ pub mod io {
         }
     }
 
-    use crate::status_backend::{self, lastfm};
-    pub async fn prompt_lastfm(config: &mut Option<lastfm::Config>)  {
-        if prompt_bool("Enable last.fm Scrobbling?") {
-            if let Some(config) = config.as_mut() {
-                config.enabled = true;
-            } else {
-                *config = authorize_lastfm().await
-            }
-        } else if let Some(config) = config.as_mut() {
-            config.enabled = false;
-        }
-    }
+    #[cfg(feature = "discord")]
+    pub mod discord {
+        use super::*;
+        use crate::status_backend::discord;
 
-    use crate::status_backend::discord;
-    pub async fn prompt_discord(config: &mut Option<discord::Config>, force_enable: bool) {
-        if force_enable || prompt_bool("Enable Discord Rich Presence?") {
-            if let Some(config) = config.as_mut() {
-                config.enabled = true;
-            } else {
-                *config = Some(discord::Config::default());
-            }
-            let config = config.as_mut().unwrap();
-
-            use discord::EnumeratedApplicationIdentifier;
-            let mut options = Vec::<&str>::with_capacity(EnumeratedApplicationIdentifier::VARIANT_COUNT + 1);
-            options.push("Other (requires a custom application ID)");
-            for id in EnumeratedApplicationIdentifier::VARIANTS.iter() {
-                options.push(id.get_display_text());
-            }
-
-            let choice = prompt_choice(&options, "How should your activity display? (\"Listening to _________\")");
-            config.application_id = match prompt_choice(&options, "How should your activity display? (\"Listening to _________\")") {
-                0 => {
-                    const MAX_U64_LENGTH_IN_BASE_TEN: usize = 20;
-                    let id = prompt("Enter your custom application ID:", MAX_U64_LENGTH_IN_BASE_TEN + '\n'.len_utf8());
-                    id.trim().parse().expect("could not parse custom application ID")
-                },
-                index => EnumeratedApplicationIdentifier::VARIANTS[choice - index].get_id()
-            }
-        } else if let Some(config) = config.as_mut() {
-            config.enabled = false;
-        }
-    }
-
-    pub async fn authorize_lastfm() -> Option<lastfm::Config> {
-        let client = &crate::status_backend::lastfm::DEFAULT_CLIENT_IDENTITY;
-        let auth = match client.generate_authorization_token().await {
-            Ok(auth) => auth,
-            Err(error) => {
-                eprintln!("Error: {error}");
-                eprintln!("Continuing with last.fm support disabled. This can be reconfigured later.");
-                return None;
-            }
-        };
-        let auth_url = auth.generate_authorization_url(client);
-        println!("Continue after authorizing the application: {auth_url}");
-        if prompt_bool("Have you authorized the application?") {
-            match auth.generate_session_key(client).await {
-                Ok(key) => Some(crate::status_backend::lastfm::Config {
-                    enabled: true,
-                    identity: (*client).clone(),
-                    session_key: Some(key)
-                }),
-                Err(error) => {
-                    ferror!("couldn't create session key: {error}");
+        pub async fn prompt(config: &mut Option<discord::Config>, force_enable: bool) {
+            if force_enable || prompt_bool("Enable Discord Rich Presence?") {
+                if let Some(config) = config.as_mut() {
+                    config.enabled = true;
+                } else {
+                    *config = Some(discord::Config::default());
                 }
+                let config = config.as_mut().unwrap();
+    
+                use discord::EnumeratedApplicationIdentifier;
+                let mut options = Vec::<&str>::with_capacity(EnumeratedApplicationIdentifier::VARIANT_COUNT + 1);
+                options.push("Other (requires a custom application ID)");
+                for id in EnumeratedApplicationIdentifier::VARIANTS.iter() {
+                    options.push(id.get_display_text());
+                }
+    
+                let choice = prompt_choice(&options, "How should your activity display? (\"Listening to _________\")");
+                config.application_id = match prompt_choice(&options, "How should your activity display? (\"Listening to _________\")") {
+                    0 => {
+                        const MAX_U64_LENGTH_IN_BASE_TEN: usize = 20;
+                        let id = super::prompt("Enter your custom application ID:", MAX_U64_LENGTH_IN_BASE_TEN + '\n'.len_utf8());
+                        id.trim().parse().expect("could not parse custom application ID")
+                    },
+                    index => EnumeratedApplicationIdentifier::VARIANTS[choice - index].get_id()
+                }
+            } else if let Some(config) = config.as_mut() {
+                config.enabled = false;
             }
-        } else { None }
-    }
-
-    use crate::status_backend::listenbrainz;
-    pub async fn prompt_listenbrainz(config: &mut Option<listenbrainz::Config>) {
-        if prompt_bool("Enable ListenBrainz synchronization?") {
-            if let Some(config) = config.as_mut() {
-                config.enabled = true;
-            } else {
-                *config = authorize_listenbrainz().await
-            }
-        } else if let Some(config) = config.as_mut() {
-            config.enabled = false;
         }
     }
 
-    pub async fn authorize_listenbrainz() -> Option<listenbrainz::Config> {
-        loop {
-            const HYPHENATED_UUID_LENGTH: usize = 36;
-            let token = prompt(r#"Paste your access token (from https://listenbrainz.org/settings/) or type "cancel":"#, HYPHENATED_UUID_LENGTH + '\n'.len_utf8());
-            let token = &token[..token.len().saturating_sub('\n'.len_utf8())];
-            if token == "cancel" { break None; }
-            match brainz::listen::v1::UserToken::new(token).await {
-                Ok(token) => {
-                    break Some(crate::status_backend::listenbrainz::Config {
-                        enabled: true,
-                        program_info: crate::status_backend::listenbrainz::DEFAULT_PROGRAM_INFO.clone(),
-                        user_token: Some(token),
-                    })
-                },
+    #[cfg(feature = "lastfm")]
+    pub mod lastfm {
+        use super::*;
+        use crate::status_backend::lastfm::{self, *};
+
+        pub async fn prompt(config: &mut Option<lastfm::Config>)  {
+            if prompt_bool("Enable last.fm Scrobbling?") {
+                if let Some(config) = config.as_mut() {
+                    config.enabled = true;
+                } else {
+                    *config = authorize().await
+                }
+            } else if let Some(config) = config.as_mut() {
+                config.enabled = false;
+            }
+        }
+        
+
+        pub async fn authorize() -> Option<lastfm::Config> {
+            let client = &crate::status_backend::lastfm::DEFAULT_CLIENT_IDENTITY;
+            let auth = match client.generate_authorization_token().await {
+                Ok(auth) => auth,
                 Err(error) => {
-                    use brainz::listen::v1::token_validity::ValidTokenInstantiationError;
-                    match error {
-                        ValidTokenInstantiationError::Invalid(..) => eprintln!("Invalid token!"),
-                        ValidTokenInstantiationError::ValidityCheckFailure(failure) => eprintln!("Network failure: {}", failure.without_url())
+                    eprintln!("Error: {error}");
+                    eprintln!("Continuing with last.fm support disabled. This can be reconfigured later.");
+                    return None;
+                }
+            };
+            let auth_url = auth.generate_authorization_url(client);
+            println!("Continue after authorizing the application: {auth_url}");
+            if prompt_bool("Have you authorized the application?") {
+                match auth.generate_session_key(client).await {
+                    Ok(key) => Some(crate::status_backend::lastfm::Config {
+                        enabled: true,
+                        identity: (*client).clone(),
+                        session_key: Some(key)
+                    }),
+                    Err(error) => {
+                        ferror!("couldn't create session key: {error}");
+                    }
+                }
+            } else { None }
+        }
+    }
+
+    #[cfg(feature = "listenbrainz")]
+    pub mod listenbrainz {
+        use super::*;
+        use crate::status_backend::listenbrainz;
+
+        pub async fn prompt(config: &mut Option<listenbrainz::Config>) {
+            if prompt_bool("Enable ListenBrainz synchronization?") {
+                if let Some(config) = config.as_mut() {
+                    config.enabled = true;
+                } else {
+                    *config = authorize().await
+                }
+            } else if let Some(config) = config.as_mut() {
+                config.enabled = false;
+            }
+        }
+
+        pub async fn authorize() -> Option<listenbrainz::Config> {
+            loop {
+                const HYPHENATED_UUID_LENGTH: usize = 36;
+                let token = super::prompt(r#"Paste your access token (from https://listenbrainz.org/settings/) or type "cancel":"#, HYPHENATED_UUID_LENGTH + '\n'.len_utf8());
+                let token = &token[..token.len().saturating_sub('\n'.len_utf8())];
+                if token == "cancel" { break None; }
+                match brainz::listen::v1::UserToken::new(token).await {
+                    Ok(token) => {
+                        break Some(crate::status_backend::listenbrainz::Config {
+                            enabled: true,
+                            program_info: crate::status_backend::listenbrainz::DEFAULT_PROGRAM_INFO.clone(),
+                            user_token: Some(token),
+                        })
+                    },
+                    Err(error) => {
+                        use brainz::listen::v1::token_validity::ValidTokenInstantiationError;
+                        match error {
+                            ValidTokenInstantiationError::Invalid(..) => eprintln!("Invalid token!"),
+                            ValidTokenInstantiationError::ValidityCheckFailure(failure) => eprintln!("Network failure: {}", failure.without_url())
+                        }
                     }
                 }
             }

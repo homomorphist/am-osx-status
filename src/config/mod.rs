@@ -80,9 +80,12 @@ impl<'a> Config<'a> {
     }
 
     pub async fn edit_with_wizard(&mut self)  {
-        wizard::io::prompt_discord(&mut self.backends.discord, false).await;
-        wizard::io::prompt_lastfm(&mut self.backends.lastfm).await;
-        wizard::io::prompt_listenbrainz(&mut self.backends.listenbrainz).await;
+        #[cfg(feature = "discord")]
+        wizard::io::discord::prompt(&mut self.backends.discord, false).await;
+        #[cfg(feature = "lastfm")]
+        wizard::io::lastfm::prompt(&mut self.backends.lastfm).await;
+        #[cfg(feature = "listenbrainz")]
+        wizard::io::listenbrainz::prompt(&mut self.backends.listenbrainz).await;
     }
 
     /// NOTE: Will not write to the provided path unless [`Self::save_to_disk`] is called.
@@ -122,6 +125,7 @@ pub struct ConfigurableBackends {
     #[cfg_attr(feature = "listenbrainz", serde(default))]
     pub listenbrainz: Option<crate::status_backend::listenbrainz::Config>
 }
+#[allow(clippy::derivable_impls)]
 impl Default for ConfigurableBackends {
     fn default() -> Self {
         Self {
