@@ -245,7 +245,7 @@ pub struct Error {
     session: Key<Session>,
 }
 impl FromKey for Error {
-    const TABLE_NAME: &'static str = "error";
+    const TABLE_NAME: &'static str = "errors";
 }
 impl Error {
     async fn new(pool: &sqlx::SqlitePool, session: &Session, source: &DispatchError) -> sqlx::Result<Self> {
