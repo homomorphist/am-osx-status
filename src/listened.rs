@@ -82,7 +82,11 @@ impl Listened {
     }
 
     pub fn started_at(&self) -> Option<DateTime> {
-        self.current.as_ref().map(|c| c.started_at)
+        self.contiguous
+            .iter()
+            .map(|chunk| chunk.started_at)
+            .chain(self.current.as_ref().map(|current| current.started_at))
+            .min()
     }
 
     /// Returns the index in which a [`CurrentListened`] should be placed
