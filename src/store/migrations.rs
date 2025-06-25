@@ -54,8 +54,8 @@ pub(super) fn get_migrations() -> Vec<Migration> {
     migrations
 }
 
-fn is_from_missing_session_table(err: &sqlx::Error) -> bool {
-    err.as_database_error().is_some_and(|v| v.message() == "no such table: session")
+fn is_from_missing_sessions_table(err: &sqlx::Error) -> bool {
+    err.as_database_error().is_some_and(|v| v.message() == "no such table: sessions")
 }
 
 async fn migrate() {
@@ -74,15 +74,15 @@ async fn migrate() {
 }
 
 async fn get_last_run_epoch() -> Option<Epoch> {
-    sqlx::query("SELECT started_at FROM session ORDER BY started_at DESC LIMIT 1")
+    sqlx::query("SELECT started_at FROM sessions ORDER BY started_at DESC LIMIT 1")
         .fetch_optional(&DB_POOL.get().await.expect("failed to get pool"))
         .await
-        .or_else(|err| { if is_from_missing_session_table(&err) { Ok(None) } else { Err(err) } })
+        .or_else(|err| { if is_from_missing_sessions_table(&err) { Ok(None) } else { Err(err) } })
         .expect("failed to get last run epoch")
         .map(|v| v.get::<u32, _>(0))
         .and_then(|v| match Epoch::from_timestamp(v as i64, 0) {
             Some(v) => Some(v),
-            None => { tracing::error!(?v, "session epoch out of valid date range; ignoring"); None }
+            None => { tracing::error!(?v, "sessions epoch out of valid date range; ignoring"); None }
         })
 }
 

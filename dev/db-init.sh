@@ -15,7 +15,7 @@ cargo sqlx database create
 DIR_SELF="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 MIGRATIONS="$DIR_SELF/../src/store/sql/migrations"
 
-if [ "$1" == "-s" || "$2" == "-s" ]; then
+if [ "$1" == "-s" ] || [ "$2" == "-s" ]; then
     echo "Skipping migrations"
     exit 0
 else

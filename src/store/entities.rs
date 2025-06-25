@@ -1,7 +1,6 @@
 use crate::status_backend::error::DispatchError;
 use super::MaybeStaticSqlError;
 
-
 pub struct Key<T>(i64, core::marker::PhantomData<T>);
 impl<'r, T> sqlx::Encode<'r, sqlx::Sqlite> for Key<T> where i64: sqlx::Encode<'r, sqlx::Sqlite> {
     fn encode_by_ref(&self, buf: &mut <sqlx::Sqlite as sqlx::Database>::ArgumentBuffer<'r>) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + 'static + Send + Sync>> {
@@ -31,7 +30,11 @@ impl<T> Clone for Key<T> {
     fn clone(&self) -> Self { *self }
 }
 impl<T> Copy for Key<T> {}
-
+impl<T> core::fmt::Debug for Key<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Key::<{}>({})", std::any::type_name::<T>(), self.0)
+    }
+}
 
 trait KeyCollection<T>: Sized {
     fn len(&self) -> usize;
@@ -117,12 +120,12 @@ pub struct DeferredTrack {
     pub track: crate::DispatchableTrack
 }
 impl FromKey for DeferredTrack {
-    const TABLE_NAME: &'static str = "deferred_track";
+    const TABLE_NAME: &'static str = "deferred_tracks";
 }
 impl DeferredTrack {
     pub async fn insert_in_pool(pool: &sqlx::SqlitePool, track: &crate::DispatchableTrack) -> sqlx::Result<Key<Self>> {
         sqlx::query_as::<_, Self>(r#"
-            INSERT INTO deferred_track (
+            INSERT INTO deferred_tracks (
                 title,
                 artist,
                 album,
@@ -151,7 +154,7 @@ impl DeferredTrack {
 
     pub async fn get_with_persistent_id_in_pool(pool: &sqlx::SqlitePool, persistent_id: &str) -> sqlx::Result<Option<Self>> {
         sqlx::query_as::<_, Self>(r#"
-            SELECT * FROM deferred_track WHERE persistent_id = ?
+            SELECT * FROM deferred_tracks WHERE persistent_id = ?
         "#)
             .bind(persistent_id)
             .fetch_optional(pool).await
@@ -162,7 +165,7 @@ impl DeferredTrack {
     }
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(sqlx::FromRow, Debug)]
 pub struct Session {
     id: Key<Self>,
 
@@ -172,15 +175,20 @@ pub struct Session {
 
     /// The version of apple music at the time of the session.
     /// This is like a semver, but it has four parts.
-    #[sqlx(rename = "ver_music")]
-    pub am_version: String,
+    #[sqlx(rename = "ver_player")]
+    pub player_version: String,
 
     /// The (semver) version of the operating system at the time of the session.
     #[sqlx(rename = "ver_os")]
     pub os_version: String,
 
-    pub osa_polls_track: i64,
-    pub osa_polls_music: i64,
+    /// JXA fetch count for track information.
+    /// A positive integer.
+    pub osa_fetches_track: i64,
+
+    /// JXA fetch count for player information.
+    /// A positive integer.
+    pub osa_fetches_player: i64,
 
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -191,40 +199,50 @@ impl Session {
     }
 }
 impl FromKey for Session {
-    const TABLE_NAME: &'static str = "session";
+    const TABLE_NAME: &'static str = "sessions";
 }
 impl Session {
     pub async fn new(
         pool: &sqlx::SqlitePool,
-        am_version: &str,
-        os_version: &str,
+        player_version: &str,
     ) -> sqlx::Result<Self> {
         sqlx::query_as::<_, Self>(r#"
-            INSERT INTO session (
+            INSERT INTO sessions (
                 ver_crate,
-                ver_music,
-                ver_os,
-                started_at
-            ) VALUES (?, ?, ?,?) RETURNING * 
+                ver_player,
+                ver_os
+            ) VALUES (?, ?, ?) RETURNING * 
         "#)
             .bind(clap::crate_version!())
-            .bind(am_version)
-            .bind(os_version)
-            .bind(chrono::Utc::now())
+            .bind(player_version)
+            .bind(crate::util::get_macos_version().await)
             .fetch_one(pool).await
     }
-    pub async fn finish(&self, pool: &sqlx::SqlitePool) -> sqlx::Result<()> {
-        let now = chrono::Utc::now();
+    pub async fn update(&self, pool: &sqlx::SqlitePool) -> sqlx::Result<()> {
         sqlx::query!(r#"
-            UPDATE session SET
+            UPDATE sessions SET
+                osa_fetches_track = ?,
+                osa_fetches_player = ?
+            WHERE id = ?
+        "#, 
+            self.osa_fetches_track,
+            self.osa_fetches_player,
+            self.id
+        ).execute(pool).await?;
+        Ok(())
+    }
+    pub async fn finish(&self, pool: &sqlx::SqlitePool) -> sqlx::Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        sqlx::query!(r#"
+            UPDATE sessions SET
                 ended_at = ?,
-                osa_polls_track = ?,
-                osa_polls_music = ?
+                osa_fetches_track = ?,
+                osa_fetches_player = ?
             WHERE id = ?
         "#, 
             now,
-            self.osa_polls_track,
-            self.osa_polls_music,
+            self.osa_fetches_track,
+            self.osa_fetches_player,
             self.id,
         ).execute(pool).await.and_then(|v| {
             if v.rows_affected() == 0 {
@@ -250,7 +268,7 @@ impl FromKey for Error {
 impl Error {
     async fn new(pool: &sqlx::SqlitePool, session: &Session, source: &DispatchError) -> sqlx::Result<Self> {
         sqlx::query_as::<_, Self>(r#"
-            INSERT INTO error (
+            INSERT INTO errors (
                 fmt_display,
                 fmt_debug,
                 session
@@ -270,6 +288,14 @@ pub struct PendingDispatch {
     backend: String,
     #[sqlx(rename = "track")] track: Key<DeferredTrack>,
     #[sqlx(rename = "error")] error: Key<Error>,
+}
+impl PendingDispatch {
+    pub async fn track(&self) -> DeferredTrack {
+        DeferredTrack::get(self.track).await.expect("failed to get deferred track")
+    }
+    pub async fn error(&self) -> Error {
+        Error::get(self.error).await.expect("failed to get error")
+    }
 }
 
 #[cfg(test)]

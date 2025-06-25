@@ -117,11 +117,15 @@ async fn main() -> ExitCode {
             } else { None };
 
             // If we get stuck somewhere in the main loop, we still want a way to exit if the user/system desires.
-            tokio::spawn(async {
+            let session_closer_ctx = context.clone();
+            tokio::spawn(async move {
                 pending_term.await;
                 drop(listener); // remove listener socket
                 drop(debugging.guards); // flush logs
-                tokio::time::sleep(Duration::new(1, 0)).await;
+                let db_pool = &store::DB_POOL.get().await.expect("failed to get database pool");
+                let session = &mut session_closer_ctx.lock().await.session;
+                session.ended_at = Some(chrono::Utc::now());
+                session.finish(db_pool).await.expect("failed to finish session in database");
                 std::process::exit(1);
             });
 
@@ -263,24 +267,6 @@ async fn main() -> ExitCode {
 }
 
 #[derive(Debug)]
-struct SessionStatistics {
-    started_at: chrono::DateTime<chrono::Utc>,
-    polls: u64,
-    osa_fetches_track: u64,
-    osa_fetches_player: u64,
-}
-impl Default for SessionStatistics {
-    fn default() -> Self {
-        Self {
-            started_at: chrono::Utc::now(),
-            polls: 0,
-            osa_fetches_player: 0,
-            osa_fetches_track: 0
-        }
-    }
-}
-
-#[derive(Debug)]
 struct PollingContext {
     terminating: Arc<AtomicBool>,
     backends: status_backend::Backends,
@@ -295,10 +281,16 @@ struct PollingContext {
 
     jxa: osa_apple_music::Session,
     paused: Option<bool>,
-    statistics: SessionStatistics
+    session: store::entities::Session,
 }
 impl PollingContext {
     async fn from_config(config: &config::Config<'_>, terminating: Arc<AtomicBool>) -> Self {
+        let mut jxa = osa_apple_music::Session::new(
+            crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket")
+        ).await.expect("failed to create `osa_apple_music` session");
+
+        let player_version = jxa.application().await.expect("failed to retrieve application data").version;
+
         Self {
             terminating,
             backends: status_backend::Backends::new(config).await,
@@ -321,10 +313,11 @@ impl PollingContext {
                 { Arc::new(None) }
             },
             paused: None,
-            jxa: osa_apple_music::Session::new(
-                crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket")
-            ).await.expect("failed to create `osa_apple_music` session"),
-            statistics: SessionStatistics::default(),
+            jxa,
+            session: store::entities::Session::new(
+                &store::DB_POOL.get().await.expect("failed to get database pool"),
+                &player_version
+            ).await.unwrap_or_else(|err| ferror!("failed to create session in database: {}", err))
         }
     }
 
@@ -341,8 +334,6 @@ impl PollingContext {
 async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     let mut guard = context.lock().await;
     let context = guard.deref_mut();
-
-    context.statistics.polls += 1;
 
     let app = match tracing::trace_span!("app status retrieval").in_scope(|| context.jxa.application()).await {
         Ok(app) => Arc::new(app),
@@ -362,8 +353,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
         }
     };
 
-    
-    context.statistics.osa_fetches_player += 1;
+    context.session.osa_fetches_player += 1;
     context.backends.dispatch_status(app.state.into()).await;
     use osa_apple_music::application::PlayerState;
     match app.state {
@@ -405,7 +395,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                 }
             };
 
-            context.statistics.osa_fetches_track += 1;
+            context.session.osa_fetches_track += 1;
 
             // buffering / loading intermissions
             if track.kind.is_none() && (

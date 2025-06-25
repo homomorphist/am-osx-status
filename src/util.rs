@@ -11,6 +11,23 @@ pub static OWN_PID: LazyLock<sysinfo::Pid> = LazyLock::new(|| {
     sysinfo::get_current_pid().expect("unsupported platform")
 });
 
+pub async fn get_macos_version() -> Option<String> {
+    use tokio::process::Command;
+
+    let output = Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .await
+        .expect("failed to execute sw_vers command");
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        tracing::error!("Failed to get macOS version: {}", String::from_utf8_lossy(&output.stderr));
+        None
+    }
+}
+
 macro_rules! ferror {
     ($($t: tt)*) => {
         {
