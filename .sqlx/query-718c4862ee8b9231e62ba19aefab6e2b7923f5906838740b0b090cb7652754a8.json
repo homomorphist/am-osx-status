@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE sessions SET\n                osa_fetches_track = ?,\n                osa_fetches_player = ?\n            WHERE id = ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "718c4862ee8b9231e62ba19aefab6e2b7923f5906838740b0b090cb7652754a8"
+}

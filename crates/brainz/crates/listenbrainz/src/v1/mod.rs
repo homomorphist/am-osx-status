@@ -96,7 +96,8 @@ impl<PS: AsRef<str>> Client<PS> {
     fn mk_net(program: &musicbrainz::request_client::ProgramInfo<PS>, token: Option<&UserToken>) -> reqwest::Client {
         let mut client = reqwest::ClientBuilder::new()
             .https_only(true)
-            .user_agent(program.to_user_agent());
+            .user_agent(program.to_user_agent())
+            .connection_verbose(true);
 
         if let Some(token) = token {
             use reqwest::header::*;
