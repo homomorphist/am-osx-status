@@ -1,4 +1,4 @@
-pub const REPOSITORY_URL: &str = "https://github.com/Agapurnis/am-osx-status";
+pub const REPOSITORY_URL: &str = "https://github.com/homomorphist/am-osx-status";
 
 use std::sync::LazyLock;
 /// User home directory.
