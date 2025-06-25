@@ -94,7 +94,7 @@ fn main() {
                 }
             }
 
-            let exported = format!("{musicdb:#?}");
+            let exported = format!("{musicdb:#?}").replace("    ", "\t");
             let is_stdout = output.as_ref() == Some(&Destination::Stdout);
             let mut writer = std::io::BufWriter::new(output.unwrap_or_default().into_writer());
 
