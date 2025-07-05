@@ -1050,7 +1050,7 @@ impl Backends {
     }
 
 
-    pub async fn new(config: &crate::config::Config<'_>) -> Backends {        
+    pub async fn new(config: &crate::config::Config) -> Backends {        
         #[cfg(feature = "lastfm")]
         use crate::status_backend::lastfm::*;
 

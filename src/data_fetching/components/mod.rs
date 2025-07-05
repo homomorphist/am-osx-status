@@ -1,6 +1,6 @@
 use std::{collections::HashSet, ops::AddAssign};
 
-pub mod image;
+pub mod artwork;
 
 #[derive(Eq, PartialEq, Hash, Debug)]
 pub enum Component {
@@ -20,4 +20,3 @@ impl AddAssign<ComponentSolicitation> for ComponentSolicitation {
         }
     }
 }
-

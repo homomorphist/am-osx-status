@@ -44,3 +44,11 @@ CREATE TABLE IF NOT EXISTS pending_dispatches (
     FOREIGN KEY(track) REFERENCES deferred_tracks(id),
     FOREIGN KEY(error) REFERENCES errors(id)
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS custom_artwork_urls (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT, 
+    source_path  TEXT    NOT NULL, -- path to the file on disk
+    uploaded_at  INTEGER NOT NULL DEFAULT(unixepoch('subsec') * 1000),
+     expires_at  INTEGER, -- unix epoch, milliseconds
+    artwork_url  TEXT    NOT NULL
+) STRICT;

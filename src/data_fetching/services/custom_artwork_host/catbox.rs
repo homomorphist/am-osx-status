@@ -1,35 +1,27 @@
 use std::collections::HashMap;
-use crate::status_backend::DispatchableTrack;
-
-// TODO: Persist this to a disk? I don't wanna spam any APIs when I keep restarting a program.
-#[derive(Debug)]
-struct Entry {
-    url: String,
-    expires_at: chrono::DateTime<chrono::Utc>
-}
+use crate::{data_fetching::services, status_backend::DispatchableTrack};
 
 #[derive(Debug, Default)]
-pub struct CatboxHost(HashMap</* album key */ String, Entry>);
+pub struct CatboxHost;
 #[async_trait::async_trait]
 impl super::CustomArtworkHost for CatboxHost {
-    async fn get_for_track(&self, track: &DispatchableTrack) -> Result<Option<String>, super::RetrievalError> {
-        if let Some(entry) = self.0.get(&Self::key_for_track(track)) {
-            const EXTERNAL_ACCESS_DELAY: chrono::Duration = chrono::Duration::seconds(5);
-            let did_expire =  entry.expires_at < chrono::Utc::now() + EXTERNAL_ACCESS_DELAY; // or will expire in next 5 seconds
-            if did_expire { Ok(None) } else { Ok(Some(entry.url.clone())) }
-        } else { Ok(None) }
+    async fn new(config: &<Self as super::CustomArtworkHostMetadata>::Config) -> Self where Self: Sized + super::CustomArtworkHostMetadata {
+        Self::default()
     }
     
-    async fn upload_for_track(&mut self, track: &DispatchableTrack, path: &str) -> Result<String, super::UploadError> {
+    async fn upload(&mut self, pool: &sqlx::SqlitePool, track: &DispatchableTrack, path: &str) -> Result<crate::store::entities::CustomArtworkUrl, super::UploadError> {
         const EXPIRES_IN_HOURS: u8 = 1;
         let url = ::catbox::litter::upload(path, EXPIRES_IN_HOURS).await.map_err(|error| {
-            tracing::error!(?error, "catbox upload error");
+            tracing::error!(?error, ?path, "catbox upload error");
             super::UploadError::UnknownError
         })?;
         let expires_at = chrono::Utc::now() + chrono::Duration::hours(EXPIRES_IN_HOURS as i64);
-        self.0.insert(Self::key_for_track(track), Entry { url: url.clone(), expires_at });
-        Ok(url)
+        Ok(crate::store::entities::CustomArtworkUrl::new(pool, Some(expires_at), path, &url).await?)
     }
+}
+impl super::CustomArtworkHostMetadata for CatboxHost {
+    const IDENTITY: super::HostIdentity = super::HostIdentity::Catbox;
+    type Config = ();
 }
 impl CatboxHost {
     fn key_for_track(track: &DispatchableTrack) -> String {
@@ -39,8 +31,6 @@ impl CatboxHost {
             track.album.as_deref().unwrap_or("Unknown Album")
         )
     }
-
-    pub fn new() -> Self {
-        Self::default()
-    }
 }
+
+pub use CatboxHost as Host;

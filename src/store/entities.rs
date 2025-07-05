@@ -298,6 +298,66 @@ impl PendingDispatch {
     }
 }
 
+
+#[derive(sqlx::FromRow)]
+pub struct CustomArtworkUrl {
+    id: Key<Self>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub source_path: String,
+    #[sqlx(rename = "artwork_url")]
+    pub url: String,
+}
+impl FromKey for CustomArtworkUrl {
+    const TABLE_NAME: &'static str = "custom_artwork_urls";
+}
+impl CustomArtworkUrl {
+    pub async fn new(
+        pool: &sqlx::SqlitePool,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        source_path: &str,
+        artwork_url: &str,
+    ) -> sqlx::Result<Self> {
+        let expires_at = expires_at.map(|dt| dt.timestamp_millis());
+        sqlx::query_as::<_, Self>(r#"
+            INSERT INTO custom_artwork_urls (
+                expires_at,
+                source_path,
+                artwork_url
+            ) VALUES (?, ?, ?) RETURNING *
+        "#)
+            .bind(expires_at)
+            .bind(source_path)
+            .bind(artwork_url)
+            .fetch_one(pool).await
+    }
+
+    pub async fn get_by_source_path_in_pool(
+        pool: &sqlx::SqlitePool,
+        source_path: &str,
+    ) -> sqlx::Result<Option<Self>> {
+        sqlx::query_as::<_, Self>(r#"
+            SELECT * FROM custom_artwork_urls WHERE source_path = ?
+        "#)
+            .bind(source_path)
+            .fetch_optional(pool).await
+    }
+    
+    pub async fn cleanup(pool: &sqlx::SqlitePool) -> sqlx::Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        sqlx::query!(r#"
+            DELETE FROM custom_artwork_urls WHERE expires_at < ?
+        "#, now)
+            .execute(pool).await?;
+        Ok(())
+    }
+}
+impl CustomArtworkUrl {
+    pub fn is_expired(&self) -> bool {
+        const LATENCY_OFFSET: core::time::Duration = core::time::Duration::from_secs(1);
+        self.expires_at.is_some_and(|expires_at| expires_at < chrono::Utc::now() + LATENCY_OFFSET)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_utilities::*;

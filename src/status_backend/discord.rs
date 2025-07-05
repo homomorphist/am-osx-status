@@ -471,6 +471,7 @@ super::subscribe!(DiscordPresence, TrackStarted, {
         let super::BackendContext { track, listened, data: additional_info, .. } = context;
         self.position = listened.lock().await.current.as_ref().map(|position| position.get_expected_song_position());
         self.duration = track.duration.map(|d| d.as_secs_f32());
+        let image_urls = additional_info.images.urls();
 
         fn make_minimum_length(mut s: String) -> String {
             if s.len() < 2 {
@@ -489,8 +490,8 @@ super::subscribe!(DiscordPresence, TrackStarted, {
             .state(track.artist.clone().map(make_minimum_length).unwrap_or("Unknown Artist".to_owned()))
             .assets(|_| ActivityAssets {
                 large_text: track.album.clone().map(make_minimum_length),
-                large_image: additional_info.images.track.clone(),
-                small_image: additional_info.images.artist.clone(),
+                large_image: image_urls.track.map(str::to_owned),
+                small_image: image_urls.artist.map(str::to_owned),
                 small_text: track.artist.clone().map(make_minimum_length),
             });
 

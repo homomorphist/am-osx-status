@@ -8,6 +8,7 @@ use listened::Listened;
 use util::ferror;
 
 use crate::service::{ServiceRestartFailure, ServiceStopFailure};
+use crate::config::LoadableConfig;
 
 mod status_backend;
 mod listened;
@@ -272,7 +273,7 @@ struct PollingContext {
     backends: status_backend::Backends,
     pub last_track: Option<Arc<DispatchableTrack>>,
     pub listened: Arc<Mutex<Listened>>,
-    custom_artwork_host: Option<Box<dyn data_fetching::services::custom_artwork_host::CustomArtworkHost>>,
+    artwork_manager: Arc<data_fetching::components::artwork::ArtworkManager>,
 
     #[cfg(feature = "musicdb")]
     musicdb: Arc<Option<musicdb::MusicDB>>,
@@ -284,26 +285,37 @@ struct PollingContext {
     session: store::entities::Session,
 }
 impl PollingContext {
-    async fn from_config(config: &config::Config<'_>, terminating: Arc<AtomicBool>) -> Self {
-        let mut jxa = osa_apple_music::Session::new(
-            crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket")
-        ).await.expect("failed to create `osa_apple_music` session");
+    async fn from_config(config: &config::Config, terminating: Arc<AtomicBool>) -> Self {
+        let (backends, (artwork_manager, jxa, session)) = tokio::join!(
+            status_backend::Backends::new(config),
+            async {
+                let ((pool, artwork_manager), (jxa, player_version)) = tokio::join!(
+                    async {
+                        let pool = store::DB_POOL.get().await.expect("failed to get database pool");
+                        let artwork_manager = data_fetching::components::artwork::ArtworkManager::new(pool.clone(), &config.artwork_hosts).await;
+                        (pool, artwork_manager)
+                    },
+                    async {
+                        let jxa_socket = crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket");
+                        let mut jxa = osa_apple_music::Session::new(jxa_socket).await.expect("failed to create JXA session");
+                        let player_version = jxa.application().await.expect("failed to retrieve application data").version;
+                        (jxa, player_version)
+                    }
+                );
 
-        let player_version = jxa.application().await.expect("failed to retrieve application data").version;
+                let session = store::entities::Session::new(&pool, &player_version)
+                    .await.unwrap_or_else(|err| ferror!("failed to create session in database: {}", err));
+
+                (artwork_manager, jxa, session)
+            }
+        );
 
         Self {
             terminating,
-            backends: status_backend::Backends::new(config).await,
+            backends,
             last_track: None,
             listened: Arc::new(Mutex::new(Listened::new())),
-            custom_artwork_host: {
-                // TODO: Make this configurable: ranked list of preferred hosts,
-                //       progressively falling back if upload fails.
-                #[cfg(feature = "catbox")]
-                { Some(Box::new(data_fetching::services::custom_artwork_host::catbox::CatboxHost::new())) }
-                #[cfg(not(feature = "catbox"))]
-                { None }
-            },
+            artwork_manager: Arc::new(artwork_manager),
             musicdb: {
                 // TODO: Make this configurable at runtime as well.
                 //       Also, allow providing a custom path...? I dunno, why not.
@@ -314,14 +326,11 @@ impl PollingContext {
             },
             paused: None,
             jxa,
-            session: store::entities::Session::new(
-                &store::DB_POOL.get().await.expect("failed to get database pool"),
-                &player_version
-            ).await.unwrap_or_else(|err| ferror!("failed to create session in database: {}", err))
+            session,
         }
     }
 
-    async fn reload_from_config(&mut self, config: &config::Config<'_>) {
+    async fn reload_from_config(&mut self, config: &config::Config) {
         self.backends = status_backend::Backends::new(config).await;
     }
 
@@ -414,7 +423,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                 
                 use data_fetching::AdditionalTrackData;
                 let solicitation = context.backends.get_solicitations(subscription::Identity::TrackStarted).await;
-                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, track.as_ref(), context.musicdb.as_ref().as_ref(), context.custom_artwork_host.as_mut());
+                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, track.as_ref(), context.musicdb.as_ref().as_ref(), context.artwork_manager.clone());
                 let additional_data = if let Some(previous) = context.last_track.clone() {
                     let pending_dispatch = context.backends.dispatch_track_ended(BackendContext {
                         app: app.clone(),
