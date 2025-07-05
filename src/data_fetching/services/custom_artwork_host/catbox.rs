@@ -6,7 +6,7 @@ pub struct CatboxHost;
 #[async_trait::async_trait]
 impl super::CustomArtworkHost for CatboxHost {
     async fn new(config: &<Self as super::CustomArtworkHostMetadata>::Config) -> Self where Self: Sized + super::CustomArtworkHostMetadata {
-        Self::default()
+        Self
     }
     
     async fn upload(&mut self, pool: &sqlx::SqlitePool, track: &DispatchableTrack, path: &str) -> Result<crate::store::entities::CustomArtworkUrl, super::UploadError> {
