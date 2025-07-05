@@ -172,7 +172,7 @@ super::subscription::define_subscriber!(pub DiscordPresence, {
     activity: Option<discord_presence::models::Activity>,
     position: Option<f32>,
     duration: Option<f32>,
-    pending_clear: core::mem::MaybeUninit<PendingStatusClear>,
+    pending_clear: PendingStatusClear,
 });
 impl Debug for DiscordPresence {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -204,6 +204,8 @@ impl DiscordPresence {
             }
         });
 
+        let pending_clear = PendingStatusClear::default();
+        let pending_clear_act = pending_clear.act.clone();
         let this = Arc::new(Mutex::new(Self {
             config,
             client: None,
@@ -215,36 +217,12 @@ impl DiscordPresence {
             activity: None,
             position: None,
             duration: None,
-            pending_clear: core::mem::MaybeUninit::uninit(),
+            pending_clear,
         }));
 
-        let init_completed = Arc::new(tokio::sync::Notify::new());
-        let init_completed_sender = init_completed.clone();
-        let that_for_clear = Arc::downgrade(&this);
-        let pending_clear = PendingStatusClear::default();
-        let pending_clear = tokio::spawn(async move {
-            let act = if let Some(that) = that_for_clear.upgrade() {
-                let mut that = that.lock().await;
-                that.pending_clear.write(pending_clear);
-                init_completed_sender.notify_waiters();
-                unsafe { that.pending_clear.assume_init_mut() }.act.clone()
-            } else { panic!("dropped before initialization") };
-
-            loop {
-                act.notified().await;
-                if let Some(that) = that_for_clear.upgrade() {
-                    if let Err(error) = that.lock().await.clear().await {
-                        tracing::error!(?error, "unable to clear discord status")
-                    }
-                }
-            }
-        });
-
-        init_completed.notified().await;;
-
-        let that_for_reconnect = Arc::downgrade(&this);
-        DiscordPresence::enable_auto_reconnect(that_for_reconnect);
-
+        let weak = Arc::downgrade(&this);
+        DiscordPresence::enable_auto_reconnect(weak.clone()).await;
+        DiscordPresence::react_to_pending_clear(weak, pending_clear_act);
 
         this
     }
@@ -316,8 +294,8 @@ impl DiscordPresence {
     }
 
 
-    async fn enable_auto_reconnect(instance: Weak<Mutex<Self>>) {
-        let mut rx = if let Some(instance) = instance.upgrade() {
+    async fn enable_auto_reconnect(weak: Weak<Mutex<Self>>) {
+        let mut rx = if let Some(instance) = weak.upgrade() {
             let lock = instance.lock().await;
 
             if let Some(old_handle) = &lock.auto_reconnect_task_handle {
@@ -327,7 +305,7 @@ impl DiscordPresence {
             lock.state_channel.subscribe()
         } else { return };
 
-        let sent = instance.clone();
+        let sent = weak.clone();
 
         let auto_reconnect_task_handle = tokio::spawn(async move {
             // If it's ready, wait for that to change, and then if it disconnects, reconnect. Repeat.
@@ -362,11 +340,26 @@ impl DiscordPresence {
             }
         });
 
-        if let Some(instance) = instance.upgrade() {
+        if let Some(instance) = weak.upgrade() {
             instance.lock().await.auto_reconnect_task_handle = Some(auto_reconnect_task_handle);
         }
     }
 
+    fn react_to_pending_clear(instance: Weak<Mutex<Self>>, signal: Arc<tokio::sync::Notify>) {
+       tokio::spawn(async move {
+            loop {
+                signal.notified().await;
+                if let Some(this) = instance.upgrade() {
+                    if let Err(error) = this.lock().await.clear().await {
+                        tracing::error!(?error, "unable to clear discord status")
+                    }
+                } else {
+                    tracing::debug!("discord presence instance was dropped, stopping pending clear task");
+                    break;
+                }
+            }
+        });
+    }
 
     pub async fn client(&mut self) -> Option<&mut discord_presence::Client> {
         match *self.state.try_lock().unwrap() {
@@ -513,10 +506,9 @@ super::subscribe!(DiscordPresence, ProgressJolt, {
 super::subscribe!(DiscordPresence, ApplicationStatusUpdate, {
     async fn dispatch(&mut self, status: super::DispatchedApplicationStatus) -> Result<(), DispatchError> {
         use super::DispatchedApplicationStatus;
-        let pending_clear = unsafe { self.pending_clear.assume_init_mut() };
         match status != DispatchedApplicationStatus::Playing {
-            true  => pending_clear.signal(),
-            false => pending_clear.cancel(),
+            true  => self.pending_clear.signal(),
+            false => self.pending_clear.cancel(),
         };
         Ok(())
     }
