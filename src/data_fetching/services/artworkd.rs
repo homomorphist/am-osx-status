@@ -70,12 +70,6 @@ async fn get_image_info(key: ImageInfoKey, pool: &sqlx::SqlitePool) -> Result<Op
         .transpose()
 }
 
-#[derive(Debug)]
-pub enum StoredArtwork {
-    Remote { url: String },
-    Local { path: String }
-}
-
 use std::{ops::DerefMut, sync::LazyLock};
 
 use sqlx::{pool, Connection};
@@ -119,30 +113,30 @@ static POOL: crate::store::GlobalPool = crate::store::GlobalPool::new(|| {
     }
 });
 
-
+use crate::data_fetching::components::artwork::LocatedResource;
 
 /// ## Parameters
 /// - `persistent_id`: Hexadecimal string containing 8 bytes.
-pub async fn get_artwork(persistent_id: impl AsRef<str>) -> Result<Option<StoredArtwork>, crate::store::MaybeStaticSqlError> {
+pub async fn get_artwork(persistent_id: impl AsRef<str>) -> Result<Option<LocatedResource>, crate::store::MaybeStaticSqlError> {
     let pool = POOL.get().await?;
     let persistent_id = PersistentId::try_from(persistent_id.as_ref()).expect("bad persistent ID");
     let source = get_source_info(persistent_id, &pool).await?;
     let source = if let Some(source) = source { source } else { return Ok(None) };
-    if let Some(url) = source.url { return Ok(Some(StoredArtwork::Remote { url })) }
+    if let Some(url) = source.url { return Ok(Some(LocatedResource::Remote(url))) }
     if let Some(fk) = source.fk_image_info {
         return match get_image_info(fk, &pool).await? {
             None => Ok(None),
             Some(info) => {
                 const CACHE_ID: usize = 1; // it's kinda borked
-                Ok(Some(StoredArtwork::Local {
-                    path: format!("{}/{}_sk_{}_cid_{}.{}",
+                Ok(Some(LocatedResource::Local(
+                    format!("{}/{}_sk_{}_cid_{}.{}",
                         ARTWORKD_PATH.join("artwork").as_path().display(),
                         info.hash_string,
                         info.kind as u8,
                         CACHE_ID,
                         get_file_extension(&info)
                     )
-                }))
+                )))
             }
         }
     }

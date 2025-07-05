@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM custom_artwork_urls WHERE expires_at < ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "81a29b10c2022849ffa7c11af135028f947d958ca9f4cca727fba1d784b56a98"
+}

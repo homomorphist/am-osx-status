@@ -9,10 +9,10 @@ const POST_HOME_DEFAULT_PATH: &str = "Library/Application Support/am-osx-status/
 
 /// How the user specified (or did not specify) the configuration file path.
 #[derive(Clone, Debug)]
-pub enum ConfigPathChoice<'a> {
+pub enum ConfigPathChoice {
     /// Explicitly provided by a flag in the CLI.
     /// This has the highest priority, and overrides the environmental variable and default path.
-    Explicit(&'a std::path::Path),
+    Explicit(&'static std::path::Path),
     /// Inferred based on an environmental variable.
     /// This has the second-highest priority, overriding the default path but not one passed through a CLI flag.
     Environmental(std::ffi::OsString),
@@ -20,8 +20,8 @@ pub enum ConfigPathChoice<'a> {
     /// This is the default, hence the name.
     Automatic(std::path::PathBuf)
 }
-impl<'a> ConfigPathChoice<'a> {
-    pub fn new(explicit: Option<&'a std::path::Path>) -> ConfigPathChoice<'a> {
+impl ConfigPathChoice {
+    pub fn new(explicit: Option<&'static std::path::Path>) -> ConfigPathChoice {
         if let Some(explicit) = explicit {
             Self::Explicit(explicit)
         } else {
@@ -62,12 +62,12 @@ impl<'a> ConfigPathChoice<'a> {
         matches!(self, Self::Automatic(..))
     }
 }
-impl AsRef<Path> for ConfigPathChoice<'_> {
+impl AsRef<Path> for ConfigPathChoice {
     fn as_ref(&self) -> &Path {
         self.as_path()
     }
 }
-impl core::default::Default for ConfigPathChoice<'_> {
+impl core::default::Default for ConfigPathChoice {
     fn default() -> Self {
         Self::automatic()
     }

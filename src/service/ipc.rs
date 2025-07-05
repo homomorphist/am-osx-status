@@ -232,7 +232,7 @@ impl PacketConnection {
 
 pub async fn listen(
     context: Arc<Mutex<crate::PollingContext>>,
-    config: Arc<Mutex<crate::config::Config<'static>>>
+    config: Arc<Mutex<crate::config::Config>>
 ) -> Arc<Mutex<Listener>> {
     let mut listener = Listener::new({ config.clone().lock().await.socket_path.to_owned() }).unwrap();
     let listener = Arc::new(Mutex::new(listener));
@@ -254,6 +254,7 @@ pub async fn listen(
                         match packet {
                             Packet::Hello(..) => panic!("no double hello"),
                             Packet::ReloadConfiguration => {
+                                use crate::config::LoadableConfig;
                                 let mut config = config.lock().await;
                                 config.reload_from_disk().await.expect("could not update config");
                                 context.lock().await.reload_from_config(&config).await;

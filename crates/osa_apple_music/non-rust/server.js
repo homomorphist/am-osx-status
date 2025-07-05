@@ -912,7 +912,7 @@ class Server {
 }
 
 
-const args = $.NSProcessInfo.processInfo.arguments.js.slice(["osascript", "-l", "JavScript", "-"].length).map(arg => arg.js)
+const args = $.NSProcessInfo.processInfo.arguments.js.slice(["osascript", "-l", "JavaScript", "-"].length).map(arg => arg.js)
 const path = args[0];
 if (!path) {
     console.log("No path provided.");
