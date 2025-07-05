@@ -20,7 +20,7 @@ pub struct AdditionalTrackData {
 impl AdditionalTrackData {
     pub async fn from_solicitation(
         solicitation: ComponentSolicitation,
-        track: &crate::status_backend::DispatchableTrack,
+        track: &crate::subscribers::DispatchableTrack,
         musicdb: Option<&MusicDB>,
         artwork_manager: std::sync::Arc<components::artwork::ArtworkManager>
     ) -> Self {

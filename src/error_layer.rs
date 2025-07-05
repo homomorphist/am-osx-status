@@ -19,12 +19,12 @@ impl Layer {
 }
 
 
-struct Visitor { dispatch_error: Option<Box<crate::status_backend::error::DispatchError>> }
+struct Visitor { dispatch_error: Option<Box<crate::subscribers::error::DispatchError>> }
 impl tracing::field::Visit for Visitor {
     fn record_error(&mut self, field: &tracing::field::Field, value: &(dyn std::error::Error + 'static)) {
         // dbg!("meow");
         // if field.name() != "error" { return; }
-        // if let Some(error) = value.downcast_ref::<crate::status_backend::error::DispatchError>() {
+        // if let Some(error) = value.downcast_ref::<crate::subscribers::error::DispatchError>() {
         //     // self.dispatch_error = Some(core::ptr::addr_of!(*error))
         // }   
     }
@@ -32,7 +32,7 @@ impl tracing::field::Visit for Visitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         // if field.name() == "error_box_ptr" {
         //     let ptr = u64::from_str_radix(&format!("{value:?}")["0x".len()..], 16).expect("failed to parse pointer");
-        //     let ptr = ptr as *mut crate::status_backend::error::DispatchError;
+        //     let ptr = ptr as *mut crate::subscribers::error::DispatchError;
         //     self.dispatch_error = Some(unsafe { Box::from_raw(ptr) });
         // }
     }

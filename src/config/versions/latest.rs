@@ -57,20 +57,20 @@ impl From<Config> for super::VersionedConfig {
 pub struct ConfigurableBackends {
     #[cfg(feature = "discord")]
     #[cfg_attr(feature = "discord", serde(default))]
-    pub discord: Option<crate::status_backend::discord::Config>,
+    pub discord: Option<crate::subscribers::discord::Config>,
     #[cfg(feature = "lastfm")]
     #[cfg_attr(feature = "lastfm", serde(default))]
-    pub lastfm: Option<crate::status_backend::lastfm::Config>,
+    pub lastfm: Option<crate::subscribers::lastfm::Config>,
     #[cfg(feature = "listenbrainz")]
     #[cfg_attr(feature = "listenbrainz", serde(default))]
-    pub listenbrainz: Option<crate::status_backend::listenbrainz::Config>
+    pub listenbrainz: Option<crate::subscribers::listenbrainz::Config>
 }
 #[allow(clippy::derivable_impls)]
 impl Default for ConfigurableBackends {
     fn default() -> Self {
         Self {
             #[cfg(feature = "discord")]
-            discord: Some(crate::status_backend::discord::Config::default()),
+            discord: Some(crate::subscribers::discord::Config::default()),
             #[cfg(feature = "lastfm")]
             lastfm: None,
             #[cfg(feature = "listenbrainz")]

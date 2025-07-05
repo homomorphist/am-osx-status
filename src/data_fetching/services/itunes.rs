@@ -8,7 +8,7 @@ fn normalize(string: &str) -> String {
 }
 
 // TODO: Rank with numeric. With Levenshtein; after removing parentheses, ignoring album, stuff like that.
-fn does_track_match_search(track: &crate::status_backend::DispatchableTrack, found: &itunes_api::Track) -> bool {
+fn does_track_match_search(track: &crate::subscribers::DispatchableTrack, found: &itunes_api::Track) -> bool {
     let name = normalize(&track.name);
     let artist = normalize(&track.artist.clone().unwrap_or_default());
     let collection = normalize(&track.album.clone().unwrap_or_default());
@@ -21,7 +21,7 @@ fn does_track_match_search(track: &crate::status_backend::DispatchableTrack, fou
         && (normalize(&found.collection_name) == collection)
 }
 
-pub async fn find_track(track: &crate::status_backend::DispatchableTrack) -> Result<Option<itunes_api::Track>, itunes_api::Error> {
+pub async fn find_track(track: &crate::subscribers::DispatchableTrack) -> Result<Option<itunes_api::Track>, itunes_api::Error> {
     let query: String = format!("{} {}", track.artist.clone().unwrap_or_default(), track.name);
     let client = Client::new(reqwest::Client::new()); // TODO: use a shared client.
     let songs = client.search_songs(&query, 10).await?;

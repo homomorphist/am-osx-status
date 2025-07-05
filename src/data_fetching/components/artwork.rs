@@ -6,7 +6,7 @@ pub enum LocatedResource {
     Local(String),
 }
 impl LocatedResource {
-    pub async fn into_uploaded(self, host: &ArtworkManager, track: &crate::status_backend::DispatchableTrack) -> Option<String> {
+    pub async fn into_uploaded(self, host: &ArtworkManager, track: &crate::subscribers::DispatchableTrack) -> Option<String> {
         match self {
             LocatedResource::Remote(url) => Some(url),
             LocatedResource::Local(path) => host.hosted(&path, track).await.map(|v| v.url),
@@ -49,7 +49,7 @@ impl ArtworkManager {
         }
     }
 
-    pub async fn hosted(&self, file_path: &str, track: &crate::status_backend::DispatchableTrack) -> Option<CustomArtworkUrl> {
+    pub async fn hosted(&self, file_path: &str, track: &crate::subscribers::DispatchableTrack) -> Option<CustomArtworkUrl> {
         if let Some(existing) = CustomArtworkUrl::get_by_source_path_in_pool(&self.pool, file_path).await.ok().flatten() {
             if existing.is_expired() {
                 tracing::warn!(?file_path, "custom artwork url is expired, re-uploading");
@@ -78,7 +78,7 @@ impl ArtworkManager {
 
     pub async fn get(&self,
         solicitation: &crate::data_fetching::ComponentSolicitation,
-        track: &crate::status_backend::DispatchableTrack,
+        track: &crate::subscribers::DispatchableTrack,
         track_itunes: Option<&itunes_api::Track>,
         #[cfg(feature = "musicdb")] musicdb: Option<&musicdb::MusicDB>,
     ) -> TrackArtworkData {

@@ -101,14 +101,6 @@ pub enum UpdateError {
     NotConnected
 }
 
-
-            // Since buffer is considered "paused", we give a little wiggle room before actually considering
-            // the player as being deliberately paused, since a dispatch might result in a ratelimit being
-            // imposed which would prevent the dispatch of the next song from having its effects visible
-            // right away, as is the case for a Discord status.
-            const THRESHOLD_CONSIDER_TRULY_PAUSED: core::time::Duration = core::time::Duration::from_secs(5);
-
-
 /// A cancelable status clear that will occur after [`THRESHOLD`](Self::THRESHOLD) amount of time.
 /// 
 /// A [`Pause`](super::subscription::Pause) can get dispatched during
