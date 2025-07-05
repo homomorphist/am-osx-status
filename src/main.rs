@@ -1,7 +1,7 @@
 #![allow(unused)]
 use std::{ops::DerefMut, process::ExitCode, sync::{atomic::AtomicBool, Arc}, time::Duration};
 use config::{ConfigPathChoice, ConfigRetrievalError};
-use status_backend::{subscription, BackendContext, DispatchableTrack};
+use subscribers::{subscription, BackendContext, DispatchableTrack};
 use tokio::sync::Mutex;
 use tracing::Instrument;
 use listened::Listened;
@@ -10,7 +10,7 @@ use util::ferror;
 use crate::service::{ServiceRestartFailure, ServiceStopFailure};
 use crate::config::LoadableConfig;
 
-mod status_backend;
+mod subscribers;
 mod listened;
 mod debugging;
 mod data_fetching;
@@ -270,7 +270,7 @@ async fn main() -> ExitCode {
 #[derive(Debug)]
 struct PollingContext {
     terminating: Arc<AtomicBool>,
-    backends: status_backend::Backends,
+    backends: subscribers::Backends,
     pub last_track: Option<Arc<DispatchableTrack>>,
     pub listened: Arc<Mutex<Listened>>,
     artwork_manager: Arc<data_fetching::components::artwork::ArtworkManager>,
@@ -287,7 +287,7 @@ struct PollingContext {
 impl PollingContext {
     async fn from_config(config: &config::Config, terminating: Arc<AtomicBool>) -> Self {
         let (backends, (artwork_manager, jxa, session)) = tokio::join!(
-            status_backend::Backends::new(config),
+            subscribers::Backends::new(config),
             async {
                 let ((pool, artwork_manager), (jxa, player_version)) = tokio::join!(
                     async {
@@ -331,7 +331,7 @@ impl PollingContext {
     }
 
     async fn reload_from_config(&mut self, config: &config::Config) {
-        self.backends = status_backend::Backends::new(config).await;
+        self.backends = subscribers::Backends::new(config).await;
     }
 
     pub fn is_terminating(&self) -> bool {

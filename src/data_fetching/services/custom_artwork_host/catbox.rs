@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::{data_fetching::services, status_backend::DispatchableTrack};
+use crate::{data_fetching::services, subscribers::DispatchableTrack};
 
 #[derive(Debug, Default)]
 pub struct CatboxHost;

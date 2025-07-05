@@ -1,4 +1,4 @@
-use crate::status_backend::error::DispatchError;
+use crate::subscribers::error::DispatchError;
 use super::MaybeStaticSqlError;
 
 pub struct Key<T>(i64, core::marker::PhantomData<T>);

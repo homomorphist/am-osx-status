@@ -94,7 +94,7 @@ pub mod io {
     #[cfg(feature = "discord")]
     pub mod discord {
         use super::*;
-        use crate::status_backend::discord;
+        use crate::subscribers::discord;
 
         pub async fn prompt(config: &mut Option<discord::Config>, force_enable: bool) {
             if force_enable || prompt_bool("Enable Discord Rich Presence?") {
@@ -130,7 +130,7 @@ pub mod io {
     #[cfg(feature = "lastfm")]
     pub mod lastfm {
         use super::*;
-        use crate::status_backend::lastfm::{self, *};
+        use crate::subscribers::lastfm::{self, *};
 
         pub async fn prompt(config: &mut Option<lastfm::Config>)  {
             if prompt_bool("Enable last.fm Scrobbling?") {
@@ -146,7 +146,7 @@ pub mod io {
         
 
         pub async fn authorize() -> Option<lastfm::Config> {
-            let client = &crate::status_backend::lastfm::DEFAULT_CLIENT_IDENTITY;
+            let client = &crate::subscribers::lastfm::DEFAULT_CLIENT_IDENTITY;
             let auth = match client.generate_authorization_token().await {
                 Ok(auth) => auth,
                 Err(error) => {
@@ -159,7 +159,7 @@ pub mod io {
             println!("Continue after authorizing the application: {auth_url}");
             if prompt_bool("Have you authorized the application?") {
                 match auth.generate_session_key(client).await {
-                    Ok(key) => Some(crate::status_backend::lastfm::Config {
+                    Ok(key) => Some(crate::subscribers::lastfm::Config {
                         enabled: true,
                         identity: (*client).clone(),
                         session_key: Some(key)
@@ -175,7 +175,7 @@ pub mod io {
     #[cfg(feature = "listenbrainz")]
     pub mod listenbrainz {
         use super::*;
-        use crate::status_backend::listenbrainz;
+        use crate::subscribers::listenbrainz;
 
         pub async fn prompt(config: &mut Option<listenbrainz::Config>) {
             if prompt_bool("Enable ListenBrainz synchronization?") {
@@ -197,9 +197,9 @@ pub mod io {
                 if token == "cancel" { break None; }
                 match brainz::listen::v1::UserToken::new(token).await {
                     Ok(token) => {
-                        break Some(crate::status_backend::listenbrainz::Config {
+                        break Some(crate::subscribers::listenbrainz::Config {
                             enabled: true,
-                            program_info: crate::status_backend::listenbrainz::DEFAULT_PROGRAM_INFO.clone(),
+                            program_info: crate::subscribers::listenbrainz::DEFAULT_PROGRAM_INFO.clone(),
                             user_token: Some(token),
                         })
                     },

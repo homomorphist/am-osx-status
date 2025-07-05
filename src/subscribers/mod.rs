@@ -80,7 +80,7 @@ pub mod error {
 
         pub use cause::Cause;
 
-        use crate::{status_backend::DispatchableTrack, store::{entities::{DeferredTrack, Key}, MaybeStaticSqlError}};
+        use crate::{subscribers::DispatchableTrack, store::{entities::{DeferredTrack, Key}, MaybeStaticSqlError}};
         pub mod cause {
             use super::MaybeOwnedString;
 
@@ -136,7 +136,7 @@ pub mod error {
                 Request(#[from] RequestError),
                 #[error("{0}")]
                 Data(#[from] DataError),
-                /// Something went wrong concerning the [`Subscriber`](crate::status_backend::Subscriber) implementation itself.
+                /// Something went wrong concerning the [`Subscriber`](crate::subscribers::Subscriber) implementation itself.
                 /// Contains an elaboration on what went wrong.
                 #[error("internal error: {0}")]
                 Internal(Box<dyn std::error::Error + Send + Sync>),
@@ -808,20 +808,20 @@ pub mod subscription {
                     $sub_name:ident,
                     $dollar($def:tt)*
                 ) => {
-                    cast_trait_object::impl_dyn_cast!($sub_name => $($crate::status_backend::subscription::cast_configs::$name),*);
+                    cast_trait_object::impl_dyn_cast!($sub_name => $($crate::subscribers::subscription::cast_configs::$name),*);
                     $dollar(#[$sub_meta])*
                     $vis struct $sub_name $dollar($def)*
                     impl $sub_name {
                         pub const NAME: &'static str = stringify!($sub_name);
                     }
                     #[async_trait::async_trait]
-                    impl $crate::status_backend::subscription::Subscriber for $sub_name {
-                        async fn get_solicitation(&self, event: $crate::status_backend::subscription::Identity) -> Option<$crate::data_fetching::components::ComponentSolicitation> {
+                    impl $crate::subscribers::subscription::Subscriber for $sub_name {
+                        async fn get_solicitation(&self, event: $crate::subscribers::subscription::Identity) -> Option<$crate::data_fetching::components::ComponentSolicitation> {
                             match event {
                                 $(
-                                    $crate::status_backend::subscription::Identity::$name => {
-                                        let typed = <dyn $crate::status_backend::subscription::Subscriber as cast_trait_object::DynCast<$crate::status_backend::subscription::cast_configs::$name>>::dyn_cast_ref(self).ok()?;
-                                        Some($crate::status_backend::subscription::$name::get_solicitation(typed).await)
+                                    $crate::subscribers::subscription::Identity::$name => {
+                                        let typed = <dyn $crate::subscribers::subscription::Subscriber as cast_trait_object::DynCast<$crate::subscribers::subscription::cast_configs::$name>>::dyn_cast_ref(self).ok()?;
+                                        Some($crate::subscribers::subscription::$name::get_solicitation(typed).await)
                                     }
                                 )*,
                             }
@@ -830,31 +830,31 @@ pub mod subscription {
                         #[allow(private_interfaces)]
                         async unsafe fn dispatch_untyped(
                             &mut self,
-                            event: $crate::status_backend::subscription::Identity,
-                            context: $crate::status_backend::TransientSendableUntypedRawBoxPointer
+                            event: $crate::subscribers::subscription::Identity,
+                            context: $crate::subscribers::TransientSendableUntypedRawBoxPointer
                         ) -> Option<
                             Result<
-                                $crate::status_backend::TransientSendableUntypedRawBoxPointer,
-                                $crate::status_backend::error::DispatchError
+                                $crate::subscribers::TransientSendableUntypedRawBoxPointer,
+                                $crate::subscribers::error::DispatchError
                             >
                         > {
                             match event {
                                 $(
-                                    $crate::status_backend::subscription::Identity::$name => {
-                                        let typed = <dyn $crate::status_backend::subscription::Subscriber as cast_trait_object::DynCast<$crate::status_backend::subscription::cast_configs::$name>>::dyn_cast_mut(self).ok()?;
-                                        type Context = $crate::status_backend::subscription::type_identity::context::$name;
+                                    $crate::subscribers::subscription::Identity::$name => {
+                                        let typed = <dyn $crate::subscribers::subscription::Subscriber as cast_trait_object::DynCast<$crate::subscribers::subscription::cast_configs::$name>>::dyn_cast_mut(self).ok()?;
+                                        type Context = $crate::subscribers::subscription::type_identity::context::$name;
                                         let context = context.0 as *mut Context;
                                         let context = unsafe { Box::from_raw(context) };
                                         let output = typed.dispatch(*context).await;
-                                        let output = output.map(Box::new).map(Box::into_raw).map(|ptr| $crate::status_backend::TransientSendableUntypedRawBoxPointer(ptr as *mut u8));
+                                        let output = output.map(Box::new).map(Box::into_raw).map(|ptr| $crate::subscribers::TransientSendableUntypedRawBoxPointer(ptr as *mut u8));
                                         Some(output)
                                     }
                                 )*,
                             }
                         }
 
-                        fn get_identity(&self) -> $crate::status_backend::BackendIdentity {
-                            $crate::status_backend::BackendIdentity::$sub_name
+                        fn get_identity(&self) -> $crate::subscribers::BackendIdentity {
+                            $crate::subscribers::BackendIdentity::$sub_name
                         }
                     }
                 };
@@ -874,19 +874,19 @@ pub mod subscription {
             pub use define_subscriber;
         };
         (@trait@ $(#[$meta:meta])* $name:ident<$context: ty>) => {
-            define!(@trait@ $(#[$meta])* $name<$context, $crate::status_backend::subscription::DefaultReturn>);
+            define!(@trait@ $(#[$meta])* $name<$context, $crate::subscribers::subscription::DefaultReturn>);
         };
         (@trait@ $(#[$meta:meta])* $name:ident<_, $return: ty>) => {
-            define!(@trait@ $(#[$meta])* $name<$crate::status_backend::subscription::DefaultContext, $return>);
+            define!(@trait@ $(#[$meta])* $name<$crate::subscribers::subscription::DefaultContext, $return>);
         };
         (@trait@ $(#[$meta:meta])* $name:ident) => {
-            define!(@trait@ $(#[$meta])* $name<$crate::status_backend::subscription::DefaultContext, $crate::status_backend::subscription::DefaultReturn>);
+            define!(@trait@ $(#[$meta])* $name<$crate::subscribers::subscription::DefaultContext, $crate::subscribers::subscription::DefaultReturn>);
         };
         (@trait@ $(#[$meta:meta])* $name:ident<$context: ty, $return: ty>) => {
             $(#[$meta])*
             #[async_trait::async_trait]
             pub trait $name: Subscriber {
-                type Identity: $crate::status_backend::subscription::TypeIdentity;
+                type Identity: $crate::subscribers::subscription::TypeIdentity;
 
                 async fn dispatch(&mut self, context: $context) -> Result<$return, super::error::DispatchError>;
 
@@ -908,43 +908,43 @@ pub mod subscription {
             pub type $name = $context;
         };
         (@context@ $name: ident, <_, $return: ty>) => {
-            define!(@context@ $name, <$crate::status_backend::subscription::DefaultContext,);
+            define!(@context@ $name, <$crate::subscribers::subscription::DefaultContext,);
         };
         (@context@ $name: ident,) => {
-            define!(@context@ $name, <$crate::status_backend::subscription::DefaultContext,);
+            define!(@context@ $name, <$crate::subscribers::subscription::DefaultContext,);
         };
         (@returns@ $name: ident, <$context: ty, $return: ty>) => {
             pub type $name = $return;
         };
         (@returns@ $name: ident, <$context: ty>) => {
-            define!(@returns@ $name, <$context, $crate::status_backend::subscription::DefaultReturn>);
+            define!(@returns@ $name, <$context, $crate::subscribers::subscription::DefaultReturn>);
         };
         (@returns@ $name: ident, <_, $return: ty>) => {
             define!(@returns@ $name, <(), $return>);
         };
         (@returns@ $name: ident,) => {
-            define!(@returns@ $name, <(), $crate::status_backend::subscription::DefaultReturn>);
+            define!(@returns@ $name, <(), $crate::subscribers::subscription::DefaultReturn>);
         };
     }
     
     define!($, [
-        { TrackStarted<crate::status_backend::BackendContext<crate::data_fetching::AdditionalTrackData>> },
+        { TrackStarted<crate::subscribers::BackendContext<crate::data_fetching::AdditionalTrackData>> },
         { TrackEnded },
         { ProgressJolt },
-        { ApplicationStatusUpdate<crate::status_backend::DispatchedApplicationStatus> },
+        { ApplicationStatusUpdate<crate::subscribers::DispatchedApplicationStatus> },
     ], {
         async fn get_solicitation(&self, event: self::Identity) -> Option<ComponentSolicitation>;
         #[allow(private_interfaces)]
         async unsafe fn dispatch_untyped(&mut self, event: self::Identity, value: TransientSendableUntypedRawBoxPointer) -> Option<Result<TransientSendableUntypedRawBoxPointer, DispatchError>>;
-        fn get_identity(&self) -> crate::status_backend::BackendIdentity;
+        fn get_identity(&self) -> crate::subscribers::BackendIdentity;
     });
 
     #[macro_export]
     macro_rules! subscribe {
         ($struct: ident, $ident: ident, { $($t: tt)* }) => {
             #[async_trait::async_trait]
-            impl $crate::status_backend::subscription::$ident for $struct {
-                type Identity = $crate::status_backend::subscription::type_identity::$ident;
+            impl $crate::subscribers::subscription::$ident for $struct {
+                type Identity = $crate::subscribers::subscription::type_identity::$ident;
     
                 $($t)*
             }
@@ -1052,13 +1052,13 @@ impl Backends {
 
     pub async fn new(config: &crate::config::Config) -> Backends {        
         #[cfg(feature = "lastfm")]
-        use crate::status_backend::lastfm::*;
+        use crate::subscribers::lastfm::*;
 
         #[cfg(feature = "discord")]
-        use crate::status_backend::discord::*;
+        use crate::subscribers::discord::*;
 
         #[cfg(feature = "listenbrainz")]
-        use crate::status_backend::listenbrainz::*;
+        use crate::subscribers::listenbrainz::*;
 
         #[cfg(feature = "lastfm")]
         let lastfm = config.backends.lastfm.as_ref().and_then(|config| {
