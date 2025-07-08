@@ -101,6 +101,8 @@ pub enum UpdateError {
     NotConnected
 }
 
+use core::sync::atomic::Ordering;
+
 /// A cancelable status clear that will occur after [`THRESHOLD`](Self::THRESHOLD) amount of time.
 /// 
 /// A [`Pause`](super::subscription::Pause) can get dispatched during
@@ -118,35 +120,44 @@ struct PendingStatusClear {
     cancel: Arc<tokio::sync::Notify>,
     pub act: Arc<tokio::sync::Notify> // hook
 }
-// TODO: this probably has a race condition lol
 impl PendingStatusClear {
     /// The amount of time a pause needs to last for before the status is cleared.
     pub const THRESHOLD: core::time::Duration = core::time::Duration::from_secs(5);
 
     fn signal(&mut self) {
-        if self.intent.load(core::sync::atomic::Ordering::Relaxed) {
+        if self.intent.compare_exchange(
+            false,
+            true,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ).is_err() {
             return;
         }
 
         let act = self.act.clone();
         let cancel = self.cancel.clone();
         let intends_to_clear = self.intent.clone();
-        self.intent.store(true, core::sync::atomic::Ordering::Relaxed);
         tokio::spawn(async move {
             let sleep = tokio::time::sleep(Self::THRESHOLD);
             let cancelled = cancel.notified();
             tokio::select!{
                 _ = cancelled => {},
                 _ = sleep => {
-                    act.notify_waiters();
-                    intends_to_clear.store(false, core::sync::atomic::Ordering::Relaxed);
+                    if intends_to_clear.compare_exchange(
+                        true,
+                        false,
+                        Ordering::SeqCst,
+                        Ordering::Relaxed
+                    ).is_ok() {
+                        act.notify_waiters();
+                    }
                 }
             }
         });
     }
 
     fn cancel(&mut self) {
-        self.intent.store(false, core::sync::atomic::Ordering::Relaxed);
+        self.intent.store(false, Ordering::Relaxed);
         self.cancel.clone().notify_waiters();
     }
 }
