@@ -17,7 +17,10 @@ pub struct Config {
     pub socket_path: std::path::PathBuf,
 
     #[serde(default)]
-    pub artwork_hosts: crate::data_fetching::services::custom_artwork_host::HostConfigurations
+    pub artwork_hosts: crate::data_fetching::services::custom_artwork_host::HostConfigurations,
+
+    #[serde(default)]
+    pub musicdb: MusicDbConfiguration
 }
 impl Default for Config {
     fn default() -> Self {
@@ -26,6 +29,7 @@ impl Default for Config {
             backends: Default::default(),
             socket_path: crate::service::ipc::socket_path::clone_default(),
             artwork_hosts: Default::default(),
+            musicdb: MusicDbConfiguration::default()
         }
     }
 }
@@ -78,3 +82,19 @@ impl Default for ConfigurableBackends {
         }
     }
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct MusicDbConfiguration {
+    pub enabled: bool,
+    /// `None` indicates the default path provided by [`musicdb::MusicDB::default_path`].
+    pub path: Option<std::path::PathBuf>
+}
+impl Default for MusicDbConfiguration {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: None
+        }
+    }
+}
+

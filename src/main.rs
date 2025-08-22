@@ -314,11 +314,11 @@ impl PollingContext {
             last_track: None,
             listened: Arc::new(Mutex::new(Listened::new())),
             artwork_manager: Arc::new(artwork_manager),
-            
-            // TODO: Make this configurable at runtime as well.
-            //       Also, allow providing a custom path...? I dunno, why not.
+
             #[cfg(feature = "musicdb")]
-            musicdb: Arc::new(Some(tracing::trace_span!("musicdb read").in_scope(musicdb::MusicDB::default))),
+            musicdb: Arc::new(if config.musicdb.enabled { Some(tracing::trace_span!("musicdb read").in_scope(|| {
+                musicdb::MusicDB::read_path(config.musicdb.path.clone().unwrap_or(musicdb::MusicDB::default_path()))
+            })) } else { None }),
 
             paused: None,
             jxa,
@@ -405,6 +405,8 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
 
             // buffering / loading intermissions
             if track.kind.is_none() && (
+                // TODO: What about other locales?
+                //       I can't remember if there's a legit reason `track.kind` would be `None` that isn't loading, but maybe?
                 track.name == "Connecting…" ||
                 track.name.ends_with("Station")
             ) {
