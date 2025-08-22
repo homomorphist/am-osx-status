@@ -277,8 +277,6 @@ struct PollingContext {
 
     #[cfg(feature = "musicdb")]
     musicdb: Arc<Option<musicdb::MusicDB>>,
-    #[cfg(not(feature = "musicdb"))]
-    musicdb: Arc<Option<()>>,
 
     jxa: osa_apple_music::Session,
     paused: Option<bool>,
@@ -316,14 +314,12 @@ impl PollingContext {
             last_track: None,
             listened: Arc::new(Mutex::new(Listened::new())),
             artwork_manager: Arc::new(artwork_manager),
-            musicdb: {
-                // TODO: Make this configurable at runtime as well.
-                //       Also, allow providing a custom path...? I dunno, why not.
-                #[cfg(feature = "musicdb")]
-                { Arc::new(Some(tracing::trace_span!("musicdb read").in_scope(musicdb::MusicDB::default))) }
-                #[cfg(not(feature = "musicdb"))]
-                { Arc::new(None) }
-            },
+            
+            // TODO: Make this configurable at runtime as well.
+            //       Also, allow providing a custom path...? I dunno, why not.
+            #[cfg(feature = "musicdb")]
+            musicdb: Arc::new(Some(tracing::trace_span!("musicdb read").in_scope(musicdb::MusicDB::default))),
+
             paused: None,
             jxa,
             session,
@@ -379,6 +375,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                     track: previous,
                     app: app.clone(),
                     data: ().into(),
+                    #[cfg(feature = "musicdb")]
                     musicdb: context.musicdb.clone()
                 }).await;
             }
@@ -423,13 +420,19 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                 
                 use data_fetching::AdditionalTrackData;
                 let solicitation = context.backends.get_solicitations(subscription::Identity::TrackStarted).await;
-                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, track.as_ref(), context.musicdb.as_ref().as_ref(), context.artwork_manager.clone());
+                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, track.as_ref(),
+                    #[cfg(feature = "musicdb")]
+                    context.musicdb.as_ref().as_ref(),
+                    context.artwork_manager.clone()
+                );
+
                 let additional_data = if let Some(previous) = context.last_track.clone() {
                     let pending_dispatch = context.backends.dispatch_track_ended(BackendContext {
                         app: app.clone(),
                         track: previous,
                         listened: context.listened.clone(),
                         data: ().into(),
+                        #[cfg(feature = "musicdb")]
                         musicdb: context.musicdb.clone()
                     }).instrument(tracing::trace_span!("song end dispatch"));
 
@@ -452,6 +455,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                 context.backends.dispatch_track_started(BackendContext {
                     app, listened, track,
                     data: Arc::new(additional_data),
+                    #[cfg(feature = "musicdb")]
                     musicdb: context.musicdb.clone()
                 }).await;
             } else if let Some(position) = app.position {
@@ -470,6 +474,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                                 app: app.clone(),
                                 data: ().into(),
                                 listened: context.listened.clone(),
+                                #[cfg(feature = "musicdb")]
                                 musicdb: context.musicdb.clone()
                             }).await;
                         }
