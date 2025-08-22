@@ -693,8 +693,6 @@ pub struct BackendContext<A> {
 
     #[cfg(feature = "musicdb")]
     pub musicdb: Arc<Option<musicdb::MusicDB>>,
-    #[cfg(not(feature = "musicdb"))]
-    pub musicdb: Arc<Option<()>>,
 }
 impl<A> Clone for BackendContext<A> {
     fn clone(&self) -> Self {
@@ -703,6 +701,7 @@ impl<A> Clone for BackendContext<A> {
             app: self.app.clone(),
             data: self.data.clone(),
             listened: self.listened.clone(),
+            #[cfg(feature = "musicdb")]
             musicdb: self.musicdb.clone(),
         }
     }

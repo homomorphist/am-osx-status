@@ -51,6 +51,7 @@ macro_rules! define_hosts {
                         #[cfg(feature = $repr)]
                         Self::$variant => &$aliases,
                     )*
+                    _ => unreachable!("unrecognized custom artwork host")
                 }
             }
             pub fn to_str(self) -> &'static str {
@@ -59,6 +60,7 @@ macro_rules! define_hosts {
                         #[cfg(feature = $repr)]
                         Self::$variant => $repr,
                     )*
+                    _ => unreachable!("unrecognized custom artwork host")
                 }
             }
             pub fn from_str(input: &str) -> Option<Self> {
@@ -123,10 +125,11 @@ macro_rules! define_hosts {
                 }
             }
             pub async fn new(configs: &$configs) -> Self {
+                type Entry<'a> = (&'a HostIdentity, tokio::task::JoinHandle<Box<dyn CustomArtworkHost>>);
                 let order = &configs.order.0;
-                let mut handles = Vec::with_capacity(order.len());
+                let mut handles = Vec::<Entry<'_>>::with_capacity(order.len());
 
-                for identity in order {
+                for identity in order { 
                     match identity {
                         $(
                             #[cfg(feature = $repr)]
@@ -135,10 +138,11 @@ macro_rules! define_hosts {
                                     <$mod::Host as CustomArtworkHostMetadata>::Config::default()
                                 }));
                                 handles.push((identity, tokio::spawn(async move {
-                                    $mod::Host::new(&config).await
+                                    Box::new($mod::Host::new(&config).await) as Box<dyn CustomArtworkHost>
                                 })))
                             },
                         )*
+                        _ => unreachable!("unrecognized custom artwork host")
                     }
                 }
 
@@ -149,9 +153,10 @@ macro_rules! define_hosts {
                             #[cfg(feature = $repr)]
                             $enum::$variant => {
                                 let host = handle.await.expect("failed to initialize custom artwork host");
-                                instances.$mod = Some(Mutex::new(Box::new(host) as Box<dyn CustomArtworkHost>));
+                                instances.$mod = Some(Mutex::new(host));
                             },
                         )*
+                        _ => unreachable!("unrecognized custom artwork host")
                     }
                 }
                 instances

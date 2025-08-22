@@ -6,12 +6,6 @@ use services::artworkd::get_artwork;
 
 pub mod components;
 
-#[cfg(feature = "musicdb")]
-type MusicDB = musicdb::MusicDB;
-#[cfg(not(feature = "musicdb"))]
-type MusicDB = ();
-
-
 #[derive(Debug)]
 pub struct AdditionalTrackData {
     pub itunes: Option<itunes_api::Track>,
@@ -21,7 +15,8 @@ impl AdditionalTrackData {
     pub async fn from_solicitation(
         solicitation: ComponentSolicitation,
         track: &crate::subscribers::DispatchableTrack,
-        musicdb: Option<&MusicDB>,
+        #[cfg(feature = "musicdb")]
+        musicdb: Option<&musicdb::MusicDB>,
         artwork_manager: std::sync::Arc<components::artwork::ArtworkManager>
     ) -> Self {
         let mut itunes: Option<itunes_api::Track> = None;
@@ -37,7 +32,10 @@ impl AdditionalTrackData {
         }
 
         Self {
-            images: artwork_manager.get(&solicitation, track, itunes.as_ref(), musicdb).await,
+            images: artwork_manager.get(&solicitation, track, itunes.as_ref(),
+                #[cfg(feature = "musicdb")]
+                musicdb
+            ).await,
             itunes,
         }
     }
