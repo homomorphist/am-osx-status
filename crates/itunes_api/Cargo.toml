@@ -2,6 +2,7 @@
 name = "itunes_api"
 version = "0.0.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 reqwest = "0.12.12"
