@@ -772,9 +772,25 @@ class ClientConnection {
 
     /**
      * @param { PointerWithSize } data
+     * @returns { number } the amount of bytes written
      */
-    send(data) {
-        $.write(this.pollfd.fd, data[0], data[1]);
+    write([ptr, size]) {
+        return $.write(this.pollfd.fd, ptr, size)
+    }
+
+    /**
+     * @param { PointerWithSize } data
+     * @returns { number } the amount of bytes written (the pointer size)
+     */
+    write_all([ptr, size]) {
+        let written = 0;
+        while (written < size) {
+            const result = this.write([ptr, size - written]);
+            if (result <= 0) break;
+            written += result;
+            ptr = ptr.shift(written);
+        }
+        return written;
     }
 }
 
@@ -911,11 +927,24 @@ class Server {
     }
 }
 
+/**
+ * @param { Error } err 
+ * @returns JSON representation
+ */
+function serialize_error(err) {
+    const plain = Object.create(null);
+    for (const key of Reflect.ownKeys(err)) {
+        plain[key] = err[key];
+    }
+    return JSON.stringify(plain)
+}
 
-const args = $.NSProcessInfo.processInfo.arguments.js.slice(["osascript", "-l", "JavaScript", "-"].length).map(arg => arg.js)
+const prelude = ["osascript", "-l", "JavaScript", "<script-file>"];
+const usage = [...prelude, "<socket-path>"]
+const args = $.NSProcessInfo.processInfo.arguments.js.slice(prelude.length).map(arg => arg.js)
 const path = args[0];
 if (!path) {
-    console.log("No path provided.");
+    console.log("usage: " + usage.join(" "));
     $.exit(1);
 }
 
@@ -929,23 +958,31 @@ const server = new Server(path, {
 });
 
 server.listen((connection, [data]) => {
-    console.log("recv")
-    switch (uncstr(data).trim()) {
-        case "application": {
-            const json = JSON.stringify(music.properties());
-            const json_cstr = cstr(json);
-            connection.send([json_cstr, json.length + 1]);
-            $.free(json_cstr);
-            break
+    try {
+        switch (uncstr(data).trim()) {
+            case "application": {
+                const json = JSON.stringify(music.properties());
+                const json_cstr = cstr.sized(json);
+                connection.write_all(json_cstr);
+                $.free(json_cstr[0]);
+                break
+            }
+            case "current track": {
+                const json = JSON.stringify(music.currentTrack.properties())
+                const json_cstr = cstr.sized(json);
+                connection.write_all(json_cstr);
+                $.free(json_cstr[0]);
+                break;
+            }
+            default: {
+                connection.write_all(ERR_UNKNOWN_COMMAND);
+            }
         }
-        case "current track": {
-            const json = cstr.sized(JSON.stringify(music.currentTrack.properties()));
-            connection.send(json);
-            $.free(json[0]);
-            break;
-        }
-        default: {
-            connection.send(ERR_UNKNOWN_COMMAND);
-        }
+    } catch (err) {
+        err.is_error = true;
+        const json = serialize_error(err)
+        const json_cstr = cstr.sized(json);
+        connection.write_all(json_cstr);
+        $.free(json_cstr[0]);
     }
 })
