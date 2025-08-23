@@ -4,6 +4,7 @@ exclude = ["crates/unaligned_u16/fuzz"]
 
 [package]
 name = "am-osx-status"
+license = "MIT OR Apache-2.0"
 version = "0.0.0"
 edition = "2024"
 repository = "https://github.com/homomorphist/am-osx-status"
