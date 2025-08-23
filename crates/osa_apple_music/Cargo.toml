@@ -2,6 +2,7 @@
 name = "osa_apple_music"
 version = "0.0.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 chrono = { version = "0.4.39", features = ["serde"] }
