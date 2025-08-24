@@ -10,8 +10,8 @@ const SERVER_JS: &str = include_str!("../non-rust/server.js");
 pub mod error {
     #[derive(Debug, thiserror::Error)]
     pub enum SessionEvaluationError {
-        #[error("couldn't deserialize value: {0}")]
-        DeserializationFailure(#[from] serde_json::Error),
+        #[error("couldn't deserialize value: {issue}")]
+        DeserializationFailure { issue: serde_json::Error, data: Vec<u8>, is_utf8: bool },
         #[error("couldn't extract output")]
         ValueExtractionFailure { output: osascript::repl::Output },
         #[error("internal osascript session failure: {0}")]
@@ -78,11 +78,18 @@ impl Session {
             if done { break; }
         };
 
-        let json = std::str::from_utf8(&bytes).map_err(|_| {
-            <serde_json::Error as serde::de::Error>::custom("invalid utf-8")
-        })?;
 
-        serde_json::from_str(json).map_err(error::SessionEvaluationError::DeserializationFailure)
+        let json = match std::str::from_utf8(&bytes) {
+            Ok(json) => json,
+            Err(_) => {
+                let err = <serde_json::Error as serde::de::Error>::custom("invalid utf-8");
+                return Err(error::SessionEvaluationError::DeserializationFailure { issue: err, data: bytes, is_utf8: false });
+            }
+        };
+
+        serde_json::from_str(json).map_err(|err| {
+            error::SessionEvaluationError::DeserializationFailure { issue: err, data: bytes, is_utf8: true }
+        })
     }
 
     pub async fn application(&mut self) -> Result<ApplicationData, error::SessionEvaluationError> {
