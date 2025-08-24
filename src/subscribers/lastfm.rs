@@ -188,6 +188,7 @@ async fn extract_first_artist<'a, 'b: 'a>(
         use brainz::music::entities::Recording;
         let response: Recording = serde_json::from_str(&response).inspect_err(|err| {
             tracing::error!(?err, "failed to parse ListenBrainz response");
+            tracing::debug!("could not deserialize: {:?}", response);
         }).ok()?;
 
         let mut credited = response.artist_credit.into_iter();
