@@ -2,6 +2,7 @@ use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
 mod migrations;
+pub mod timestamp;
 pub mod entities;
 
 #[cfg(test)]
