@@ -1,4 +1,4 @@
-use crate::subscribers::error::DispatchError;
+use crate::{store::timestamp::MillisecondTimestamp, subscribers::error::DispatchError};
 use super::MaybeStaticSqlError;
 
 pub struct Key<T>(i64, core::marker::PhantomData<T>);
@@ -190,12 +190,12 @@ pub struct Session {
     /// A positive integer.
     pub osa_fetches_player: i64,
 
-    pub started_at: chrono::DateTime<chrono::Utc>,
-    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub started_at: MillisecondTimestamp,
+    pub ended_at: Option<MillisecondTimestamp>,
 }
 impl Session {
     pub fn duration(&self) -> chrono::Duration {
-        self.ended_at.unwrap_or_else(chrono::Utc::now) - self.started_at
+        self.ended_at.map(|v| v.0).unwrap_or_else(chrono::Utc::now) - self.started_at.0
     }
 }
 impl FromKey for Session {
@@ -257,7 +257,7 @@ impl Session {
 #[derive(sqlx::FromRow)]
 pub struct Error {
     id: Key<Self>,
-    timestamp: chrono::DateTime<chrono::Utc>,
+    timestamp: MillisecondTimestamp,
     fmt_display: String,
     fmt_debug: String,
     session: Key<Session>,
@@ -284,7 +284,7 @@ impl Error {
 #[derive(sqlx::FromRow)]
 pub struct PendingDispatch {
     id: Key<Self>,
-    timestamp: chrono::DateTime<chrono::Utc>,
+    timestamp: MillisecondTimestamp,
     backend: String,
     #[sqlx(rename = "track")] track: Key<DeferredTrack>,
     #[sqlx(rename = "error")] error: Key<Error>,
@@ -299,10 +299,10 @@ impl PendingDispatch {
 }
 
 
-#[derive(sqlx::FromRow)]
+#[derive(Debug, sqlx::FromRow)]
 pub struct CustomArtworkUrl {
     id: Key<Self>,
-    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub expires_at: Option<MillisecondTimestamp>,
     pub source_path: String,
     #[sqlx(rename = "artwork_url")]
     pub url: String,

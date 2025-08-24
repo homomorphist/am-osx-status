@@ -125,7 +125,7 @@ async fn main() -> ExitCode {
                 drop(debugging.guards); // flush logs
                 let db_pool = &store::DB_POOL.get().await.expect("failed to get database pool");
                 let session = &mut session_closer_ctx.lock().await.session;
-                session.ended_at = Some(chrono::Utc::now());
+                session.ended_at = Some(chrono::Utc::now().into());
                 session.finish(db_pool).await.expect("failed to finish session in database");
                 std::process::exit(1);
             });
