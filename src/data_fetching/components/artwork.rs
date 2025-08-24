@@ -52,11 +52,14 @@ impl ArtworkManager {
     pub async fn hosted(&self, file_path: &str, track: &crate::subscribers::DispatchableTrack) -> Option<CustomArtworkUrl> {
         if let Some(existing) = CustomArtworkUrl::get_by_source_path_in_pool(&self.pool, file_path).await.ok().flatten() {
             if existing.is_expired() {
-                tracing::warn!(?file_path, "custom artwork url is expired, re-uploading");
+                tracing::warn!(?file_path, "custom artwork url is expired, re-uploading and performing cleanup");
+                if let Err(err) = CustomArtworkUrl::cleanup(&self.pool).await {
+                    tracing::error!(?err, "failed to clean up expired custom artwork urls");
+                }
             } else {
                 tracing::debug!(?file_path, "custom artwork url already exists, returning existing");
+                return Some(existing);
             }
-            return Some(existing);
         }   
 
         for identity in &self.host_order.0 {

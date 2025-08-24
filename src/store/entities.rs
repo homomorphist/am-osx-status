@@ -342,6 +342,7 @@ impl CustomArtworkUrl {
             .fetch_optional(pool).await
     }
     
+    // TODO: Run this on application startup as well, or every few hours.
     pub async fn cleanup(pool: &sqlx::SqlitePool) -> sqlx::Result<()> {
         let now = chrono::Utc::now().timestamp_millis();
         sqlx::query!(r#"
