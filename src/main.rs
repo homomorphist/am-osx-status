@@ -348,9 +348,10 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                 SessionEvaluationError::IoFailure(err) => tracing::error!(?err, "failed to retrieve application data"),
                 SessionEvaluationError::SessionFailure(err) => tracing::error!(?err, "failed to extract application data"),
                 SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract application data"),
-                SessionEvaluationError::DeserializationFailure(err) => {
-                    if !(err.classify() == serde_json::error::Category::Eof && context.is_terminating()) {
-                        tracing::error!(?err, "failed to deserialize application data")
+                SessionEvaluationError::DeserializationFailure { issue, data, .. } => {
+                    if !(issue.is_eof() && context.is_terminating()) {
+                        tracing::error!(?issue, "failed to deserialize application data");
+                        tracing::debug!("could not deserialize: {:?}", String::from_utf8_lossy(&data));
                     }
                 }
             }
@@ -391,9 +392,10 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                         SessionEvaluationError::IoFailure(err) => tracing::error!(?err, "failed to retrieve track data"),
                         SessionEvaluationError::SessionFailure(err) => tracing::error!(?err, "failed to retrieve track data"),
                         SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract track data"),
-                        SessionEvaluationError::DeserializationFailure(err) => {
-                            if !(err.classify() == serde_json::error::Category::Eof && context.is_terminating()) {
-                                tracing::error!(?err, "failed to deserialize track data")
+                        SessionEvaluationError::DeserializationFailure { issue, data, .. } => {
+                            if !(issue.is_eof() && context.is_terminating()) {
+                                tracing::error!(?issue, "failed to deserialize application data");
+                                tracing::debug!("could not deserialize: {:?}", String::from_utf8_lossy(&data));
                             }
                         }
                     }
