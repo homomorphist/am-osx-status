@@ -8,6 +8,8 @@ pub use track::Track;
 const SERVER_JS: &str = include_str!("../non-rust/server.js");
 
 pub mod error {
+    use crate::JavaScriptError;
+
     #[derive(Debug, thiserror::Error)]
     pub enum SessionEvaluationError {
         #[error("couldn't deserialize value: {issue}")]
@@ -18,6 +20,8 @@ pub mod error {
         SessionFailure(#[from] osascript::repl::Error),
         #[error("io failure: {0}")]
         IoFailure(#[from] tokio::io::Error),
+        #[error("javascript error: {}", .0.message)]
+        QueryFailure(#[from] JavaScriptError)
     }
     
     #[derive(Debug, thiserror::Error)]
@@ -28,6 +32,23 @@ pub mod error {
         ValueExtractionFailure { output: osascript::repl::Output },
         #[error("io failure: {0}")]
         IoFailure(#[from] tokio::io::Error),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(unused)]
+pub struct JavaScriptError {
+    message: String,
+    stack: String,
+    line: u32,
+    column: u32,
+    error_number: Option<i32> // jxa extension
+}
+impl core::error::Error for JavaScriptError {}
+impl core::fmt::Display for JavaScriptError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "JavaScript error: {} at line {}, column {}", self.message, self.line, self.column)
     }
 }
 
@@ -64,7 +85,7 @@ impl Session {
         })
     }
 
-    async fn exec<T>(&mut self, message: &str) -> Result<T, error::SessionEvaluationError> where T: serde::de::DeserializeOwned {
+    async fn exec<T>(&mut self, message: &str) -> Result<Option<T>, error::SessionEvaluationError> where T: serde::de::DeserializeOwned + core::fmt::Debug {
         self.socket.write_all(message.as_bytes()).await?;
         self.socket.flush().await?;
         let mut buffer = [0; 1024];
@@ -87,13 +108,34 @@ impl Session {
             }
         };
 
-        serde_json::from_str(json).map_err(|err| {
+        #[derive(serde::Deserialize)]
+        #[serde(tag = "type", content = "value", rename_all = "lowercase")]
+        enum Response<T: core::fmt::Debug> {
+            Success(T),
+            Error(JavaScriptError)
+        }
+
+
+        let response: Response<T> = serde_json::from_str(json).map_err(|err| {
             error::SessionEvaluationError::DeserializationFailure { issue: err, data: bytes, is_utf8: true }
-        })
+        })?;
+        
+        let result = match response {
+            Response::Success(v) => Ok(Some(v)),
+            Response::Error(err) => Err(error::SessionEvaluationError::QueryFailure(err))
+        };
+
+        if let Err(error::SessionEvaluationError::QueryFailure(err)) = &result {
+            if err.message == "Application not running" {
+                return Ok(None)
+            }
+        }
+
+        result
     }
 
-    pub async fn application(&mut self) -> Result<ApplicationData, error::SessionEvaluationError> {
-        self.exec("application").await.map(ApplicationData::fix)
+    pub async fn application(&mut self) -> Result<Option<ApplicationData>, error::SessionEvaluationError> {
+        self.exec("application").await.map(|data| data.map(ApplicationData::fix))
     }
 
     pub async fn now_playing(&mut self) -> Result<Option<crate::Track>, error::SessionEvaluationError> {

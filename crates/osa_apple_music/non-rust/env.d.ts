@@ -2,6 +2,7 @@ declare const $: any;
 
 declare const ObjC: {
     import(framework: string): any;
+    unwrap(value: any): any;
     bindFunction(name: string, ffi: [output: string, arguments: Array<string>]): void;
 }
 declare function Application(name: string): any;
@@ -26,4 +27,4 @@ declare interface Ref<T = any> {
      */
     shifted: number;
 }
-declare function Ref<T>(value: T): Ref<T>;
+declare function Ref<T>(type: string): Ref<T>;
