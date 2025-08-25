@@ -1,3 +1,5 @@
+#!/usr/bin/env osascript -l JavaScript
+ObjC.import('AppKit');
 ObjC.import('signal');
 ObjC.import('stdlib')
 ObjC.import('stdio')
@@ -901,6 +903,7 @@ class Server {
                 const received_events = client.revents;
 
                 if (received_events & POLLIN) {
+                    // TODO: Read-loop.
                     const buffer_size = 1024;
                     const buffer = alloc(buffer_size);
                     const size = $.read(client.fd, buffer, buffer_size);
@@ -929,14 +932,26 @@ class Server {
 
 /**
  * @param { Error } err 
- * @returns JSON representation
+ * @returns { object }
  */
-function serialize_error(err) {
+function copy_err_to_plain_object(err) {
     const plain = Object.create(null);
     for (const key of Reflect.ownKeys(err)) {
         plain[key] = err[key];
     }
-    return JSON.stringify(plain)
+    return plain
+}
+
+/**
+ * @param { string } bundle the bundle identifier
+ * @see https://github.com/dtinth/JXA-Cookbook/wiki/Getting-the-Application-Instance
+ * @returns whether the application is running
+ */
+function is_running(bundle) {
+    for (const app of ObjC.unwrap($.NSWorkspace.sharedWorkspace.runningApplications)) {
+        if (ObjC.unwrap(app.bundleIdentifier) === bundle) return true;
+    }
+    return false;
 }
 
 const prelude = ["osascript", "-l", "JavaScript", "<script-file>"];
@@ -948,41 +963,39 @@ if (!path) {
     $.exit(1);
 }
 
-
-const ERR_UNKNOWN_COMMAND = cstr.sized("Unknown command\n");
-
-const music = Application('Music');
 const server = new Server(path, {
     max_clients: 3,
     backlog: 5
 });
 
+const APPLE_MUSIC = "com.apple.Music";
+
 server.listen((connection, [data]) => {
+    /**
+     * @type { PointerWithSize }
+     */
+    let str;
     try {
+        const app = is_running(APPLE_MUSIC) && Application(APPLE_MUSIC);
+        if (!app) throw new Error("Application not running");
+
+        let output;
         switch (uncstr(data).trim()) {
-            case "application": {
-                const json = JSON.stringify(music.properties());
-                const json_cstr = cstr.sized(json);
-                connection.write_all(json_cstr);
-                $.free(json_cstr[0]);
-                break
-            }
-            case "current track": {
-                const json = JSON.stringify(music.currentTrack.properties())
-                const json_cstr = cstr.sized(json);
-                connection.write_all(json_cstr);
-                $.free(json_cstr[0]);
-                break;
-            }
-            default: {
-                connection.write_all(ERR_UNKNOWN_COMMAND);
-            }
+            case "application":   { output = app             .properties(); break }
+            case "current track": { output = app.currentTrack.properties(); break }
+            default: throw new Error("Unknown command");
         }
+
+        str = cstr.sized(JSON.stringify({
+            type: "success",
+            value: output
+        }));
     } catch (err) {
-        err.is_error = true;
-        const json = serialize_error(err)
-        const json_cstr = cstr.sized(json);
-        connection.write_all(json_cstr);
-        $.free(json_cstr[0]);
+        str = cstr.sized(JSON.stringify({
+            type: "error",
+            value: copy_err_to_plain_object(err)
+        }))
     }
+    connection.write_all(str);
+    $.free(str[0]);
 })

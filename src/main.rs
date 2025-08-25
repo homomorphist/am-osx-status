@@ -296,7 +296,8 @@ impl PollingContext {
                     async {
                         let jxa_socket = crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket");
                         let mut jxa = osa_apple_music::Session::new(jxa_socket).await.expect("failed to create JXA session");
-                        let player_version = jxa.application().await.expect("failed to retrieve application data").version;
+                        // TODO: Get the player version without JXA, so that the app doesn't need to be open.
+                        let player_version = jxa.application().await.expect("failed to retrieve application data").map(|app| app.version).unwrap_or_else(|| "?".into());
                         (jxa, player_version)
                     }
                 );
@@ -341,7 +342,8 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     let context = guard.deref_mut();
 
     let app = match tracing::trace_span!("app status retrieval").in_scope(|| context.jxa.application()).await {
-        Ok(app) => Arc::new(app),
+        Ok(Some(app)) => Arc::new(app),
+        Ok(None) => return,
         Err(err) => {
             use osa_apple_music::error::SessionEvaluationError;
             match err {
@@ -353,6 +355,9 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                         tracing::error!(?issue, "failed to deserialize application data");
                         tracing::debug!("could not deserialize: {:?}", String::from_utf8_lossy(&data));
                     }
+                },
+                SessionEvaluationError::QueryFailure(err) => {
+                    tracing::error!(?err, "failed to query application data");
                 }
             }
             return;
@@ -397,6 +402,9 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                                 tracing::error!(?issue, "failed to deserialize application data");
                                 tracing::debug!("could not deserialize: {:?}", String::from_utf8_lossy(&data));
                             }
+                        },
+                        SessionEvaluationError::QueryFailure(err) => {
+                            tracing::error!(?err, "failed to query application data");
                         }
                     }
                     return;
