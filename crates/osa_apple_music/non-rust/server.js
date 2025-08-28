@@ -19,6 +19,9 @@ ObjC.bindFunction('close', ['int', ['int']])
 ObjC.bindFunction('perror', ['void', ['void *']])
 ObjC.bindFunction('poll', ['int', ['void *', 'int', 'int']])
 ObjC.bindFunction('unlink', ['int', ['void *']])
+// ObjC.bindFunction('fopen', ['void *', ['void *', 'void *']])
+// ObjC.bindFunction('fclose', ['int', ['void *']])
+// ObjC.bindFunction('fwrite', ['int', ['void *', 'int', 'int', 'void *']])
 
 const SOCK_STREAM = 1;
 const SOCK_DGRAM = 2;
@@ -942,18 +945,6 @@ function copy_err_to_plain_object(err) {
     return plain
 }
 
-/**
- * @param { string } bundle the bundle identifier
- * @see https://github.com/dtinth/JXA-Cookbook/wiki/Getting-the-Application-Instance
- * @returns whether the application is running
- */
-function is_running(bundle) {
-    for (const app of ObjC.unwrap($.NSWorkspace.sharedWorkspace.runningApplications)) {
-        if (ObjC.unwrap(app.bundleIdentifier) === bundle) return true;
-    }
-    return false;
-}
-
 const prelude = ["osascript", "-l", "JavaScript", "<script-file>"];
 const usage = [...prelude, "<socket-path>"]
 const args = $.NSProcessInfo.processInfo.arguments.js.slice(prelude.length).map(arg => arg.js)
@@ -976,8 +967,8 @@ server.listen((connection, [data]) => {
      */
     let str;
     try {
-        const app = is_running(APPLE_MUSIC) && Application(APPLE_MUSIC);
-        if (!app) throw new Error("Application not running");
+        const app = Application(APPLE_MUSIC);
+        if (!app.running()) throw new Error("Application not running");
 
         let output;
         switch (uncstr(data).trim()) {
