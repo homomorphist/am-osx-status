@@ -129,7 +129,7 @@ impl PendingStatusClear {
             false,
             true,
             Ordering::SeqCst,
-            Ordering::SeqCst,
+            Ordering::Relaxed,
         ).is_err() {
             return;
         }
