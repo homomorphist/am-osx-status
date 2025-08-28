@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 export DATABASE_PATH="/Users/$USER/Library/Application Support/am-osx-status/sqlite.db"
 
-if [ "$1" == "restore" ]; then
+if [ "$1" = "restore" ]; then
     if [ ! -f "$DATABASE_PATH.bak" ]; then
         echo "Backup not found at $DATABASE_PATH.bak"
         exit 1
@@ -17,7 +17,7 @@ else
         exit 1
     fi
     if [ -f "$DATABASE_PATH.bak" ]; then
-        if [ "$1" == "force" ]; then
+        if [ "$1" = "force" ]; then
             rm "$DATABASE_PATH.bak"
         else
             echo "Backup already exists at $DATABASE_PATH.bak"
