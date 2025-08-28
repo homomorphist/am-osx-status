@@ -354,7 +354,9 @@ impl CustomArtworkUrl {
 }
 impl CustomArtworkUrl {
     pub fn is_expired(&self) -> bool {
-        const LATENCY_OFFSET: core::time::Duration = core::time::Duration::from_secs(1);
+        /// We account for network latency when checking expiration,
+        /// since we'll need to tell Discord to themselves fetch the image.
+        const LATENCY_OFFSET: core::time::Duration = core::time::Duration::from_secs(5);
         self.expires_at.is_some_and(|expires_at| expires_at < chrono::Utc::now() + LATENCY_OFFSET)
     }
 }
