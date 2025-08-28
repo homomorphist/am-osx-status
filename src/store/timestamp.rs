@@ -67,7 +67,11 @@ impl PartialOrd<chrono::DateTime<chrono::Utc>> for MillisecondTimestamp {
     }
 }
 
-            .expect(&format!("timestamp millis out of valid date range: {}", millis));
+impl From<i64> for MillisecondTimestamp {
+    fn from(millis: i64) -> Self {
+        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis)
+            .unwrap_or_else(|| panic!("timestamp millis out of valid date range: {millis}"));
+
         MillisecondTimestamp(dt)
     }
 }
