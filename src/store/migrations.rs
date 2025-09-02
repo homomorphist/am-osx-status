@@ -1,3 +1,5 @@
+use crate::store::timestamp::MillisecondTimestamp;
+
 use super::{GlobalPool, DB_POOL};
 use include_dir::Dir;
 use sqlx::{Row, Column};
@@ -58,7 +60,7 @@ fn is_from_missing_sessions_table(err: &sqlx::Error) -> bool {
     err.as_database_error().is_some_and(|v| v.message() == "no such table: sessions")
 }
 
-async fn migrate() {
+pub async fn migrate() {
     let migrations = get_migrations();
     let pool = DB_POOL.get().await.expect("failed to get pool");
     let last = get_last_run_epoch().await;
@@ -73,17 +75,13 @@ async fn migrate() {
     }
 }
 
-async fn get_last_run_epoch() -> Option<Epoch> {
+async fn get_last_run_epoch() -> Option<MillisecondTimestamp> {
     sqlx::query("SELECT started_at FROM sessions ORDER BY started_at DESC LIMIT 1")
         .fetch_optional(&DB_POOL.get().await.expect("failed to get pool"))
         .await
         .or_else(|err| { if is_from_missing_sessions_table(&err) { Ok(None) } else { Err(err) } })
         .expect("failed to get last run epoch")
-        .map(|v| v.get::<u32, _>(0))
-        .and_then(|v| match Epoch::from_timestamp(v as i64, 0) {
-            Some(v) => Some(v),
-            None => { tracing::error!(?v, "sessions epoch out of valid date range; ignoring"); None }
-        })
+        .map(|row| MillisecondTimestamp::from(row.get::<i64, _>(0)))
 }
 
 #[cfg(test)]
