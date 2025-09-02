@@ -1,7 +1,7 @@
 -- Insert initial data into sessions table
-INSERT INTO sessions (ver_crate, ver_player, ver_os, polls, osa_fetches_track, osa_fetches_player, started_at)
+INSERT INTO sessions (ver_crate, ver_player, ver_os, osa_fetches_track, osa_fetches_player, started_at)
 VALUES 
-('0.0.0', '1.2.3.4', '14.2.1', 123, 104, 123, (strftime('%s', 'now') - 500) * 1000);
+('0.0.0', '1.2.3.4', '14.2.1', 104, 123, (strftime('%s', 'now') - 500) * 1000);
 
 -- Insert initial data into deferred_tracks table
 INSERT INTO deferred_tracks (title, artist, album, album_artist, album_index, persistent_id, duration, media_kind)
