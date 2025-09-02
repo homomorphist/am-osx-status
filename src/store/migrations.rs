@@ -58,7 +58,7 @@ fn is_from_missing_sessions_table(err: &sqlx::Error) -> bool {
     err.as_database_error().is_some_and(|v| v.message() == "no such table: sessions")
 }
 
-async fn migrate() {
+pub async fn migrate() {
     let migrations = get_migrations();
     let pool = DB_POOL.get().await.expect("failed to get pool");
     let last = get_last_run_epoch().await;

@@ -302,6 +302,8 @@ impl PollingContext {
                     }
                 );
 
+                store::migrations::migrate().await;
+
                 let session = store::entities::Session::new(&pool, &player_version)
                     .await.unwrap_or_else(|err| ferror!("failed to create session in database: {}", err));
 
