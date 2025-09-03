@@ -277,17 +277,18 @@ struct PollingContext {
     pub last_track: Option<Arc<DispatchableTrack>>,
     pub listened: Arc<Mutex<Listened>>,
     artwork_manager: Arc<data_fetching::components::artwork::ArtworkManager>,
-
+    
     #[cfg(feature = "musicdb")]
     musicdb: Arc<Option<musicdb::MusicDB>>,
-
+    
     jxa: osa_apple_music::Session,
-    paused: Option<bool>,
+    app_open: bool,
+    app_paused: Option<bool>,
     session: store::entities::Session,
 }
 impl PollingContext {
     async fn from_config(config: &config::Config, terminating: Arc<AtomicBool>) -> Self {
-        let (backends, (artwork_manager, jxa, session)) = tokio::join!(
+        let (backends, (artwork_manager, jxa, session, player_version)) = tokio::join!(
             subscribers::Backends::new(config),
             async {
                 let ((pool, artwork_manager), (jxa, player_version)) = tokio::join!(
@@ -310,7 +311,7 @@ impl PollingContext {
                 let session = store::entities::Session::new(&pool, &player_version)
                     .await.unwrap_or_else(|err| ferror!("failed to create session in database: {}", err));
 
-                (artwork_manager, jxa, session)
+                (artwork_manager, jxa, session, player_version)
             }
         );
 
@@ -325,9 +326,10 @@ impl PollingContext {
             musicdb: Arc::new(if config.musicdb.enabled { Some(tracing::trace_span!("musicdb read").in_scope(|| {
                 musicdb::MusicDB::read_path(config.musicdb.path.clone())
             })) } else { None }),
-
-            paused: None,
+            
             jxa,
+            app_open: player_version != "?",
+            app_paused: None,
             session,
         }
     }
@@ -347,8 +349,17 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     let context = guard.deref_mut();
 
     let app = match tracing::trace_span!("app status retrieval").in_scope(|| context.jxa.application()).await {
-        Ok(Some(app)) => Arc::new(app),
-        Ok(None) => return,
+        Ok(Some(app)) => {
+            context.app_open = true;
+            Arc::new(app)
+        },
+        Ok(None) => {
+            if !context.app_open { return; }
+            tracing::debug!("app was closed; dispatching event");
+            context.app_open = false;
+            context.backends.dispatch_status(subscribers::DispatchedApplicationStatus::Closed).await;
+            return;
+        },
         Err(err) => {
             use osa_apple_music::error::SessionEvaluationError;
             match err {

@@ -716,6 +716,7 @@ pub enum DispatchedApplicationStatus {
     /// A temporary pause in track playback; the boolean indicating whether this has started or ended.
     /// This may not be a result of user action— this may also be dispatched when encountering playback buffering issues.
     Paused,
+    Closed
 }
 impl From<osa_apple_music::application::PlayerState> for DispatchedApplicationStatus {
     fn from(value: osa_apple_music::application::PlayerState) -> Self {
@@ -724,7 +725,7 @@ impl From<osa_apple_music::application::PlayerState> for DispatchedApplicationSt
             PlayerState::Playing => Self::Playing,
             PlayerState::Paused => Self::Paused,
             PlayerState::Stopped => Self::Stopped,
-            _ => unimplemented!("unforeseen player state")
+            state => unimplemented!("unforeseen player state {state:?}")
         }
     }
 }
