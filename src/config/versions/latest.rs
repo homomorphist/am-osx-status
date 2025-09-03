@@ -86,14 +86,13 @@ impl Default for ConfigurableBackends {
 #[derive(Serialize, Deserialize)]
 pub struct MusicDbConfiguration {
     pub enabled: bool,
-    /// `None` indicates the default path provided by [`musicdb::MusicDB::default_path`].
-    pub path: Option<std::path::PathBuf>
+    pub path: std::path::PathBuf
 }
 impl Default for MusicDbConfiguration {
     fn default() -> Self {
         Self {
             enabled: true,
-            path: None
+            path: musicdb::MusicDB::default_path()
         }
     }
 }
