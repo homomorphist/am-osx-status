@@ -143,8 +143,8 @@ pub mod io {
         pub fn prompt_display_type() -> Option<DisplayedField> {
             let options = &[
                 "Listening to <activity-name> // Typically the application name, e.g. \"Apple Music\"",
-                "Listening to <album>",
                 "Listening to <artist>",
+                "Listening to <album>",
             ];
             prompt_choice_optional(options, "How should your activity display? (\"Listening to _________\")").map(|choice| match choice {
                 0 => DisplayedField::ApplicationName,
