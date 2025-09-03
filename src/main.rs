@@ -91,7 +91,10 @@ async fn main() -> ExitCode {
     match args.command {
         Command::Start => {
             let config = match get_config_or_path!() {
-                Ok(config) => config,
+                Ok(config) => {
+                    config.save_to_disk().await;
+                    config
+                },
                 Err(path) => if config::wizard::io::prompt_bool(match path {
                     ConfigPathChoice::Automatic(..) => "No configuration has been set up! Would you like to use the wizard to build one?",
                     ConfigPathChoice::Explicit(..) => "No configuration exists at the provided file! Would you like to use the wizard to build it?",
