@@ -320,7 +320,7 @@ impl PollingContext {
 
             #[cfg(feature = "musicdb")]
             musicdb: Arc::new(if config.musicdb.enabled { Some(tracing::trace_span!("musicdb read").in_scope(|| {
-                musicdb::MusicDB::read_path(config.musicdb.path.clone().unwrap_or(musicdb::MusicDB::default_path()))
+                musicdb::MusicDB::read_path(config.musicdb.path.clone())
             })) } else { None }),
 
             paused: None,
