@@ -113,7 +113,7 @@ pub mod io {
                 }
     
                 let choice = prompt_choice(&options, "How should your activity display? (\"Listening to _________\")");
-                config.application_id = match prompt_choice(&options, "How should your activity display? (\"Listening to _________\")") {
+                config.application_id = match choice {
                     0 => {
                         const MAX_U64_LENGTH_IN_BASE_TEN: usize = 20;
                         let id = super::prompt("Enter your custom application ID:", MAX_U64_LENGTH_IN_BASE_TEN + '\n'.len_utf8());
