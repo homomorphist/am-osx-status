@@ -477,7 +477,7 @@ super::subscribe!(DiscordPresence, TrackStarted, {
         }
 
         let mut activity = Activity::new()
-            ._type(match track.media_kind {
+            .activity_type(match track.media_kind {
                 MediaKind::Song | 
                 MediaKind::Unknown => ActivityType::Listening,
                 MediaKind::MusicVideo => ActivityType::Watching,
