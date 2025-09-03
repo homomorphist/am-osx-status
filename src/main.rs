@@ -257,7 +257,7 @@ async fn main() -> ExitCode {
                         }
                     } else {
                         match action {
-                            DiscordConfigurationAction::Enable => config::wizard::io::discord::prompt(&mut config.backends.discord, true).await,
+                            DiscordConfigurationAction::Enable => config::wizard::io::discord::prompt(&mut config.backends.discord, true),
                             DiscordConfigurationAction::Disable => {}
                         }
                     }

@@ -75,13 +75,48 @@ pub struct Config {
     pub enabled: bool,
     #[serde(default = "EnumeratedApplicationIdentifier::default_as_u64")]
     pub application_id: u64,
+    #[serde(default = "DisplayedField::default")]
+    pub displayed_field: DisplayedField,
 }
 impl Default for Config {
     fn default() -> Self {
         Self {
             enabled: true,
             application_id: EnumeratedApplicationIdentifier::default_as_u64(),
+            displayed_field: DisplayedField::default()
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DisplayedField {
+    ApplicationName,
+    State,
+    Details,
+}
+impl From<DisplayedField> for discord_presence::models::DisplayType {
+    fn from(val: DisplayedField) -> Self {
+        match val {
+            DisplayedField::ApplicationName => discord_presence::models::DisplayType::Name,
+            DisplayedField::State => discord_presence::models::DisplayType::State,
+            DisplayedField::Details => discord_presence::models::DisplayType::Details,
+        }
+    }
+}
+impl From<discord_presence::models::DisplayType> for DisplayedField {
+    fn from(value: discord_presence::models::DisplayType) -> Self {
+        match value {
+            discord_presence::models::DisplayType::Name => DisplayedField::ApplicationName,
+            discord_presence::models::DisplayType::State => DisplayedField::State,
+            discord_presence::models::DisplayType::Details => DisplayedField::Details,
+            state => unimplemented!("unexpected display type: {state:?}"),
+        }
+    }
+}
+impl Default for DisplayedField {
+    fn default() -> Self {
+        Self::State // artist, in our case (for now)
     }
 }
 
@@ -184,6 +219,7 @@ super::subscription::define_subscriber!(pub DiscordPresence, {
     position: Option<f32>,
     duration: Option<f32>,
     pending_clear: PendingStatusClear,
+    // status_display: Option<discord_presence::models::DisplayType>,
 });
 impl Debug for DiscordPresence {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -482,6 +518,7 @@ super::subscribe!(DiscordPresence, TrackStarted, {
                 MediaKind::Unknown => ActivityType::Listening,
                 MediaKind::MusicVideo => ActivityType::Watching,
             })
+            .status_display(self.config.displayed_field.into())
             .details(make_minimum_length(track.name.clone()))
             .state(track.artist.clone().map(make_minimum_length).unwrap_or("Unknown Artist".to_owned()))
             .assets(|_| ActivityAssets {
