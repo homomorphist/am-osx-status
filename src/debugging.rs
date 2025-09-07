@@ -40,7 +40,6 @@ impl DebuggingSession {
 
         tracing_subscriber::registry()
             .with(Self::get_filter(args))
-            .with(crate::error_layer::Layer::new())
             .with(layers)
             .init();
     
