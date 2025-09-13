@@ -90,15 +90,20 @@ async fn main() -> ExitCode {
 
     use cli::Command;
     match args.command {
-        Command::Start => {
+        Command::Start { kill_existing } => {
             if let Some(pid) = ActiveProcessLockfile::get().await {
-                eprintln!("Another instance of the program is already running! (pid {pid})");
+                if kill_existing {
+                    unsafe { libc::kill(pid, libc::SIGTERM); }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                } else {
+                    eprintln!("Another instance of the program is already running! (pid {pid})");
 
-                if service::ServiceController::is_running().await {
-                    eprintln!("You can turn off the service with `am-osx-status service stop`.");
+                    if service::ServiceController::is_running().await {
+                        eprintln!("You can turn off the service with `am-osx-status service stop`.");
+                    }
+
+                    return ExitCode::FAILURE;
                 }
-
-                return ExitCode::FAILURE;
             }
 
             ActiveProcessLockfile::write().await;

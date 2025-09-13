@@ -28,7 +28,12 @@ pub enum Command {
         action: ServiceAction
     },
     /// Begin watching Apple Music and log information.
-    Start,
+    Start {
+        // TODO: Unhide this once it plays nicely with auto-starting services.
+        /// Kill any existing instances before starting.
+        #[arg(short, long, default_value = "false", hide = true)]
+        kill_existing: bool,
+    },
     /// Configure the application.
     #[clap(visible_alias("config"))]
     Configure {
