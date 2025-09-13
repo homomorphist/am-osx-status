@@ -306,6 +306,7 @@ mod tests {
     }
    
     #[tokio::test]
+    #[ignore = "has race condition with other tests; will override real service too"]
     async fn double_register() {
         let agent = ServiceController::agent();
         assert!(agent.unregister(true).await.is_ok());
@@ -316,6 +317,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "has race condition with other tests; will override real service too"]
     async fn double_unregister() {
         let agent = ServiceController::agent();
         ServiceController::write_job_definition(get_config_path()).await.expect("failed to write service definition");
