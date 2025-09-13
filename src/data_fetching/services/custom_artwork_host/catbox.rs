@@ -15,6 +15,13 @@ impl super::CustomArtworkHost for CatboxHost {
             tracing::error!(?error, ?path, "catbox upload error");
             super::UploadError::UnknownError
         })?;
+
+        if url.contains("Internal Server Error") {
+            tracing::debug!(?url, ?path); // it dumps an entire html page for some godforsaken reason
+            tracing::error!(?path, "catbox upload returned internal server error");
+            return Err(super::UploadError::UnknownError);
+        }
+
         let expires_at = chrono::Utc::now() + chrono::Duration::hours(EXPIRES_IN_HOURS as i64);
         Ok(crate::store::entities::CustomArtworkUrl::new(pool, Some(expires_at), path, &url).await?)
     }
