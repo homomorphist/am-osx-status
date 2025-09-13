@@ -7,7 +7,7 @@ use tracing::Instrument;
 use listened::Listened;
 use util::ferror;
 
-use crate::service::{ServiceRestartFailure, ServiceStopFailure};
+use crate::service::lockfile::ActiveProcessLockfile;
 use crate::config::LoadableConfig;
 
 mod subscribers;
@@ -22,9 +22,11 @@ mod store;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
+type TerminationFuture = std::pin::Pin<Box<dyn std::future::Future<Output = tokio::signal::unix::SignalKind> + Send>>;
+
 fn watch_for_termination() -> (
     Arc<std::sync::atomic::AtomicBool>,
-    std::pin::Pin<Box<impl std::future::Future<Output = tokio::signal::unix::SignalKind>>>
+    TerminationFuture,
 ) {
     use tokio::signal::unix::{SignalKind, signal};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -89,6 +91,18 @@ async fn main() -> ExitCode {
     use cli::Command;
     match args.command {
         Command::Start => {
+            if let Some(pid) = ActiveProcessLockfile::get().await {
+                eprintln!("Another instance of the program is already running! (pid {pid})");
+
+                if service::ServiceController::is_running().await {
+                    eprintln!("You can turn off the service with `am-osx-status service stop`.");
+                }
+
+                return ExitCode::FAILURE;
+            }
+
+            ActiveProcessLockfile::write().await;
+
             let config = match get_config_or_path!() {
                 Ok(config) => {
                     config.save_to_disk().await;
@@ -123,15 +137,24 @@ async fn main() -> ExitCode {
             let session_closer_ctx = context.clone();
             tokio::spawn(async move {
                 pending_term.await;
-                drop(listener); // remove listener socket
+                if let Some(listener) = listener {
+                   listener.abort();
+                }
                 drop(debugging.guards); // flush logs
                 let db_pool = &store::DB_POOL.get().await.expect("failed to get database pool");
                 let session = &mut session_closer_ctx.lock().await.session;
                 session.ended_at = Some(chrono::Utc::now().into());
-                session.finish(db_pool).await.expect("failed to finish session in database");
-                std::process::exit(1);
+                let (finished, cleared) = tokio::join!(
+                    session.finish(db_pool),
+                    ActiveProcessLockfile::clear(),
+                );
+                finished.expect("failed to finish session in database");
+                cleared.expect("failed to clear active process lockfile");
+                std::process::exit(0)
             });
 
+
+            tracing::info!("starting main loop");
 
             let mut interval = tokio::time::interval(POLL_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -145,20 +168,6 @@ async fn main() -> ExitCode {
             use cli::ServiceAction;
             use service::*;
 
-            let controller = service::ServiceController::new();
-
-            #[derive(thiserror::Error, Debug)]
-            enum ServiceFailure {
-                #[error("could not start service: {0}")]
-                Start(#[from] ServiceStartFailure),
-                #[error("could not stop service: {0}")]
-                Stop(#[from] ServiceStopFailure),
-                #[error("could not restart service: {0}")]
-                Restart(#[from] ServiceRestartFailure),
-                #[error("could not reload service: {0}")]
-                Reload(#[from] ServiceIpcError)
-            }
-
             #[derive(thiserror::Error, Debug)]
             enum ServiceIpcError {
                 #[error("failed to dispatch IPC packet ({0})")]
@@ -167,27 +176,61 @@ async fn main() -> ExitCode {
                 Connection(std::io::Error),
             }
 
-            if let Err(error) = match action {
-                ServiceAction::Start => controller.start(get_config_os_string!(), false).map_err(ServiceFailure::from),
-                ServiceAction::Stop => controller.stop().map_err(ServiceFailure::from),
-                ServiceAction::Restart => controller.restart(get_config_os_string!()).map_err(ServiceFailure::from),
-                ServiceAction::Reload => async {
+            match action {
+                ServiceAction::Start => ServiceController::start(get_config_or_error!().path.as_path(), true).await,
+                ServiceAction::Stop => ServiceController::stop(true).await,
+                ServiceAction::Status => {
+                    enum ServiceDefinitionStatus {
+                        Installed,
+                        NotInstalled,
+                        Indeterminate(std::io::Error),
+                    }
+
+                    let status = match ServiceController::is_defined().await {
+                        Ok(true) => ServiceDefinitionStatus::Installed,
+                        Ok(false) => ServiceDefinitionStatus::NotInstalled,
+                        Err(err) => ServiceDefinitionStatus::Indeterminate(err)
+                    };
+
+                    if let Some(pid) = ServiceController::pid().await {
+                        println!("Service is running with PID {pid}.");
+                        match status {
+                            ServiceDefinitionStatus::Installed => {}
+                            ServiceDefinitionStatus::NotInstalled => println!("The definition has since been removed, though, so it will not start automatically after shutdown."),
+                            ServiceDefinitionStatus::Indeterminate(err) => println!("Could not determine if the service is installed: {err}"),
+                        }   
+                    } else if let Some(pid) = ActiveProcessLockfile::get().await {
+                        println!("Service is not running, but an instance of the program is running independently with PID {pid}.");
+                        match status {
+                            ServiceDefinitionStatus::Installed => println!("It is installed and will start automatically on login, or can be manually started after the running instance is closed."),
+                            ServiceDefinitionStatus::NotInstalled => println!("The service is not currently installed."),
+                            ServiceDefinitionStatus::Indeterminate(err) => println!("Could not determine if the service is installed: {err}"),
+                        }
+                    } else {
+                        print!("Service is not running");
+                        match status {
+                            ServiceDefinitionStatus::Installed => println!(", but it is installed and will start automatically on login."),
+                            ServiceDefinitionStatus::NotInstalled => println!(" and is not installed."),
+                            ServiceDefinitionStatus::Indeterminate(err) => println!(".\nCould not determine if it is installed: {err}"),
+                        }
+                    }
+                },
+                ServiceAction::Restart => ServiceController::restart(get_config_or_error!().path.as_path()).await,
+                ServiceAction::Remove => ServiceController::remove().await,
+                ServiceAction::Reload => {
                     use ipc::{Packet, PacketConnection};
                     let path = get_config_or_error!().socket_path;
-                    let mut connection = PacketConnection::from_path(path).await.map_err(ServiceIpcError::Connection)?;
-                    connection.send(Packet::hello()).await?;
-                    connection.send(Packet::ReloadConfiguration).await?;
-                    Ok::<_, ServiceIpcError>(())
-                }.await.map_err(ServiceFailure::from)
-            } {
-                tracing::error!(%error);
-                ferror!("{error}");
+                    let mut connection = dbg!(PacketConnection::from_path(path).await).unwrap();
+                    connection.send(Packet::hello()).await;
+                    connection.send(Packet::ReloadConfiguration).await;
+                    println!("Reload command sent to service.");
+                }
             }
         },
         Command::Configure { ref action } => {
             tokio::spawn(async {
                 pending_term.await;
-                std::process::exit(1);
+                std::process::exit(0);
             });
 
             use cli::ConfigurationAction;
@@ -297,7 +340,7 @@ impl PollingContext {
                         (pool, artwork_manager)
                     },
                     async {
-                        let jxa_socket = crate::util::HOME.join("Library/Application Support/am-osx-status/osa-socket");
+                        let jxa_socket = crate::util::APPLICATION_SUPPORT_FOLDER.join("osa-socket");
                         let mut jxa = osa_apple_music::Session::new(jxa_socket).await.expect("failed to create JXA session");
                         // TODO: Get the player version without JXA, so that the app doesn't need to be open.
                         let player_version = jxa.application().await.expect("failed to retrieve application data").map(|app| app.version).unwrap_or_else(|| "?".into());

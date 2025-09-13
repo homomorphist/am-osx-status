@@ -1,9 +1,3 @@
-#![allow(unused)]
-
-struct Watcher {
-
-}
-
 use std::{os::fd::AsFd, pin::Pin, sync::Arc, sync::LazyLock};
 use core::{num::NonZero, sync::atomic::{AtomicUsize, Ordering}};
 
@@ -12,7 +6,6 @@ use tokio_stream::StreamExt;
 use tokio_serde::{formats::SymmetricalBincode, Framed, SymmetricallyFramed};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use tokio::{sync::Mutex, io::AsyncWriteExt, net::{unix::{OwnedReadHalf, OwnedWriteHalf, SocketAddr}, UnixListener, UnixStream}};
-
 
 use crate::util;
 
@@ -28,21 +21,24 @@ macro_rules! def_serde_compatibly_omissible_config_default {
 }
 
 def_serde_compatibly_omissible_config_default!(socket_path, <std::path::PathBuf> {
-    crate::util::HOME.join("Library/Application Support/am-osx-status/ipc")
+    crate::util::APPLICATION_SUPPORT_FOLDER.join("ipc.sock")
 });
 
 
-trait PacketIdCounterSource {}
+pub trait PacketIdCounterSource {}
+/// Marker types for packet sources.
 mod s {
+    #[derive(Debug)]
     pub struct Remote; impl super::PacketIdCounterSource for Remote {}
+    #[derive(Debug)]
     pub struct Local; impl super::PacketIdCounterSource for Local {}
 }
 
 
-
 static PACKET_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
 #[repr(transparent)]
-struct PacketID<T: PacketIdCounterSource>(NonZero<usize>, core::marker::PhantomData<T>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct PacketID<T: PacketIdCounterSource>(NonZero<usize>, core::marker::PhantomData<T>);
 impl<T: PacketIdCounterSource> PacketID<T> {
     #[inline(always)]
     pub const unsafe fn from_usize(usize: usize) -> Self {
@@ -61,60 +57,24 @@ impl PacketID<s::Local> {
     }
 }
 
-
-
-// /// Initial packet. Transmission format is more stable & controllable; of particular importance is the version being the first, to test for compatibility.
-// struct InitialPacket {
-//     version: IpcVersion
-// }
-// impl InitialPacket {
-//     /// Returns the byte length of the packet of the version, including the version itself.
-//     pub const fn byte_length(version: IpcVersion) -> usize {
-//         core::mem::size_of::<IpcVersion>()
-//     }
-// }
-
-#[derive(Debug)]
-pub struct DuplicateReceiverError;
-impl core::error::Error for DuplicateReceiverError {}
-impl core::fmt::Display for DuplicateReceiverError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("duplicate receiver")
-    }
-}
-
-
-// #[derive(Debug, thiserror::Error)]
-// enum ReceiverCreationError {
-//     #[error("{0}")]
-//     DuplicateReceiver(#[from] DuplicateReceiverError),
-//     #[error("sender has an incompatible version")]
-//     SenderIncompatibleVersion,
-//     #[error("first packet received was non-hello")]
-//     NoHello,
-//     #[error("timed out (did not receive hello)")]
-//     TimedOut,
-// }
-
-
-const IPC_VERSION: usize = 0;
-
+const IPC_PROTOCOL_VERSION: usize = 0;
 pub mod packets {
+    use super::{IPC_PROTOCOL_VERSION, PacketID, s};
     use crate::util::OWN_PID;
+    use serde::{Serialize, Deserialize};
 
-    use super::IPC_VERSION;
-
-    #[derive(serde::Serialize, serde::Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct Hello {
+        /// IPC protocol version.
         pub version: usize,
         /// The process ID of the process sending this packet (the one constructing this).
-        pub process: u32,
+        pub process: libc::pid_t,
     }
     impl Hello {
         pub fn new() -> Self {
             Hello {
-                version: IPC_VERSION,
-                process: OWN_PID.as_u32()
+                version: IPC_PROTOCOL_VERSION,
+                process: *crate::util::OWN_PID
             }
         }
     }
@@ -123,63 +83,114 @@ pub mod packets {
             super::Packet::Hello(val)
         }
     }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct GeneralFailure {
+        /// The packet this failure is a reaction to.
+        // Typed as local since that's the only time we'd care about what the ID is.
+        pub reaction: Option<super::PacketID<s::Local>>,
+        pub reason: String,
+    }
+    impl GeneralFailure {
+        // ID is remote here since we'd only construct to send
+        pub fn new(reaction: Option<super::PacketID<s::Remote>>, reason: impl Into<String>) -> Self {
+            Self {
+                reaction: unsafe {
+                    core::mem::transmute::<
+                        Option<super::PacketID<s::Remote>>,
+                        Option<super::PacketID<s::Local>>
+                    >(reaction)
+                },
+                reason: reason.into()
+            }
+        }
+    }
+
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[repr(u16)]
 pub enum Packet {
     Hello(packets::Hello) = 0,
-    ReloadConfiguration = 1,
+    GeneralFailure(packets::GeneralFailure) = 1,
+    ReloadConfiguration = 2,
 }
 impl Packet {
     pub fn hello() -> Self {
         packets::Hello::new().into()
     }
+
+    /// ## Safety
+    /// See: https://doc.rust-lang.org/stable/core/mem/fn.discriminant.html#accessing-the-numeric-value-of-the-discriminant
+    pub fn discriminant(&self) -> u16 {
+        unsafe { *<*const Self>::from(self).cast::<u16>() }
+    }
+
+    // pub fn respond_with_failure(self, reason: impl Into<String>) -> Packet {
+    //     Packet::GeneralFailure(packets::GeneralFailure::new(
+    //         reason
+    //     ))
+    // }
 }
 
+// TODO: Delete socket file on drop; tho it doesn't even drop in the first place
 pub struct Listener {
-    address: SocketAddr,
-    closed: bool,
-    new_connection: tokio::sync::mpsc::Receiver<UnixStream>
+    path: std::path::PathBuf,
+    receiver: tokio::sync::mpsc::Receiver<UnixStream>,
 }
 impl Listener {
-    pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self, DuplicateReceiverError> {
-        let listener = match UnixListener::bind(path) {
-            Ok(listener) => Ok(listener),
-            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => Err(DuplicateReceiverError),
-            Err(err) => panic!("cannot create receiver: {err:?}")
-        }?;
-
-        let address = listener.local_addr().expect("no local address for ipc socket");
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
+    pub async fn new(path: impl AsRef<std::path::Path>) -> Result<Self, std::io::Error> {
+        let path = path.as_ref().to_owned();
         
+        // lockfile ensures there is only one legit host at a time
+        match tokio::fs::remove_file(&path).await {
+            Ok(_) => tracing::debug!(?path, "removed stale ipc socket file"),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+
+        let listener = UnixListener::bind(&path)?;
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+
         tokio::spawn(async move {
             loop {
-                tx.send(listener.accept().await.expect("unable to accept connection").0).await.unwrap();
+                match listener.accept().await {
+                    Ok((stream, _)) => {
+                        if tx.send(stream).await.is_err() {
+                            break; // channel closed
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("IPC accept error: {e}");
+                        break;
+                    }
+                }
             }
         });
-        
+
         Ok(Self {
-            address,
-            closed: false,
-            new_connection: rx
+            path,
+            receiver: rx,
         })
     }
-    async fn next_connection(&mut self) -> PacketConnection {
-        PacketConnection::from_stream(self.new_connection.recv().await.expect("channel closed")).await
-    }
-    pub fn shutdown(&mut self) {
-        if self.closed { return }
-        let path = self.address.as_pathname().expect("ipc socket is unnamed");
-        std::fs::remove_file(path).expect("cannot remove IPC socket");
-        self.closed = true;
+
+    async fn next_connection(&mut self) -> Option<PacketConnection> {
+        match self.receiver.recv().await {
+            Some(stream) => Some(PacketConnection::from_stream(stream).await),
+            None => None, // channel closed
+        }
     }
 }
 impl Drop for Listener {
     fn drop(&mut self) {
-        self.shutdown();
+        match std::fs::remove_file(&self.path) {
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => tracing::debug!(?self.path, "ipc socket file already gone"),
+            Err(err) => tracing::warn!(%err, ?self.path, "could not remove ipc socket file"), // best-effort attempt
+        }
     }
 }
+
 
 #[derive(Debug)]
 pub struct PacketConnection {
@@ -233,39 +244,78 @@ impl PacketConnection {
 pub async fn listen(
     context: Arc<Mutex<crate::PollingContext>>,
     config: Arc<Mutex<crate::config::Config>>
-) -> Arc<Mutex<Listener>> {
-    let mut listener = Listener::new({ config.clone().lock().await.socket_path.to_owned() }).unwrap();
-    let listener = Arc::new(Mutex::new(listener));
-    let listener_sent = listener.clone();
-    let config = config.clone();
+) -> tokio::task::AbortHandle {
+    let socket_path = { config.lock().await.socket_path.to_owned() };
+    let mut listener = Listener::new(socket_path).await.expect("failed to listen on IPC socket");
 
     tokio::spawn(async move {
         loop {
-            let mut connection = { listener_sent.lock().await }.next_connection().await;
-            let context = context.clone();
-            let config = config.clone();
-           
-            tokio::spawn(async move {
-                let hello = connection.recv().await.unwrap().expect("no hello!?");
-                let hello = if let Packet::Hello(hello) = hello { hello } else { panic!("wanted hello first") };
+            let taken = listener.next_connection().await;
+            let mut connection = match taken {
+                Some(conn) => conn,
+                None => break,
+            };
 
-                loop {
-                    while let Some(packet) = connection.recv().await.expect("shit") {
-                        match packet {
-                            Packet::Hello(..) => panic!("no double hello"),
-                            Packet::ReloadConfiguration => {
-                                use crate::config::LoadableConfig;
-                                let mut config = config.lock().await;
-                                config.reload_from_disk().await.expect("could not update config");
-                                context.lock().await.reload_from_config(&config).await;
-                            }
-                        }
-                    }
+            let hello = match connection.recv().await {
+                Ok(None) => return,
+                Ok(Some(Packet::Hello(hello))) => hello,
+                Ok(Some(got)) => {
+                    tracing::error!("IPC wanted hello first but got one with {}, closing connection", got.discriminant());
+                    return;
                 }
-            });
-        };
-    });
+                Err(err) => {
+                    tracing::error!(?err, "IPC recv error");
+                    return;
+                }
+            };
 
-    listener
+            #[allow(clippy::while_let_loop)]
+            loop {
+                match act_upon_next_packet(&hello, &mut connection, context.clone(), config.clone()).await {
+                    ConnectionAction::Continue => continue,
+                    ConnectionAction::Break => break,
+                }
+            }
+        }
+    }).abort_handle()
 }
 
+enum ConnectionAction {
+    Continue,
+    Break,
+}
+
+async fn act_upon_next_packet(
+    hello: &packets::Hello,
+    connection: &mut PacketConnection,
+    context: Arc<Mutex<crate::PollingContext>>,
+    config: Arc<Mutex<crate::config::Config>>
+) -> ConnectionAction {
+    match connection.recv().await {
+        Ok(Some(packet)) => match packet {
+            Packet::Hello(hello) => {
+                tracing::error!(?hello, "received duplicate hello; closing connection");
+                ConnectionAction::Break
+            },
+            Packet::GeneralFailure(failure) => {
+                tracing::error!(?failure, "received failure from process {pid}", pid = hello.process);
+                ConnectionAction::Continue
+            }
+            Packet::ReloadConfiguration => {
+                use crate::config::LoadableConfig;
+                let mut config = config.lock().await;
+                if let Err(err) = config.reload_from_disk().await {
+                    tracing::error!(?err, "could not update config");
+                    return ConnectionAction::Continue;
+                }
+                context.lock().await.reload_from_config(&config).await;
+                ConnectionAction::Continue
+            }
+        },
+        Ok(None) => ConnectionAction::Break,
+        Err(err) => {
+            tracing::error!(?err, "IPC recv error");
+            ConnectionAction::Break
+        }
+    }
+}

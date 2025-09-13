@@ -110,9 +110,13 @@ impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
                 Boma::Utf8Xml(BomaUtf8(read_info, BomaUtf8Variant::PlistPlaylistInfo)) => info = Some(CollectionInfo::try_from(read_info).map_err(CollectionReadError::Deserialization)?),
                 Boma::CollectionMember(member) => tracks.push(member),
                 _boma => {
-                    // 201 has magic "SLst" header
-                    #[cfg(feature = "tracing")]
-                    tracing::warn!("Unexpected subtype present: {:?}", _boma.get_subtype());
+                    match _boma.get_subtype() {
+                        Err(UnknownBomaError(201 | 202)) => continue, // TODO: figure out what these are
+                        subtype => {
+                            #[cfg(feature = "tracing")]
+                            tracing::warn!("Unexpected subtype present: {:?}", subtype);
+                        }
+                    }
                 }
             }
         }

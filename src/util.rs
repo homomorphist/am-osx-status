@@ -1,14 +1,24 @@
 pub const REPOSITORY_URL: &str = "https://github.com/homomorphist/am-osx-status";
+pub const REVERSE_DNS_IDENTIFIER: &str = get_reverse_dns_identifier!();
+
+#[macro_export]
+macro_rules! get_reverse_dns_identifier { () => { "network.goop.am-osx-status" }; }
+pub use get_reverse_dns_identifier;
 
 use std::sync::LazyLock;
+
 /// User home directory.
 pub static HOME: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     #[allow(deprecated)] // This binary is MacOS-exclusive; this function only has unexpected behavior on Windows.
     std::env::home_dir().expect("no home directory env detected")
 });
 
-pub static OWN_PID: LazyLock<sysinfo::Pid> = LazyLock::new(|| {
-    sysinfo::get_current_pid().expect("unsupported platform")
+pub static APPLICATION_SUPPORT_FOLDER: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
+    crate::util::HOME.join("Library/Application Support/am-osx-status")
+});
+
+pub static OWN_PID: LazyLock<libc::pid_t> = LazyLock::new(|| {
+    unsafe { libc::getpid() }
 });
 
 pub async fn get_macos_version() -> Option<String> {

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+    <!-- Do not edit manually! This file will be overriden by the `am-osx-status` CLI. -->
+    <dict>
+        <key>Label</key>
+        <string>{{ reverse_dns_identifier }}</string>
+        <key>Program</key>
+        <string>{{ app_path }}</string>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>KeepAlive</key>
+        <true/>
+        <key>ProgramArguments</key>
+        <array>
+            <string>{{ app_path }}</string>
+            <string>--ran-as-service</string>
+            <string>--config</string>
+            <string>{{ config_path }}</string>
+            <string>start</string>
+        </array>
+    </dict>
+</plist>

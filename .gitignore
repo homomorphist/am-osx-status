@@ -1,9 +1,9 @@
 /target
 crates/**/target
 .DS_Store
-samples/*
-trace-*
+samples/**
 logs/**
 dump*
 config.toml
 dev/data
+dev/logs

@@ -7,6 +7,10 @@
 		{
 			"name": "Local Data",
 			"path": "../dev/data"
+		},
+		{
+			"name": "Local Logs",
+			"path": "../dev/logs"
 		}
 	],
 	"settings": {

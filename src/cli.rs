@@ -40,13 +40,18 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum ServiceAction {
-    /// Start the background service.
+    /// Start the background service. It will then automatically start on every login.
     Start,
-    /// Stop the background service.
+    /// Stop the background service. It will start again on the next login, or when started again manually.
     Stop,
+    /// Log information about the status of the background service.
+    Status,
+    /// Uninstall the background service.
+    Remove,
     /// Fully restart the background service.
     Restart,
-    /// Reload the background service's configuration. (This may result in some funky behavior.)
+    #[cfg_attr(debug_assertions, doc = "Reload the background service's configuration. (This may result in some funky behavior.)")]
+    #[cfg(debug_assertions)]
     Reload
 }
 

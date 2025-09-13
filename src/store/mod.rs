@@ -9,7 +9,7 @@ pub mod entities;
 pub(crate) mod test_utilities;
 
 pub static DB_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
-    crate::util::HOME.join("Library/Application Support/am-osx-status/sqlite.db")
+    crate::util::APPLICATION_SUPPORT_FOLDER.join("sqlite.db")
 });
 
 pub static DB_POOL: GlobalPool = GlobalPool::new(|| {

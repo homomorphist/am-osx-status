@@ -9,3 +9,4 @@
 # be accessed relative to this repository's location.
 SCRIPT_LOCATION="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 ln -s "$HOME/Library/Application Support/am-osx-status/" "$SCRIPT_LOCATION/data"
+ln -s "$HOME/Library/Logs/am-osx-status/" "$SCRIPT_LOCATION/logs"

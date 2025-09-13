@@ -53,7 +53,7 @@ where
     use tokio::io::AsyncWriteExt;
     use std::process::Stdio;
 
-    let mut child = tokio::process::Command::new("osascript")
+    let mut child = tokio::process::Command::new("/usr/bin/osascript")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

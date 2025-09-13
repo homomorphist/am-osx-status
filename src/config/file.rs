@@ -1,11 +1,9 @@
-use std::{borrow::Cow, path::Path};
+use std::{borrow::Cow, path::Path, sync::LazyLock};
 
-use crate::util::HOME;
+use crate::util::{APPLICATION_SUPPORT_FOLDER, HOME};
 
 macro_rules! get_path_env_var { () => { "AM_OSX_STATUS_PATH" } }
 pub static PATH_ENV_VAR: &str = get_path_env_var!();
-
-const POST_HOME_DEFAULT_PATH: &str = "Library/Application Support/am-osx-status/config.toml";
 
 /// How the user specified (or did not specify) the configuration file path.
 #[derive(Clone, Debug)]
@@ -31,7 +29,7 @@ impl ConfigPathChoice {
     }
 
     pub fn automatic() -> Self {
-        Self::Automatic(HOME.join(POST_HOME_DEFAULT_PATH))
+        Self::Automatic(APPLICATION_SUPPORT_FOLDER.join("config.toml"))
     }
 
     pub fn as_path(&self) -> &Path {
