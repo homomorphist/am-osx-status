@@ -10,8 +10,9 @@ impl super::CustomArtworkHost for CatboxHost {
     }
     
     async fn upload(&mut self, pool: &sqlx::SqlitePool, track: &DispatchableTrack, path: &str) -> Result<crate::store::entities::CustomArtworkUrl, super::UploadError> {
-        const EXPIRES_IN_HOURS: u8 = 1;
-        let url = ::catbox::litter::upload(path, EXPIRES_IN_HOURS).await.map_err(|error| {
+        const EXPIRES_IN_HOURS: u16 = 24 * 30; // hopefully it'll be fixed by then :]
+
+        let url = ::catbox::file::from_file(path, None).await.map_err(|error| {
             tracing::error!(?error, ?path, "catbox upload error");
             super::UploadError::UnknownError
         })?;
