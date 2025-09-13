@@ -217,6 +217,7 @@ async fn main() -> ExitCode {
                 },
                 ServiceAction::Restart => ServiceController::restart(get_config_or_error!().path.as_path()).await,
                 ServiceAction::Remove => ServiceController::remove().await,
+                #[cfg(debug_assertions)]
                 ServiceAction::Reload => {
                     use ipc::{Packet, PacketConnection};
                     let path = get_config_or_error!().socket_path;
