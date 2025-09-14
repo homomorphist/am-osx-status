@@ -133,7 +133,6 @@ impl Packet {
     // }
 }
 
-// TODO: Delete socket file on drop; tho it doesn't even drop in the first place
 pub struct Listener {
     path: std::path::PathBuf,
     receiver: tokio::sync::mpsc::Receiver<UnixStream>,
