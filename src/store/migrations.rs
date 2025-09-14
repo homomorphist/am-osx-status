@@ -66,7 +66,7 @@ pub async fn migrate() {
     let last = get_last_run_epoch().await;
 
     for migration in migrations {
-        if last.is_none_or(|v| v < migration.epoch) {
+        if last.is_none_or(|v| v <= migration.epoch) {
             sqlx::query(migration.sql_up)
                 .execute(&pool)
                 .await
@@ -132,12 +132,16 @@ mod tests {
             .expect("failed to seed");
 
         for migration in migrations {
+            let dump = dump_database(&pool).await;
+            assert!(dumps.last() != Some(&dump), "each migration should result in a different database dump");
+            dumps.push(dump);
             sqlx::query(migration.sql_up)
                 .execute(&pool)
                 .await
                 .expect("failed to run migration");
-            dumps.push(dump_database(&pool).await);
         }
+
+        assert!(&dump_database(&pool).await != dumps.last().expect("no dumps"), "last migration changed the database");
 
         for migration in migrations.iter().rev() {
             sqlx::query(migration.sql_down)
