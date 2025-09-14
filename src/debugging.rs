@@ -52,6 +52,8 @@ impl DebuggingSession {
             .with(Self::get_filter(args))
             .with(layers)
             .init();
+
+        std::panic::set_hook(Box::new(panic_hook));
     
         let guards = DebuggingGuards {
             appender: appender_guard
@@ -102,4 +104,55 @@ impl core::default::Default for DebuggingSession {
             }
         }
     }
+}
+
+
+/// Currently private @ https://github.com/rust-lang/rust/blob/52618eb338609df44978b0ca4451ab7941fd1c7a/src/tools/compiletest/src/panic_hook.rs#L75-L92
+/// Seemingly stable soon-ish w/ `std::panic::PanicHookInfo::payload_as_str` but I'll wait a few versions
+fn payload_as_str<'a>(info: &'a std::panic::PanicHookInfo<'_>) -> Option<&'a str> {
+    let payload = info.payload();
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        Some(s)
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        Some(s)
+    } else {
+        None
+    }
+}
+
+// thanks a lot https://github.com/rust-lang/rust/issues/67939
+// theoretically this could break across std versions but blehhh,, no way that'll happen, right?
+fn extract_thread_id(id: std::thread::ThreadId) -> core::num::NonZero<u64> {
+    unsafe { 
+        std::mem::transmute::<
+            std::thread::ThreadId,
+            core::num::NonZero<u64>
+        >(id)
+    }
+}
+
+fn panic_hook(info: &std::panic::PanicHookInfo) {
+    use std::backtrace::*;
+    use std::panic::Location;
+
+    let backtrace = Backtrace::capture();
+    let location = info.location().map(Location::to_string);
+    let message = payload_as_str(info);
+    let thread = std::thread::current();
+
+    tracing::error!(
+        location = location,
+        backtrace = match backtrace.status() {
+            BacktraceStatus::Captured => format!("{backtrace}"),
+            BacktraceStatus::Disabled => "disabled (run with RUST_BACKTRACE=1)".to_string(),
+            BacktraceStatus::Unsupported => "unsupported".to_string(),
+            opt => format!("unknown (unrecognized status {opt:?})"),
+        },
+        "{} (T{}) panicked at {}",
+        thread.name()
+            .map(|name| format!("thread '{name}'"))
+            .unwrap_or("unnamed thread".to_string()),
+        extract_thread_id(thread.id()),
+        message.unwrap_or("<no message>")
+    );
 }
