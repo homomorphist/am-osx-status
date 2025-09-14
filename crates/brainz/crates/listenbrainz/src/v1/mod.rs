@@ -95,6 +95,7 @@ pub struct Client<PS: AsRef<str>> {
 impl<PS: AsRef<str>> Client<PS> {
     fn mk_net(program: &musicbrainz::request_client::ProgramInfo<PS>, token: Option<&UserToken>) -> reqwest::Client {
         let mut client = reqwest::ClientBuilder::new()
+            .pool_max_idle_per_host(0)
             .https_only(true)
             .user_agent(program.to_user_agent());
 
