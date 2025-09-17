@@ -38,22 +38,22 @@ use crate::store::entities::CustomArtworkUrl;
 pub struct ArtworkManager {
     host_order: custom_artwork_host::OrderedHostList,
     hosts: custom_artwork_host::Hosts,
-    pool: sqlx::SqlitePool,
 }
 impl ArtworkManager {
-    pub async fn new(pool: sqlx::SqlitePool, host_configurations: &custom_artwork_host::HostConfigurations) -> Self {
+    pub async fn new(host_configurations: &custom_artwork_host::HostConfigurations) -> Self {
         Self {
             hosts: custom_artwork_host::Hosts::new(host_configurations).await,
             host_order: host_configurations.order.clone(),
-            pool
         }
     }
 
     pub async fn hosted(&self, file_path: &str, track: &crate::subscribers::DispatchableTrack) -> Option<CustomArtworkUrl> {
-        if let Some(existing) = CustomArtworkUrl::get_by_source_path_in_pool(&self.pool, file_path).await.ok().flatten() {
+        let pool = crate::store::DB_POOL.get().await.expect("failed to get pool");
+
+        if let Some(existing) = CustomArtworkUrl::get_by_source_path_in_pool(&pool, file_path).await.ok().flatten() {
             if existing.is_expired() {
                 tracing::warn!(?file_path, "custom artwork url is expired, re-uploading and performing cleanup");
-                if let Err(err) = CustomArtworkUrl::cleanup(&self.pool).await {
+                if let Err(err) = CustomArtworkUrl::cleanup(&pool).await {
                     tracing::error!(?err, "failed to clean up expired custom artwork urls");
                 }
             } else {
@@ -63,7 +63,7 @@ impl ArtworkManager {
         }   
 
         for identity in &self.host_order.0 {
-            match self.hosts.get(*identity).await?.upload(&self.pool, track, file_path.as_ref()).await {
+            match self.hosts.get(*identity).await?.upload(&pool, track, file_path.as_ref()).await {
                 Ok(url) => return Some(url),
                 Err(err) => {
                     tracing::warn!(?err, "failed to upload custom artwork");

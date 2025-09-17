@@ -12,12 +12,16 @@ macro_rules! mk_test_db {
             let connect = SqliteConnectOptions::new()
                 .filename($name)
                 .in_memory(true)
-                .create_if_missing(true);
+                .create_if_missing(true)
+                .statement_cache_capacity(0);
+                // no cache to avoid cached query fuck-ups from altering a table
+                // this is also a problem in non-test environments but we can refresh the pool for that
+                // that isn't an option here though since it's in-memory and would reset so we work-around
             let pool = SqlitePoolOptions::new().max_connections(1);
             super::super::GlobalPoolOptions { connect, pool }
         });
 
-        let $ident = POOL.get().await.expect("failed to get pool");
+        let mut $ident = POOL.get().await.expect("failed to get pool");
     }
 }
 

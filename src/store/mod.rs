@@ -27,14 +27,14 @@ pub struct GlobalPoolOptions {
     pub pool: sqlx::sqlite::SqlitePoolOptions,
 }
 pub struct GlobalPool {
-    options: Mutex<Option<fn() -> GlobalPoolOptions>>,
+    options: fn() -> GlobalPoolOptions,
     inner: Mutex<Option<sqlx::SqlitePool>>,
     error: Mutex<Option<&'static sqlx::Error>>,
 }
 impl GlobalPool {
     pub const fn new(options: fn() -> GlobalPoolOptions) -> Self {
         Self {
-            options: Mutex::const_new(Some(options)),
+            options,
             inner: Mutex::const_new(None),
             error: Mutex::const_new(None),
         }
@@ -44,25 +44,31 @@ impl GlobalPool {
         {
             if let Some(pool) = &*self.inner.lock().await {
                 return Ok(pool.clone())
+            } else if let Some(error) = &*self.error.lock().await {
+                return Err(error)
             }
         }
         
-        if let Some(options) = self.options.lock().await.take() {
-            let options = options();
-            match options.pool.connect_with(options.connect).await {
-                Ok(pool) => {
-                    *self.inner.lock().await = Some(pool.clone());
-                    Ok(pool)
-                }
-                Err(e) => {
-                    let error = &*Box::leak(Box::new(e));
-                    *self.error.lock().await = Some(error);
-                    Err(error)
-                }
+        let options = (self.options)();
+        match options.pool.connect_with(options.connect).await {
+            Ok(pool) => {
+                *self.inner.lock().await = Some(pool.clone());
+                Ok(pool)
             }
-        } else {
-            Err(self.error.lock().await.unwrap())
+            Err(e) => {
+                let error = &*Box::leak(Box::new(e));
+                *self.error.lock().await = Some(error);
+                Err(error)
+            }
         }
+    }
+
+    /// Totally refresh the pool.
+    /// This will either panic or cause multiple pools to exist if called at an inopportune time. Maybe. I dunno.
+    pub async fn refresh(&self) {
+        let mut db = self.inner.try_lock().expect("cannot obtain lock");
+        if let Some(db) = db.take() { db.close(); }
+        *self.error.try_lock().expect("cannot obtain lock") = None;
     }
 }
 

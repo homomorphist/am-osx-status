@@ -1,0 +1,1 @@
+ALTER TABLE sessions ADD COLUMN migration_id INTEGER NOT NULL DEFAULT 0;

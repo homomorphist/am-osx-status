@@ -203,20 +203,22 @@ impl FromKey for Session {
 }
 impl Session {
     pub async fn new(
-        pool: &sqlx::SqlitePool,
         player_version: &str,
+        migration_id: super::migrations::MigrationID
     ) -> sqlx::Result<Self> {
         sqlx::query_as::<_, Self>(r#"
             INSERT INTO sessions (
                 ver_crate,
                 ver_player,
-                ver_os
-            ) VALUES (?, ?, ?) RETURNING * 
+                ver_os,
+                migration_id
+            ) VALUES (?, ?, ?, ?) RETURNING * 
         "#)
             .bind(clap::crate_version!())
             .bind(player_version)
             .bind(crate::util::get_macos_version().await)
-            .fetch_one(pool).await
+            .bind(migration_id)
+            .fetch_one(&crate::store::DB_POOL.get().await.expect("couldn't get db pool")).await
     }
     pub async fn update(&self, pool: &sqlx::SqlitePool) -> sqlx::Result<()> {
         sqlx::query!(r#"

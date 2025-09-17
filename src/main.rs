@@ -336,30 +336,20 @@ struct PollingContext {
 }
 impl PollingContext {
     async fn from_config(config: &config::Config, terminating: Arc<AtomicBool>) -> Self {
-        let (backends, (artwork_manager, jxa, session, player_version)) = tokio::join!(
+        let (backends, artwork_manager, (jxa, session, player_version)) = tokio::join!(
             subscribers::Backends::new(config),
+            data_fetching::components::artwork::ArtworkManager::new(&config.artwork_hosts),
             async {
-                let ((pool, artwork_manager), (jxa, player_version)) = tokio::join!(
-                    async {
-                        let pool = store::DB_POOL.get().await.expect("failed to get database pool");
-                        let artwork_manager = data_fetching::components::artwork::ArtworkManager::new(pool.clone(), &config.artwork_hosts).await;
-                        (pool, artwork_manager)
-                    },
-                    async {
-                        let jxa_socket = crate::util::APPLICATION_SUPPORT_FOLDER.join("osa-socket");
-                        let mut jxa = osa_apple_music::Session::new(jxa_socket).await.expect("failed to create JXA session");
-                        // TODO: Get the player version without JXA, so that the app doesn't need to be open.
-                        let player_version = jxa.application().await.expect("failed to retrieve application data").map(|app| app.version).unwrap_or_else(|| "?".into());
-                        (jxa, player_version)
-                    }
-                );
-
-                store::migrations::migrate().await;
-
-                let session = store::entities::Session::new(&pool, &player_version)
+                let jxa_socket = crate::util::APPLICATION_SUPPORT_FOLDER.join("osa-socket");
+                let mut jxa = osa_apple_music::Session::new(jxa_socket).await.expect("failed to create JXA session");
+                // TODO: Get the player version without JXA, so that the app doesn't need to be open.
+                let player_version = jxa.application().await.expect("failed to retrieve application data").map(|app| app.version).unwrap_or_else(|| "?".into());
+                
+                let migration_id = store::migrations::migrate().await;
+                let session = store::entities::Session::new(&player_version, migration_id)
                     .await.unwrap_or_else(|err| ferror!("failed to create session in database: {}", err));
 
-                (artwork_manager, jxa, session, player_version)
+                (jxa, session, player_version)
             }
         );
 
