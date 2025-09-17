@@ -139,6 +139,7 @@ fn panic_hook(info: &std::panic::PanicHookInfo) {
     let location = info.location().map(Location::to_string);
     let message = payload_as_str(info);
     let thread = std::thread::current();
+    let thread_id = extract_thread_id(thread.id());
 
     tracing::error!(
         location = location,
@@ -152,7 +153,11 @@ fn panic_hook(info: &std::panic::PanicHookInfo) {
         thread.name()
             .map(|name| format!("thread '{name}'"))
             .unwrap_or("unnamed thread".to_string()),
-        extract_thread_id(thread.id()),
+        thread_id,
         message.unwrap_or("<no message>")
     );
+
+    if thread_id.get() == 1 {
+        std::process::exit(1)
+    }
 }
