@@ -143,12 +143,12 @@ fn panic_hook(info: &std::panic::PanicHookInfo) {
 
     tracing::error!(
         location = location,
-        backtrace = match backtrace.status() {
-            BacktraceStatus::Captured => format!("{backtrace}"),
+        backtrace = tracing::field::display(match backtrace.status() {
+            BacktraceStatus::Captured => format!("r#\"\n{backtrace}\"#"),
             BacktraceStatus::Disabled => "disabled (run with RUST_BACKTRACE=1)".to_string(),
             BacktraceStatus::Unsupported => "unsupported".to_string(),
             opt => format!("unknown (unrecognized status {opt:?})"),
-        },
+        }),
         "{} (T{}) panicked at {}",
         thread.name()
             .map(|name| format!("thread '{name}'"))
