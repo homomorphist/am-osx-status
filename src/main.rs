@@ -52,7 +52,7 @@ fn watch_for_termination() -> (
     )
 }
 
-#[tokio::main(worker_threads = 1)]
+#[tokio::main(worker_threads = 2)]
 async fn main() -> ExitCode {
     let args = Box::leak(Box::new(<cli::Cli as clap::Parser>::parse()));
     let config = config::Config::get(args).await;
@@ -336,22 +336,42 @@ struct PollingContext {
 }
 impl PollingContext {
     async fn from_config(config: &config::Config, terminating: Arc<AtomicBool>) -> Self {
-        let (backends, artwork_manager, (jxa, session, player_version)) = tokio::join!(
+        #[cfg(feature = "musicdb")]
+        let musicdb: core::pin::Pin<Box<dyn Future<Output = Result<Option<musicdb::MusicDB>, _>>>> = {
+            let path = config.musicdb.path.clone();
+            if config.musicdb.enabled { Box::pin(tokio::task::spawn_blocking(|| {
+                Some(tracing::trace_span!("musicdb read").in_scope(|| {
+                    musicdb::MusicDB::read_path(path)
+                }))
+            })) } else { Box::pin(async { Ok(None) }) }
+        };
+        #[cfg(not(feature = "musicdb"))]
+        let musicdb = Box::pin(async { Ok(None) });
+
+        let (backends, artwork_manager, migration_id, musicdb, (jxa, player_version)) = tokio::join!(
             subscribers::Backends::new(config),
             data_fetching::components::artwork::ArtworkManager::new(&config.artwork_hosts),
+            store::migrations::migrate(),
+            musicdb,
             async {
                 let jxa_socket = crate::util::APPLICATION_SUPPORT_FOLDER.join("osa-socket");
                 let mut jxa = osa_apple_music::Session::new(jxa_socket).await.expect("failed to create JXA session");
                 // TODO: Get the player version without JXA, so that the app doesn't need to be open.
                 let player_version = jxa.application().await.expect("failed to retrieve application data").map(|app| app.version).unwrap_or_else(|| "?".into());
-                
-                let migration_id = store::migrations::migrate().await;
-                let session = store::entities::Session::new(&player_version, migration_id)
-                    .await.unwrap_or_else(|err| ferror!("failed to create session in database: {}", err));
-
-                (jxa, session, player_version)
+                (jxa, player_version)
             }
         );
+
+        let session = store::entities::Session::new(&player_version, migration_id)
+            .await.unwrap_or_else(|err| ferror!("failed to create session in database: {}", err));
+
+        let musicdb = match musicdb {
+            Ok(musicdb) => Arc::new(musicdb),
+            Err(error) => {
+                tracing::error!(?error, "failed to open musicdb");
+                Arc::new(None)
+            }
+        };
 
         Self {
             terminating,
@@ -359,12 +379,8 @@ impl PollingContext {
             last_track: None,
             listened: Arc::new(Mutex::new(Listened::new())),
             artwork_manager: Arc::new(artwork_manager),
-
             #[cfg(feature = "musicdb")]
-            musicdb: Arc::new(if config.musicdb.enabled { Some(tracing::trace_span!("musicdb read").in_scope(|| {
-                musicdb::MusicDB::read_path(config.musicdb.path.clone())
-            })) } else { None }),
-            
+            musicdb,
             jxa,
             app_open: player_version != "?",
             app_paused: None,
