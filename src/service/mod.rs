@@ -204,7 +204,7 @@ impl<'a> LaunchAgent<'a> {
     pub async fn get_pid(&self) -> Option<libc::pid_t> {
         let output = self.execute_launchctl_command(&["list", REVERSE_DNS_IDENTIFIER]).await.ok()?;
         for line in output.lines() {
-            const PREFIX: &str = "\"PID\" = ";
+            const PREFIX: &str = "\t\"PID\" = ";
             if let Some(pid) = line.strip_prefix(PREFIX) {
                 let pid = pid
                     .trim_end_matches(';')
