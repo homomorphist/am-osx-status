@@ -63,3 +63,6 @@ opt-level = 3
 [profile.test.package.sqlx]
 opt-level = 3
 
+[profile.release]
+opt-level = "z"
+lto = "fat"
