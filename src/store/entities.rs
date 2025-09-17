@@ -361,12 +361,111 @@ impl CustomArtworkUrl {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::super::test_utilities::*;
+#[derive(Debug, sqlx::FromRow)]
+pub struct CachedFirstArtist {
+    id: Key<Self>,
+    pub expires_at: Option<MillisecondTimestamp>,
+    /// Uppercase hexadecimal representation of the track's persistent ID.
+    pub persistent_id: String,
+    /// All artists for the track, verbatim.
+    /// If this doesn't match, we know the track metadata changed and we should recompute.
+    pub artists: String,
+    /// The first artist for the track.
+    pub artist: String,
+}
+impl FromKey for CachedFirstArtist {
+    const TABLE_NAME: &'static str = "first_artists";
+}
+impl CachedFirstArtist {
+    pub async fn new(
+        pool: &sqlx::SqlitePool,
+        persistent_id: &str,
+        artists: &str,
+        artist: &str,
+    ) -> sqlx::Result<Self> {
+        sqlx::query_as::<_, Self>(r#"
+            INSERT INTO first_artists (
+                persistent_id,
+                artists,
+                artist
+            ) VALUES (?, ?, ?) RETURNING *
+        "#)
+            .bind(persistent_id)
+            .bind(artists)
+            .bind(artist)
+            .fetch_one(pool).await
+    }
 
-    #[test]
-    fn session() {
-        
+    /// Deletes the entry with the given ID.
+    /// Returns whether an entry was removed.
+    async fn remove_by_id(
+        pool: &sqlx::SqlitePool,
+        id: Key<Self>,
+    ) -> sqlx::Result<bool> {
+        sqlx::query!("DELETE FROM first_artists WHERE id = ?", id)
+            .execute(pool).await
+            .map(|result| result.rows_affected() != 0)
+    } 
+
+
+    pub async fn get_by_persistent_id(
+        pool: &sqlx::SqlitePool,
+        persistent_id: &str,
+        artists: &str,
+    ) -> sqlx::Result<Option<Self>> {
+        let got = sqlx::query_as::<_, Self>(r#"
+            SELECT * FROM first_artists WHERE persistent_id = ?
+        "#)
+            .bind(persistent_id)
+            .fetch_optional(pool).await;
+
+        if let Ok(Some(got)) = &got {
+            if got.artists != artists {
+                // data mismatch, will need to be recomputed
+                Self::remove_by_id(pool, got.id).await?;
+                return Ok(None);
+            }
+        }
+
+        got
     }
 }
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct CachedUncensoredTitle {
+    id: Key<Self>,
+    /// Uppercase hexadecimal representation of the track's persistent ID.
+    pub persistent_id: String,
+    /// The uncensored title
+    pub uncensored: String,
+}
+impl FromKey for CachedUncensoredTitle {
+    const TABLE_NAME: &'static str = "uncensored_titles";
+}
+impl CachedUncensoredTitle {
+    pub async fn new(
+        pool: &sqlx::SqlitePool,
+        persistent_id: &str,
+        uncensored: &str,
+    ) -> sqlx::Result<Self> {
+        sqlx::query_as::<_, Self>(r#"
+            INSERT INTO uncensored_titles (
+                persistent_id,
+                uncensored
+            ) VALUES (?, ?) RETURNING *
+        "#)
+            .bind(persistent_id)
+            .bind(uncensored)
+            .fetch_one(pool).await
+    }
+
+    pub async fn get_by_persistent_id(
+        pool: &sqlx::SqlitePool,
+        persistent_id: &str,
+    ) -> sqlx::Result<Option<Self>> {
+        sqlx::query_as::<_, Self>("SELECT * FROM uncensored_titles WHERE persistent_id = ?")
+            .bind(persistent_id)
+            .fetch_optional(pool).await
+    }
+}
+

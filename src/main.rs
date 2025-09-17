@@ -488,7 +488,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
             }
 
             let track_playable_range = track.playable_range;
-            let track = Arc::new(DispatchableTrack::from(track));
+            let track = Arc::new(DispatchableTrack::from_track(track).await);
 
             let previous = context.last_track.as_ref().map(|v| &v.persistent_id);
             if previous != Some(&track.persistent_id) {

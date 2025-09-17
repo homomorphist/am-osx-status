@@ -577,11 +577,20 @@ pub struct DispatchableTrack {
     pub media_kind: osa_apple_music::track::MediaKind,
     pub track_number: Option<core::num::NonZero<u16>>,
 }
-impl From<osa_apple_music::Track> for DispatchableTrack {
-    fn from(track: osa_apple_music::Track) -> Self {
-        let track: osa_apple_music::track::BasicTrack = track.into();
+impl DispatchableTrack {
+    pub async fn from_track(track: osa_apple_music::track::Track) -> Self {
+        let track = osa_apple_music::track::BasicTrack::from(track);
+        let pool = crate::store::DB_POOL.get().await.inspect_err(|error| {
+            tracing::error!(?error, "failed to get database connection to get cached uncensored track title");
+        }).ok();
+        
+        let name = match uncensor::track(&track, pool).await {
+            Some(name) => name.into_owned(),
+            None => track.name,
+        };
+
         Self {
-            name: track.name,
+            name,
             album: track.album.name,
             album_artist: track.album.artist,
             artist: track.artist,
@@ -651,8 +660,13 @@ pub mod uncensor {
     }
     pub use heuristically_uncensor_name as heuristically;
 
-    pub async fn uncensor_name_itunes(track: &DispatchableTrack) -> Option<String> {
-        crate::data_fetching::services::itunes::find_track(track)
+    pub async fn uncensor_name_itunes(track: &osa_apple_music::track::BasicTrack) -> Option<String> {
+        use crate::data_fetching::services::itunes;
+        itunes::find_track(&itunes::Query {
+            title: track.name.as_ref(),
+            artist: track.artist.as_deref(),
+            album: track.album.name.as_deref()
+        })
             .await
             .inspect_err(|err| {
                 tracing::error!(error = ?err, "failed to fetch track info from iTunes");
@@ -660,12 +674,38 @@ pub mod uncensor {
     }
     pub use uncensor_name_itunes as with_itunes;
 
-    pub async fn uncensor_track<'a>(track: &'a DispatchableTrack) -> Option<MaybeOwnedString<'a>> {
-        if let Some(name) = heuristically_uncensor_name(&track.name, &track.persistent_id) {
-            Some(name)
-        } else {
-            uncensor_name_itunes(track).await.map(MaybeOwnedString::Owned)
+    pub async fn uncensor_track<'a>(track: &'a osa_apple_music::track::BasicTrack, pool: Option<sqlx::SqlitePool>) -> Option<MaybeOwnedString<'a>> {
+        use crate::store::entities::CachedUncensoredTitle;
+
+        if !track.name.contains('*') {
+            return Some(MaybeOwnedString::Borrowed(&track.name));
         }
+
+        if let Some(sorting) = &track.sorting.name {
+            if let Some(name) = heuristically_uncensor_name(&track.name, sorting) {
+                return Some(name);
+            }
+        }
+
+        if let Some(pool) = &pool {
+            match CachedUncensoredTitle::get_by_persistent_id(pool, &track.persistent_id).await {
+                Ok(Some(entry)) => return Some(MaybeOwnedString::Owned(entry.uncensored)),
+                Ok(None) => {}
+                Err(error) => { tracing::error!(?error, "failed to fetch cached uncensored title"); }
+            }
+        }
+
+        let uncensored = uncensor_name_itunes(track).await;
+            
+        if let Some(uncensored) = &uncensored {
+            if let Some(pool) = pool {
+                if let Err(error) = CachedUncensoredTitle::new(&pool, &track.persistent_id, uncensored).await {
+                    tracing::error!(?error, "failed to cache uncensored title");
+                }
+            }
+        }
+
+        uncensored.map(MaybeOwnedString::Owned)
     }
     pub use uncensor_track as track;
 

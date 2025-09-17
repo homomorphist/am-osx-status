@@ -162,6 +162,13 @@ impl<'a> MaybeOwnedString<'a> {
         }
     }
 
+    pub fn into_owned(self) -> String {
+        match self {
+            Self::Owned(owned) => owned,
+            Self::Borrowed(borrowed) => borrowed.to_string()
+        }
+    }
+
     /// Create a new borrowed [`MaybeOwnedString`] which points to this string slice.
     pub fn borrowed(&'a self) -> MaybeOwnedString<'a> {
         Self::Borrowed(self.as_ref())

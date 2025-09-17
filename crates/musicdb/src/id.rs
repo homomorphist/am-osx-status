@@ -17,6 +17,12 @@ pub mod persistent {
             Ok(Id::new(u64::from_str_radix(value, 16)?))       
         }
 
+        pub fn to_hex_upper(&self) -> String {
+            format!("{:X}", self.0)
+        }
+        pub fn to_hex_lower(&self) -> String {
+            format!("{:x}", self.0)
+        }
 
         pub fn new(raw: u64) -> Self { Self(raw, PhantomData) }
 

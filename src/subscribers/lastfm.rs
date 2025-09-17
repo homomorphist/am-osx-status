@@ -151,19 +151,31 @@ impl<'a> From<&'a DispatchableTrack> for FirstArtistQuery<'a> {
 }
 
 /// Extracts a plausible "first" artist from a string that may contain multiple artists in the form "Artist1 & Artist2" or "Artist1, Artist2 & Artist3".
-/// Uses external data sources (the iTunes store, ListenBrainz) to resolve conflicts.
-// TODO: What if an artist uses a comma, like, in their name?
-// TODO: Cache the results.
+/// Uses external data sources (the iTunes store, ListenBrainz) to resolve conflicts. When this occurs, the result is cached to prevent future lookups.
+// TODO: What if an artist uses a comma within their name?
 // TODO: Don't depend on the `listenbrainz` backend, which can be disabled with a feature flag.
 async fn extract_first_artist<'a, 'b: 'a>(
     track: impl Into<FirstArtistQuery<'a>>,
     db: Option<&'b musicdb::MusicDB>,
+    pool: Option<sqlx::SqlitePool>,
     net: &reqwest::Client
 ) -> MaybeOwnedString<'a> {
     let track = Into::<FirstArtistQuery>::into(track);
 
+    if let Some(pool) = &pool {
+        use crate::store::entities::CachedFirstArtist;
+        match CachedFirstArtist::get_by_persistent_id(pool, &track.id.to_hex_upper(), track.artists).await {
+            Ok(Some(cached)) => {
+                tracing::debug!(?track.id, ?track.artists, artist = ?cached.artist, "using cached first artist");
+                return cached.artist.into()
+            }
+            Ok(None) => tracing::debug!(?track.id, "no cached first artist found, extracting"),
+            Err(err) => tracing::error!(?err, ?track.id, "failed to query cached first artist, extracting")
+        }
+    }
+
     // TODO: Create a `brainz` abstraction.
-    async fn from_listenbrainz(track: &FirstArtistQuery<'_>, net: &reqwest::Client) -> Option<String> {
+    async fn from_listenbrainz(track: &FirstArtistQuery<'_>, net: &reqwest::Client, pool: Option<sqlx::SqlitePool>) -> Option<String> {
         use super::listenbrainz::DEFAULT_PROGRAM_INFO;
         let request = net.get("https://musicbrainz.org/ws/2/recording/")
             .header("User-Agent", &DEFAULT_PROGRAM_INFO.to_user_agent())
@@ -176,23 +188,35 @@ async fn extract_first_artist<'a, 'b: 'a>(
             tracing::error!(?err, "failed to send request to ListenBrainz");
         }).ok()?;
 
-        if !response.status().is_success() {
-            tracing::error!(status = ?response.status(), "ListenBrainz API returned an error");
-            return None
-        }
-
-        let response = response.text().await.inspect_err(|err| {
+        let status = response.status();
+        let text = response.text().await.inspect_err(|err| {
             tracing::error!(?err, "failed to read response from ListenBrainz");
         }).ok()?;
 
+        if !status.is_success() {
+            tracing::error!(%status, "ListenBrainz API returned an error");
+            tracing::debug!("could not fetch artist: {:?}", text);
+            return None
+        }
+
         use brainz::music::entities::Recording;
-        let response: Recording = serde_json::from_str(&response).inspect_err(|err| {
+        let response: Recording = serde_json::from_str(&text).inspect_err(|err| {
             tracing::error!(?err, "failed to parse ListenBrainz response");
-            tracing::debug!("could not deserialize: {:?}", response);
+            tracing::debug!("could not deserialize: {:?}", text);
         }).ok()?;
 
         let mut credited = response.artist_credit.into_iter();
-        Some(credited.next()?.artist.name)
+        let artist = credited.next()?.artist.name;
+
+        if let Some(pool) = pool {
+            use crate::store::entities::CachedFirstArtist;
+            match CachedFirstArtist::new(&pool, &track.id.to_hex_upper(), track.artists, &artist).await {
+                Ok(_) => tracing::debug!(?track.id, ?track.artists, ?artist, "cached first artist from ListenBrainz"),
+                Err(err) => tracing::error!(?err, ?track.id, ?track.artists, ?artist, "failed to cache first artist from ListenBrainz")
+            }
+        }
+
+        Some(artist)
     }
 
     // First, split by commas to go from "A, B, C & D" to just "A".
@@ -250,7 +274,7 @@ async fn extract_first_artist<'a, 'b: 'a>(
 
     // Without access to any more information, it's our best bet to just
     // send the track over to ListenBrainz and see who they say the primary artist is.
-    if let Some(artist) = from_listenbrainz(&track, net).await {
+    if let Some(artist) = from_listenbrainz(&track, net, pool).await {
         return artist.into()
     }
 
@@ -292,19 +316,19 @@ async fn artist_extraction() {
 
     // Has one artist. Nothing unusual.
     let pictures_of_space = prepare_query("Pictures of Space", "The Age of Rockets", &db);
-    assert_eq!(extract_first_artist(pictures_of_space, Some(&db), &net).await, "The Age of Rockets");
+    assert_eq!(extract_first_artist(pictures_of_space, Some(&db), None, &net).await, "The Age of Rockets");
 
     // Has one artist, but the artist has an ampersand in their name.
     let endless_embrace = prepare_query("Endless Embrace", "MYTH & ROID", &db);
-    assert_eq!(extract_first_artist(endless_embrace, Some(&db), &net).await, "MYTH & ROID");
+    assert_eq!(extract_first_artist(endless_embrace, Some(&db), None, &net).await, "MYTH & ROID");
 
     // Has two artists; the first should be returned.
     let fallen_kingdom = prepare_query("Fallen Kingdom", "CaptainSparklez & TryHardNinja", &db);
-    assert_eq!(extract_first_artist(fallen_kingdom, Some(&db), &net).await, "CaptainSparklez");
+    assert_eq!(extract_first_artist(fallen_kingdom, Some(&db), None, &net).await, "CaptainSparklez");
 
     // Has three artists; the first should be returned.
     let mesmerizer = prepare_query("Mesmerizer", "Satsuki, Hatsune Miku & Kasane Teto", &db);
-    assert_eq!(extract_first_artist(mesmerizer, Some(&db), &net).await, "Satsuki");
+    assert_eq!(extract_first_artist(mesmerizer, Some(&db), None, &net).await, "Satsuki");
 } 
 
 subscription::define_subscriber!(pub LastFM, {
@@ -313,8 +337,9 @@ subscription::define_subscriber!(pub LastFM, {
 subscribe!(LastFM, TrackStarted, {
     async fn dispatch(&mut self, context: super::BackendContext<AdditionalTrackData>) -> Result<(), DispatchError> {
         let db = context.musicdb.as_ref().as_ref();
+        let pool = crate::store::DB_POOL.get().await.ok();
         let track = context.track.as_ref();
-        let artist = extract_first_artist(track, db, &self.client.net).await;
+        let artist = extract_first_artist(track, db, pool, &self.client.net).await;
         let info = Self::track_to_heard(track, &artist).await;
         self.client.set_now_listening(&info).await?;
         Ok(())
@@ -327,10 +352,11 @@ subscribe!(LastFM, TrackEnded, {
         }
 
         let db = context.musicdb.as_ref().as_ref();
+        let pool = crate::store::DB_POOL.get().await.ok();
         let track = context.track.as_ref();
-        let artist = extract_first_artist(track, db, &self.client.net).await;
+        let artist = extract_first_artist(track, db, pool, &self.client.net).await;
         let response = self.client.scrobble(&[lastfm::scrobble::Scrobble {
-            chosen_by_user: None,
+            chosen_by_user: None, // TODO: Detect radio stations and such.
             timestamp: chrono::Utc::now(),
             info: Self::track_to_heard(track, &artist).await
         }]).await?;

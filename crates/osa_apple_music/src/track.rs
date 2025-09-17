@@ -218,32 +218,32 @@ pub struct SortingOverrides {
     /// Override string to use for the track when sorting by album
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(rename = "sortAlbum")]
-    album: Option<String>,
+    pub album: Option<String>,
 
     /// Override string to use for the track when sorting by artist
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(rename = "sortArtist")]
-    artist: Option<String>,
+   pub artist: Option<String>,
 
     /// Override string to use for the track when sorting by album artist
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(rename = "sortAlbumArtist")]
-    album_artist: Option<String>,
+    pub album_artist: Option<String>,
 
     /// Override string to use for the track when sorting by name
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(rename = "sortName")]
-    name: Option<String>,
+    pub name: Option<String>,
 
     /// Override string to use for the track when sorting by composer
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(rename = "sortComposer")]
-    composer: Option<String>,
+    pub composer: Option<String>,
 
     /// Override string to use for the track when sorting by show name
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(rename = "sortShow", default)]
-    show: Option<String>,
+    pub show: Option<String>,
 }
 
 

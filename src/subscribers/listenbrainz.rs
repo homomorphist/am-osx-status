@@ -91,7 +91,7 @@ impl ListenBrainz {
             submission_client: Some(program),
             music_service: Some(MusicService::Domain("music.apple.com")),
             media_player: Some(MediaPlayer {
-                name: "Apple Music",
+                name: "Apple Music", // TODO: #30 (iTunes)
                 version: Some(&app.version)
             }),
             ..Default::default()

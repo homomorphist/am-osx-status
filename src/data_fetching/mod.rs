@@ -22,7 +22,11 @@ impl AdditionalTrackData {
         let mut itunes: Option<itunes_api::Track> = None;
 
         if solicitation.list.contains(&Component::ITunesData) {
-            itunes = match services::itunes::find_track(track).await {
+            itunes = match services::itunes::find_track(&services::itunes::Query {
+                title: track.name.as_ref(),
+                artist: track.artist.as_deref(),
+                album: track.album.as_deref()
+            }).await {
                 Ok(itunes) => itunes,
                 Err(err) => {
                     tracing::error!(?err, %track.persistent_id, "failed to get iTunes data");
