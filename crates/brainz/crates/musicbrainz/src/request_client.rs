@@ -13,11 +13,12 @@ pub struct ProgramInfo<S: AsRef<str>> {
 impl<S: AsRef<str>> ProgramInfo<S> {
     pub fn to_user_agent(&self) -> String {
         let capacity = self.name.as_ref().len()
-            + self.version.as_ref().map(|v| v.as_ref().len() + "/".len()).unwrap_or(0)
+            + self.version.as_ref().map(|v| "/".len() + v.as_ref().len()).unwrap_or(0)
             + " (".len() + self.contact.as_ref().len() + ")".len();
         let mut out = String::with_capacity(capacity);
         out += self.name.as_ref();
         if let Some(version) = &self.version {
+            out += "/";
             out += version.as_ref();
         }
         out += " (";
