@@ -19,7 +19,7 @@ if [ "$1" = "-s" ] || [ "$2" = "-s" ]; then
     echo "Skipping migrations"
     exit 0
 else
-    for dir in $(ls $MIGRATIONS | sed 's|/$||' | awk -F'-' '{print $1, $0}' | sort -k1,1 | awk '{print $2}'); do
+    for dir in $(ls $MIGRATIONS | sed 's|/$||' | awk -F':' '{print $1, $0}' | sort -k1,1 | awk '{print $2}'); do
         sqlite3 "$DATABASE_PATH" < $MIGRATIONS/$dir/up.sql
         echo "Applied migration $dir"
     done
