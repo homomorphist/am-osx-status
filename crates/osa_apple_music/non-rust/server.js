@@ -19,9 +19,6 @@ ObjC.bindFunction('close', ['int', ['int']])
 ObjC.bindFunction('perror', ['void', ['void *']])
 ObjC.bindFunction('poll', ['int', ['void *', 'int', 'int']])
 ObjC.bindFunction('unlink', ['int', ['void *']])
-// ObjC.bindFunction('fopen', ['void *', ['void *', 'void *']])
-// ObjC.bindFunction('fclose', ['int', ['void *']])
-// ObjC.bindFunction('fwrite', ['int', ['void *', 'int', 'int', 'void *']])
 
 const SOCK_STREAM = 1;
 const SOCK_DGRAM = 2;
