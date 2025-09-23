@@ -1,4 +1,4 @@
-use crate::{store::timestamp::MillisecondTimestamp, subscribers::error::DispatchError};
+use crate::{store::types::{MillisecondTimestamp, StoredPersistentId}, subscribers::error::DispatchError};
 use super::MaybeStaticSqlError;
 
 pub struct Key<T>(i64, core::marker::PhantomData<T>);
@@ -141,7 +141,7 @@ impl DeferredTrack {
             .bind(&track.album)
             .bind(&track.album_artist)
             .bind(track.track_number)
-            .bind(&track.persistent_id)
+            .bind(track.persistent_id)
             .bind(track.duration.map(|d| d.as_secs_f32() as f64))
             .bind(&track.media_kind)
             .fetch_one(pool).await
@@ -152,14 +152,14 @@ impl DeferredTrack {
         Self::insert_in_pool(&pool, track).await.map_err(Into::into)
     }
 
-    pub async fn get_with_persistent_id_in_pool(pool: &sqlx::SqlitePool, persistent_id: &str) -> sqlx::Result<Option<Self>> {
+    pub async fn get_with_persistent_id_in_pool(pool: &sqlx::SqlitePool, persistent_id: StoredPersistentId) -> sqlx::Result<Option<Self>> {
         sqlx::query_as::<_, Self>(r#"
             SELECT * FROM deferred_tracks WHERE persistent_id = ?
         "#)
             .bind(persistent_id)
             .fetch_optional(pool).await
     }
-    pub async fn get_with_persistent_id(persistent_id: &str) -> Result<Option<Self>, super::MaybeStaticSqlError> {
+    pub async fn get_with_persistent_id(persistent_id: StoredPersistentId) -> Result<Option<Self>, super::MaybeStaticSqlError> {
         let pool = crate::store::DB_POOL.get().await?;
         Self::get_with_persistent_id_in_pool(&pool, persistent_id).await.map_err(Into::into)
     }
@@ -366,9 +366,7 @@ impl CustomArtworkUrl {
 #[derive(Debug, sqlx::FromRow)]
 pub struct CachedFirstArtist {
     id: Key<Self>,
-    pub expires_at: Option<MillisecondTimestamp>,
-    /// Uppercase hexadecimal representation of the track's persistent ID.
-    pub persistent_id: String,
+    pub persistent_id: StoredPersistentId,
     /// All artists for the track, verbatim.
     /// If this doesn't match, we know the track metadata changed and we should recompute.
     pub artists: String,
@@ -381,7 +379,7 @@ impl FromKey for CachedFirstArtist {
 impl CachedFirstArtist {
     pub async fn new(
         pool: &sqlx::SqlitePool,
-        persistent_id: &str,
+        persistent_id: StoredPersistentId,
         artists: &str,
         artist: &str,
     ) -> sqlx::Result<Self> {
@@ -412,7 +410,7 @@ impl CachedFirstArtist {
 
     pub async fn get_by_persistent_id(
         pool: &sqlx::SqlitePool,
-        persistent_id: &str,
+        persistent_id: StoredPersistentId,
         artists: &str,
     ) -> sqlx::Result<Option<Self>> {
         let got = sqlx::query_as::<_, Self>(r#"
@@ -436,9 +434,7 @@ impl CachedFirstArtist {
 #[derive(Debug, sqlx::FromRow)]
 pub struct CachedUncensoredTitle {
     id: Key<Self>,
-    /// Uppercase hexadecimal representation of the track's persistent ID.
-    pub persistent_id: String,
-    /// The uncensored title
+    pub persistent_id: StoredPersistentId,
     pub uncensored: String,
 }
 impl FromKey for CachedUncensoredTitle {
@@ -447,7 +443,7 @@ impl FromKey for CachedUncensoredTitle {
 impl CachedUncensoredTitle {
     pub async fn new(
         pool: &sqlx::SqlitePool,
-        persistent_id: &str,
+        persistent_id: StoredPersistentId,
         uncensored: &str,
     ) -> sqlx::Result<Self> {
         sqlx::query_as::<_, Self>(r#"
@@ -463,7 +459,7 @@ impl CachedUncensoredTitle {
 
     pub async fn get_by_persistent_id(
         pool: &sqlx::SqlitePool,
-        persistent_id: &str,
+        persistent_id: StoredPersistentId,
     ) -> sqlx::Result<Option<Self>> {
         sqlx::query_as::<_, Self>("SELECT * FROM uncensored_titles WHERE persistent_id = ?")
             .bind(persistent_id)

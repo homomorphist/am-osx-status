@@ -2,11 +2,11 @@ use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
 pub mod migrations;
-pub mod timestamp;
+pub mod types;
 pub mod entities;
 
-#[cfg(test)]
-pub(crate) mod test_utilities;
+#[cfg(any(test, debug_assertions))]
+pub(crate) mod debug;
 
 pub static DB_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     crate::util::APPLICATION_SUPPORT_FOLDER.join("sqlite.db")

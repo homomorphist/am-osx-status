@@ -3,7 +3,7 @@ crates/**/target
 .DS_Store
 samples/**
 logs/**
-dump*
+*.dump
 config.toml
 dev/data
 dev/logs

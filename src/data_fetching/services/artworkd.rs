@@ -1,13 +1,3 @@
-struct PersistentId(i64);
-impl TryFrom<&str> for PersistentId {
-    type Error = core::num::ParseIntError;
-    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
-        let bytes = u64::from_str_radix(value, 16)?.to_ne_bytes();
-        let signed = i64::from_ne_bytes(bytes);
-        Ok(PersistentId(signed))
-    }
-}
-
 #[derive(strum::FromRepr, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
 enum Kind {
@@ -25,7 +15,7 @@ struct SourceInfo {
     pub fk_image_info: Option<ImageInfoKey>
 }
 
-async fn get_source_info(persistent_id: PersistentId, pool: &sqlx::SqlitePool) -> Result<Option<SourceInfo>, sqlx::Error> {
+async fn get_source_info(persistent_id: i64, pool: &sqlx::SqlitePool) -> Result<Option<SourceInfo>, sqlx::Error> {
     sqlx::query(r"
         SELECT ZIMAGEINFO, ZURL
         FROM ZDATABASEITEMINFO AS db
@@ -33,7 +23,7 @@ async fn get_source_info(persistent_id: PersistentId, pool: &sqlx::SqlitePool) -
         ON db.ZSOURCEINFO = src.Z_PK
         WHERE db.ZPERSISTENTID = ?1;
     ")
-        .bind(persistent_id.0)
+        .bind(persistent_id)
         .fetch_optional(pool).await?
         .map(|row| {
             use sqlx::Row;
@@ -115,11 +105,8 @@ static POOL: crate::store::GlobalPool = crate::store::GlobalPool::new(|| {
 
 use crate::data_fetching::components::artwork::LocatedResource;
 
-/// ## Parameters
-/// - `persistent_id`: Hexadecimal string containing 8 bytes.
-pub async fn get_artwork(persistent_id: impl AsRef<str>) -> Result<Option<LocatedResource>, crate::store::MaybeStaticSqlError> {
+pub async fn get_artwork(persistent_id: i64) -> Result<Option<LocatedResource>, crate::store::MaybeStaticSqlError> {
     let pool = POOL.get().await?;
-    let persistent_id = PersistentId::try_from(persistent_id.as_ref()).expect("bad persistent ID");
     let source = get_source_info(persistent_id, &pool).await?;
     let source = if let Some(source) = source { source } else { return Ok(None) };
     if let Some(url) = source.url { return Ok(Some(LocatedResource::Remote(url))) }

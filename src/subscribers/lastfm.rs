@@ -141,7 +141,7 @@ impl<'a> From<&'a DispatchableTrack> for FirstArtistQuery<'a> {
     fn from(track: &'a DispatchableTrack) -> Self {
         Self {
             name: &track.name,
-            id: musicdb::PersistentId::try_from(track.persistent_id.as_str()).expect("bad track persistent ID"),
+            id: musicdb::PersistentId::from(track.persistent_id),
             artists: track.artist.as_deref().unwrap_or_else(|| {
                 tracing::error!("missing artist name for track w/ id {}", track.persistent_id);
                 Default::default()
@@ -164,7 +164,7 @@ async fn extract_first_artist<'a, 'b: 'a>(
 
     if let Some(pool) = &pool {
         use crate::store::entities::CachedFirstArtist;
-        match CachedFirstArtist::get_by_persistent_id(pool, &track.id.to_hex_upper(), track.artists).await {
+        match CachedFirstArtist::get_by_persistent_id(pool, track.id.into(), track.artists).await {
             Ok(Some(cached)) => {
                 tracing::debug!(?track.id, ?track.artists, artist = ?cached.artist, "using cached first artist");
                 return cached.artist.into()
@@ -210,7 +210,7 @@ async fn extract_first_artist<'a, 'b: 'a>(
 
         if let Some(pool) = pool {
             use crate::store::entities::CachedFirstArtist;
-            match CachedFirstArtist::new(&pool, &track.id.to_hex_upper(), track.artists, &artist).await {
+            match CachedFirstArtist::new(&pool, track.id.into(), track.artists, &artist).await {
                 Ok(_) => tracing::debug!(?track.id, ?track.artists, ?artist, "cached first artist from ListenBrainz"),
                 Err(err) => tracing::error!(?err, ?track.id, ?track.artists, ?artist, "failed to cache first artist from ListenBrainz")
             }

@@ -88,11 +88,10 @@ impl ArtworkManager {
         use crate::data_fetching::{Component, services::artworkd};
 
         let mut images = TrackArtworkData::none();
-        let id = track.persistent_id.as_str();
 
         #[cfg(feature = "musicdb")]
         if solicitation.list.contains(&Component::ArtistImage) && let Some(db) = musicdb {
-            let id = musicdb::PersistentId::try_from(id).expect("bad id");
+            let id = musicdb::PersistentId::from(track.persistent_id);
             images.artist = db.tracks().get(&id)
                 .and_then(|track| db.get(track.artist_id))
                 .and_then(|artist| artist.artwork_url.as_ref())
@@ -111,16 +110,16 @@ impl ArtworkManager {
             
             #[cfg(feature = "musicdb")]
             if images.track.is_none() && let Some(db) = musicdb {
-                let id = musicdb::PersistentId::try_from(id).expect("bad id");
+                let id = musicdb::PersistentId::from(track.persistent_id);
                 images.track = db.tracks().get(&id)
                     .and_then(|track| track.artwork.as_ref())
                     .map(LocatedResource::from);            }
 
             if images.track.is_none() {
-                let artwork = match artworkd::get_artwork(id).await {
+                let artwork = match artworkd::get_artwork(track.persistent_id.signed()).await {
                     Ok(artwork) => artwork,
                     Err(err) => {
-                        tracing::error!(?err, %id, "failed to get artwork");
+                        tracing::error!(?err, id = %track.persistent_id, "failed to get artwork");
                         None
                     }
                 };

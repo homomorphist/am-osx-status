@@ -1,4 +1,4 @@
-use crate::store::timestamp::MillisecondTimestamp;
+use crate::store::types::MillisecondTimestamp;
 
 use super::{GlobalPool, DB_POOL};
 use include_dir::Dir;
@@ -105,7 +105,8 @@ async fn get_last_migration_id() -> MigrationID {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::test_utilities::*;
+    use super::super::debug::*;
+    use super::super::debug::dump::*;
 
     #[tokio::test]
     async fn seeding() {
@@ -119,7 +120,7 @@ mod tests {
             .await
             .expect("failed to run migration");
 
-        let tables: Vec<_> = get_tables(&pool).await.collect();
+        let tables: Vec<_> = get_tables(&pool).await;
 
         assert!(!dump_schema(&pool).await.is_empty(), "schema is added");
         assert_eq!(dump_tables(&pool, tables.iter()).await.matches('\n').count(), tables.len(), "no data is added");
@@ -153,6 +154,7 @@ mod tests {
             let dump = dump_database(&pool).await;
             assert!(dumps.last() != Some(&dump), "each migration should result in a different database dump");
             dumps.push(dump);
+            println!("applying migration {}: {}", migration.id, migration.name);
             sqlx::query(migration.sql_up)
                 .execute(&pool)
                 .await
@@ -166,10 +168,10 @@ mod tests {
                 .execute(&pool)
                 .await
                 .expect("failed to run migration");
-            assert_eq!(
-                dump_database(&pool).await,
-                dumps.pop().expect("no more dumps"),
-                "downwards migration results in identity database state"
+            assert_eq_diff!(
+                &dump_database(&pool).await,
+                &dumps.pop().expect("no more dumps"),
+                "downwards migration results in identical database state"
             );
         }
 
@@ -178,7 +180,7 @@ mod tests {
             .await
             .expect("failed to run migration");
 
-        assert_eq!(
+        assert_eq_diff!(
             dump_database(&pool).await,
             dumps.pop().expect("no more dumps"),
             "final downwards migration results in an empty database"

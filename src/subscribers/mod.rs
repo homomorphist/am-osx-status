@@ -4,6 +4,7 @@ use tokio::sync::Mutex;
 use serde::{Serialize, Deserialize};
 
 use crate::data_fetching::components::ComponentSolicitation;
+use crate::store::types::StoredPersistentId;
 
 use error::dispatch::DispatchError;
 pub mod error {
@@ -232,7 +233,7 @@ pub mod error {
             /// (If the second element is false, the track was already in the database.)
             async fn add_to_deferred(&self, backend: &'static str, event: impl crate::subscription::TypeIdentity, track: &DispatchableTrack) -> Result<(Key<DeferredTrack>, bool), MaybeStaticSqlError> {
                 use crate::store::entities::FromKey;
-                Ok(match DeferredTrack::get_with_persistent_id(&track.persistent_id).await? {
+                Ok(match DeferredTrack::get_with_persistent_id(track.persistent_id).await? {
                     Some(track) => (track.id, false),
                     None => (DeferredTrack::insert(track).await?, true)
                 })
@@ -571,8 +572,7 @@ pub struct DispatchableTrack {
     pub album: Option<String>,
     pub album_artist: Option<String>,
     pub artist: Option<String>,
-    /// Uppercase hexadecimal representation of the track's persistent ID.
-    pub persistent_id: String,
+    pub persistent_id: StoredPersistentId,
     pub duration: Option<core::time::Duration>,
     pub media_kind: osa_apple_music::track::MediaKind,
     pub track_number: Option<core::num::NonZero<u16>>,
@@ -594,7 +594,7 @@ impl DispatchableTrack {
             album: track.album.name,
             album_artist: track.album.artist,
             artist: track.artist,
-            persistent_id: track.persistent_id.clone(),
+            persistent_id: StoredPersistentId::from_hex(&track.persistent_id).expect("bad track persistent ID"),
             media_kind: track.media_kind,
             duration: track.duration,
             track_number: track.track_number,
@@ -687,8 +687,16 @@ pub mod uncensor {
             }
         }
 
+        let id = match StoredPersistentId::from_hex(&track.persistent_id) {
+            Ok(id) => id,
+            Err(error) => {
+                tracing::error!(?error, "failed to parse track persistent ID");
+                return None;
+            }
+        };
+
         if let Some(pool) = &pool {
-            match CachedUncensoredTitle::get_by_persistent_id(pool, &track.persistent_id).await {
+            match CachedUncensoredTitle::get_by_persistent_id(pool, id).await {
                 Ok(Some(entry)) => return Some(MaybeOwnedString::Owned(entry.uncensored)),
                 Ok(None) => {}
                 Err(error) => { tracing::error!(?error, "failed to fetch cached uncensored title"); }
@@ -699,7 +707,7 @@ pub mod uncensor {
             
         if let Some(uncensored) = &uncensored {
             if let Some(pool) = pool {
-                if let Err(error) = CachedUncensoredTitle::new(&pool, &track.persistent_id, uncensored).await {
+                if let Err(error) = CachedUncensoredTitle::new(&pool, id, uncensored).await {
                     tracing::error!(?error, "failed to cache uncensored title");
                 }
             }
@@ -1057,7 +1065,7 @@ impl Backends {
         outputs
     }
 
-    #[tracing::instrument(skip(context), level = "debug", fields(track = &context.track.persistent_id))]
+    #[tracing::instrument(skip(context), level = "debug", fields(track = ?&context.track.persistent_id))]
     pub async fn dispatch_track_started(&self, context: BackendContext<crate::data_fetching::AdditionalTrackData>) {
         type Variant = subscription::type_identity::TrackStarted;
         for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
@@ -1065,7 +1073,7 @@ impl Backends {
         }
     }
 
-    #[tracing::instrument(skip(context), level = "debug", fields(track = &context.track.persistent_id))]
+    #[tracing::instrument(skip(context), level = "debug", fields(track = ?&context.track.persistent_id))]
     pub async fn dispatch_track_ended(&self, context: BackendContext<()>) {
         type Variant = subscription::type_identity::TrackEnded;
         for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
@@ -1073,7 +1081,7 @@ impl Backends {
         }
     }
 
-    #[tracing::instrument(skip(context), level = "debug", fields(track = &context.track.persistent_id))]
+    #[tracing::instrument(skip(context), level = "debug", fields(track = ?&context.track.persistent_id))]
     pub async fn dispatch_current_progress(&self, context: BackendContext<()>) {
         type Variant = subscription::type_identity::ProgressJolt;
         for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
