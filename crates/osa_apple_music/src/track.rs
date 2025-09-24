@@ -223,7 +223,7 @@ pub struct SortingOverrides {
     /// Override string to use for the track when sorting by artist
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(rename = "sortArtist")]
-   pub artist: Option<String>,
+    pub artist: Option<String>,
 
     /// Override string to use for the track when sorting by album artist
     #[serde_as(as = "NoneAsEmptyString")]
@@ -412,6 +412,7 @@ pub struct BasicTrack {
     pub downloader: Option<TrackDownloader>,
 
     /// The length of the track, in seconds.
+    #[serde(default)]
     #[serde_as(as = "optional_f32_duration")]
     pub duration: Option<core::time::Duration>,
 
@@ -693,5 +694,65 @@ mod tests {
         let track = Track::get_now_playing().await;
         println!("{track:#?}");
         assert!(track.is_ok());
+    }
+
+    #[test]
+    fn parse_pending_connection_track() {
+        let data = r#"{
+            "class": "urlTrack",
+            "id": 63093,
+            "index": 1,
+            "name": "Connecting…",
+            "persistentID": "9C7E988AD00DBDFF",
+            "databaseID": 63089,
+            "dateAdded": "2025-08-24T08:03:23.000Z",
+            "artist": "",
+            "albumArtist": "",
+            "composer": "",
+            "album": "",
+            "genre": "",
+            "trackCount": 0,
+            "trackNumber": 0,
+            "discCount": 0,
+            "discNumber": 0,
+            "volumeAdjustment": 0,
+            "year": 0,
+            "comment": "",
+            "eq": "",
+            "kind": "",
+            "mediaKind": "song",
+            "enabled": true,
+            "start": 0,
+            "finish": 0,
+            "playedCount": 0,
+            "skippedCount": 0,
+            "compilation": false,
+            "rating": 0,
+            "bpm": 0,
+            "grouping": "",
+            "bookmarkable": false,
+            "bookmark": 0,
+            "shufflable": true,
+            "category": "",
+            "description": "",
+            "episodeNumber": 0,
+            "unplayed": true,
+            "sortName": "",
+            "sortAlbum": "",
+            "sortArtist": "",
+            "sortComposer": "",
+            "sortAlbumArtist": "",
+            "favorited": false,
+            "disliked": false,
+            "albumFavorited": false,
+            "albumDisliked": false,
+            "work": "",
+            "movement": "",
+            "movementNumber": 0,
+            "movementCount": 0
+        }"#;
+
+        let de: Result<Track, _> = serde_json::from_str(data);
+        assert!(de.is_ok(), "track did not deserialize");
     }
 }
