@@ -56,16 +56,17 @@ pub mod credit {
     use super::*;
 
     /// <https://musicbrainz.org/doc/Artist_Credits>
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     #[serde(rename_all = "kebab-case")]
     pub struct Individual {
         pub id: crate::Id<Artist>,
         pub name: String,
         pub sort_name: String,
+        pub disambiguation: Option<String>,
     }
     
     /// <https://musicbrainz.org/doc/Artist_Credits>
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct Credited {
         pub name: Option<String>,
         pub artist: Individual,

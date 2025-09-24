@@ -174,15 +174,32 @@ async fn extract_first_artist<'a, 'b: 'a>(
         }
     }
 
+
+    fn title_without_credits(title: &str) -> &str {
+        let mut buffer = String::with_capacity(11); // fits largest
+        for separator in [" (", " [", " ",] {
+            for featuring in [
+                "feat.",               "ft.",
+                "feat ",  "featuring", "ft "
+            ] {
+                buffer.clear();
+                buffer.push_str(separator);
+                buffer.push_str(featuring);
+                if let Some(index) = title.find(&buffer) {
+                    return &title[..index]
+                }
+            }
+        }
+        title
+    }
+
     // TODO: Create a `brainz` abstraction.
-    async fn from_listenbrainz(track: &FirstArtistQuery<'_>, net: &reqwest::Client, pool: Option<sqlx::SqlitePool>) -> Option<String> {
+    async fn using_listenbrainz(track: &FirstArtistQuery<'_>, net: &reqwest::Client, left: &str, pool: Option<sqlx::SqlitePool>) -> Option<String> {
         use super::listenbrainz::DEFAULT_PROGRAM_INFO;
-        let request = net.get("https://musicbrainz.org/ws/2/recording/")
+        let uncredited = title_without_credits(track.name);
+        let request = net.get("https://musicbrainz.org/ws/2/recording/?fmt=json")
             .header("User-Agent", &DEFAULT_PROGRAM_INFO.to_user_agent())
-            .query(&[("query", format!("artist:\"{}\" AND recording:\"{}\"",
-                track.artists,
-                track.name
-            ))]);
+            .query(&[("query", format!("artist:\"{left}\" AND recording:\"{uncredited}\""))]);
 
         let response = request.send().await.inspect_err(|err| {
             tracing::error!(?err, "failed to send request to ListenBrainz");
@@ -199,14 +216,25 @@ async fn extract_first_artist<'a, 'b: 'a>(
             return None
         }
 
-        use brainz::music::entities::Recording;
-        let response: Recording = serde_json::from_str(&text).inspect_err(|err| {
-            tracing::error!(?err, "failed to parse ListenBrainz response");
+        #[derive(serde::Deserialize, Debug)]
+        struct Response {
+            created: String, // ISO 8601
+            count: u32,
+            offset: u32,
+            recordings: Vec<brainz::music::entities::Recording>,
+        }
+
+        let response: Response = serde_json::from_str(&text).inspect_err(|error| {
+            tracing::error!(?error, persistent_id = ?track.id, "failed to parse ListenBrainz response attempting to get first artist");
             tracing::debug!("could not deserialize: {:?}", text);
         }).ok()?;
 
-        let mut credited = response.artist_credit.into_iter();
-        let artist = credited.next()?.artist.name;
+        let recording = response.recordings.into_iter().find(|recording| {
+            recording.title.eq_ignore_ascii_case(uncredited)
+        })?;
+
+        let credited = recording.artist_credit.into_iter().next()?;
+        let artist = credited.name.unwrap_or(credited.artist.name); // use specific alias if credited, otherwise general name
 
         if let Some(pool) = pool {
             use crate::store::entities::CachedFirstArtist;
@@ -274,7 +302,7 @@ async fn extract_first_artist<'a, 'b: 'a>(
 
     // Without access to any more information, it's our best bet to just
     // send the track over to ListenBrainz and see who they say the primary artist is.
-    if let Some(artist) = from_listenbrainz(&track, net, pool).await {
+    if let Some(artist) = using_listenbrainz(&track, net, left, pool).await {
         return artist.into()
     }
 
