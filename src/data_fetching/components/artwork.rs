@@ -112,8 +112,16 @@ impl ArtworkManager {
             if images.track.is_none() && let Some(db) = musicdb {
                 let id = musicdb::PersistentId::from(track.persistent_id);
                 images.track = db.tracks().get(&id)
-                    .and_then(|track| track.artwork.as_ref())
-                    .map(LocatedResource::from);            }
+                    .and_then(|track| track.artwork.clone())
+                    .map(|mut mz| {
+                        if mz.subdomain.starts_with('a') {
+                            mz.subdomain = "is1-ssl".into();
+                            mz.prefix = Some(mzstatic::image::Prefix::ImageThumbnail);
+                            mz.asset_token = mz.asset_token.replacen("4/", "v4/", 1).into();
+                        }
+                        LocatedResource::from(&mz)
+                    });
+            }
 
             if images.track.is_none() {
                 let artwork = match artworkd::get_artwork(track.persistent_id.signed()).await {
