@@ -1,5 +1,6 @@
 pub struct BigEndian;
 pub struct LittleEndian;
+pub struct SystemEndian;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Endianness {
@@ -7,14 +8,16 @@ pub enum Endianness {
     Big,
 }
 impl Endianness {
-    pub fn is_little(&self) -> bool {
+    pub const fn is_little(&self) -> bool {
         matches!(self, Endianness::Little)
     }
-    pub fn is_big(&self) -> bool {
+    pub const fn is_big(&self) -> bool {
         matches!(self, Endianness::Big)
     }
 
-    pub fn system() -> Self {
+    pub const SYSTEM: Endianness = Self::system();
+
+    pub const fn system() -> Self {
         if cfg!(target_endian = "little") {
             Endianness::Little
         } else {
@@ -41,6 +44,9 @@ impl EndianIdentifier for LittleEndian {
 }
 impl EndianIdentifier for BigEndian {
     const IS_LITTLE: bool = false;
+}
+impl EndianIdentifier for SystemEndian {
+    const IS_LITTLE: bool = Endianness::SYSTEM.is_little();
 }
 impl EndianIdentifier for () {
     const IS_BIG: bool = false;

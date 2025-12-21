@@ -173,7 +173,6 @@ impl<T: EndianIdentifier, U: EndianIdentifier> PartialOrd<Utf16Str<U>> for Utf16
                 Ordering::Equal => {
                     let lhs = lhs_chars.next();
                     let rhs = rhs_chars.next();
-                    if lhs.is_none() && rhs.is_none() { return Some(Ordering::Equal) }
                     lhs.cmp(&rhs)
                 },
                 ordering => return Some(ordering)
@@ -356,7 +355,7 @@ pub mod traits {
 #[macro_export]
 macro_rules! utf16_literal {
     ($v: expr) => {
-        $crate::utf16::Utf16Str::<()>::new($crate::u16_slice_as_u8_slice(&$v.encode_utf16().collect::<Vec<_>>())).expect("bad utf16")
+        $crate::utf16::Utf16Str::<$crate::endian::SystemEndian>::new($crate::u16_slice_as_u8_slice(&$v.encode_utf16().collect::<Vec<_>>())).expect("bad utf16")
     };
 }
 
