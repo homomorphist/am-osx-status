@@ -197,6 +197,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "requires network connection"]
     async fn test_lookup_artist() {
         let client = Client::new(reqwest::Client::new());
         let artist = client.lookup_artist(909253).await.unwrap();
