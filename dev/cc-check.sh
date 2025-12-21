@@ -17,7 +17,7 @@ fi
 COMMIT_MSG=$(cat "$1")
 
 ALLOWED_TYPES="build,chore,ci,docs,feat,fix,perf,refactor,revert,style,test" # from @commitlint/config-conventional
-ALLOWED_SCOPES="db,dev,log,ipc,osa,service,dispatch,discord,lastfm,brainz"
+ALLOWED_SCOPES="db,dev,log,ipc,osa,service,dispatch,discord,lastfm,brainz,musicdb,mzstatic"
 PREFIX_REGEX="^([^)]+)(\(([^)]+)\))?!?: ." # type(scope)!:
 
 if ! [[ $COMMIT_MSG =~ $PREFIX_REGEX ]]; then
