@@ -129,7 +129,12 @@ impl<'a> Directives<'a> {
 
         let region = if !read_r!(input, r) {
             if let Some(region) = read!(input, delimit char: '/') {
-                let region = Region::try_from(region)?;
+                let region = Region::try_from(region);
+
+                // idk how to handle this better
+                if region.is_err() { return Ok(None) }
+                let region = region.unwrap();
+
                 read_r!(input, r);
                 Some(region)
             } else { None }
