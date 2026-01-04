@@ -523,8 +523,8 @@ super::subscribe!(DiscordPresence, TrackStarted, {
             .state(track.artist.clone().map(make_minimum_length).unwrap_or("Unknown Artist".to_owned()))
             .assets(|_| ActivityAssets {
                 large_text: track.album.clone().map(make_minimum_length),
-                large_image: image_urls.track.map(str::to_owned),
-                small_image: image_urls.artist.map(str::to_owned),
+                large_image: image_urls.track.map(str::to_owned).map(make_minimum_length),
+                small_image: image_urls.artist.map(str::to_owned).map(make_minimum_length),
                 small_text: track.artist.clone().map(make_minimum_length),
             });
 
