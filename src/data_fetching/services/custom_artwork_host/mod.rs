@@ -8,8 +8,8 @@ pub struct OrderedHostList(pub Vec<HostIdentity>);
 impl Default for OrderedHostList {
     fn default() -> Self {
         Self(vec![
-            #[cfg(feature = "catbox")]
-            HostIdentity::Catbox
+            #[cfg(feature = "catbox")] HostIdentity::Litterbox,
+            #[cfg(feature = "catbox")] HostIdentity::Catbox,
         ])
     }
 }
@@ -21,18 +21,18 @@ macro_rules! define_hosts {
             $instances_vis: vis struct $instances: ident,
             $configs_vis: vis struct $configs: ident
         ), [$(
-            ($variant: ident @ $mod: ident ($repr: literal) || $aliases: expr$(, $config: ident)?)
+            ($([?$feature: literal])? $variant: ident @ $mod: ident ($repr: literal) || $aliases: expr$(, $config: ident)?)
         ),*]
     ) => {
         $(
-            #[cfg(feature = $repr)]
+            $(#[cfg(feature = $feature)])?
             pub mod $mod;
         )*
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         $enum_vis enum $enum {
             $(
-                #[cfg(feature = $repr)]
+                $(#[cfg(feature = $feature)])?
                 $variant,
             )*
         }
@@ -40,7 +40,7 @@ macro_rules! define_hosts {
             pub fn all() -> &'static [Self] {
                 &[
                     $(
-                        #[cfg(feature = $repr)]
+                        $(#[cfg(feature = $feature)])?
                         Self::$variant,
                     )*
                 ]
@@ -48,7 +48,7 @@ macro_rules! define_hosts {
             pub fn aliases(&self) -> &'static [&'static str] {
                 match self {
                     $(
-                        #[cfg(feature = $repr)]
+                        $(#[cfg(feature = $feature)])?
                         Self::$variant => &$aliases,
                     )*
                     _ => unreachable!("unrecognized custom artwork host")
@@ -57,7 +57,7 @@ macro_rules! define_hosts {
             pub fn to_str(self) -> &'static str {
                 match self {
                     $(
-                        #[cfg(feature = $repr)]
+                        $(#[cfg(feature = $feature)])?
                         Self::$variant => $repr,
                     )*
                     _ => unreachable!("unrecognized custom artwork host")
@@ -103,7 +103,7 @@ macro_rules! define_hosts {
 
             $(
                 #[serde(default, skip_serializing_if = "Option::is_none")]
-                #[cfg(feature = $repr)]
+                $(#[cfg(feature = $feature)])?
                 $mod: Option<Arc<<$mod::Host as CustomArtworkHostMetadata>::Config>>
             ),*
         }
@@ -111,7 +111,7 @@ macro_rules! define_hosts {
         #[derive(Debug)]
         $instances_vis struct $instances {
             $(
-                #[cfg(feature = $repr)]
+                $(#[cfg(feature = $feature)])?
                 $mod: Option<Mutex<Box<dyn CustomArtworkHost>>>
             ),*
         }
@@ -119,7 +119,7 @@ macro_rules! define_hosts {
             pub fn none() -> Self {
                 Self {
                     $(
-                        #[cfg(feature = $repr)]
+                        $(#[cfg(feature = $feature)])?
                         $mod: None,
                     )*
                 }
@@ -132,7 +132,7 @@ macro_rules! define_hosts {
                 for identity in order { 
                     match identity {
                         $(
-                            #[cfg(feature = $repr)]
+                            $(#[cfg(feature = $feature)])?
                             $enum::$variant => {
                                 let config = configs.$mod.clone().unwrap_or_else(|| Arc::new({
                                     <$mod::Host as CustomArtworkHostMetadata>::Config::default()
@@ -150,7 +150,7 @@ macro_rules! define_hosts {
                 for (identity, handle) in handles {
                     match identity {
                         $(
-                            #[cfg(feature = $repr)]
+                            $(#[cfg(feature = $feature)])?
                             $enum::$variant => {
                                 let host = handle.await.expect("failed to initialize custom artwork host");
                                 instances.$mod = Some(Mutex::new(host));
@@ -164,7 +164,7 @@ macro_rules! define_hosts {
             pub async fn get(&self, identity: $enum) -> Option<tokio::sync::MutexGuard<'_, Box<dyn CustomArtworkHost>>> {
                 match identity {
                     $(
-                        #[cfg(feature = $repr)]
+                        $(#[cfg(feature = $feature)])?
                         $enum::$variant => if let Some(host) = &self.$mod {
                             Some(host.lock().await)
                         } else {
@@ -183,7 +183,8 @@ define_hosts!(
         pub struct Hosts,
         pub struct HostConfigurations
     ), [
-        (Catbox @ catbox ("catbox") || ["litterbox"])
+        ([?"catbox"] Litterbox @ litterbox ("litterbox") || []),
+        ([?"catbox"] Catbox @ catbox ("catbox") || [])
     ]
 );
 
@@ -218,8 +219,4 @@ pub trait CustomArtworkHost: core::fmt::Debug + Send {
 pub trait CustomArtworkHostMetadata {
     const IDENTITY: HostIdentity;
     type Config: serde::Serialize + serde::de::DeserializeOwned + Default;
-}
-
-enum Retrieval {
-
 }
