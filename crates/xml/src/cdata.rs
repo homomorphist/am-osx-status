@@ -171,7 +171,7 @@ struct EscapeIterator<'a> {
     pos: usize,
 }
 impl<'a> EscapeIterator<'a> {
-    fn new(str: &'a str) -> Self {
+    const fn new(str: &'a str) -> Self {
         Self { str, pos: 0 }
     }
 }
@@ -340,7 +340,7 @@ pub struct XmlCharacterDataWithEscaping<'a> {
     unescaped: core::cell::OnceCell<Result<String, CharacterEntityDecodingError>>,
 }
 impl<'a> XmlCharacterDataWithEscaping<'a> {
-    fn escapes(value: &'a str) -> EscapeIterator<'a> {
+    const fn escapes(value: &'a str) -> EscapeIterator<'a> {
         EscapeIterator::new(value)
     }
     
@@ -359,15 +359,18 @@ impl<'a> XmlCharacterDataWithEscaping<'a> {
         Ok(out)
     }
 
-    pub fn new(escaped: &'a str) -> Self {
-        Self { raw: escaped, unescaped: Default::default() }
+    pub const fn new(escaped: &'a str) -> Self {
+        Self {
+            raw: escaped,
+            unescaped: core::cell::OnceCell::new()
+        }
     }
 
     pub fn get(&self) -> Result<&str, &CharacterEntityDecodingError> {
         self.unescaped.get_or_init(|| Self::unescape(self.raw)).as_ref().map(String::as_str)
     }
 
-    pub fn get_unescaped(&self) -> &str {
+    pub const fn get_unescaped(&self) -> &str {
         self.raw
     }
 
