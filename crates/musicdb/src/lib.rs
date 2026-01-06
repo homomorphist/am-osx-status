@@ -187,6 +187,9 @@ impl MusicDB {
         let (decoded, _) = encoded::decode_in_place(data).unwrap();
         Ok(decoded)
     }
+    pub fn get_raw(&self) -> &[u8] {
+        &self._owned_data
+    }
     pub fn get_view(&self) -> &MusicDbView<'_> {
         // 'static => 'self
         unsafe { core::mem::transmute(&self.view) }

@@ -38,6 +38,27 @@ pub async fn get_macos_version() -> Option<String> {
     }
 }
 
+pub fn get_installed_physical_memory() -> Option<u64> {
+    unsafe {
+        let mut size: u64 = 0;
+        let mut size_len = std::mem::size_of::<u64>();
+        let ret = libc::sysctlbyname(
+            c"hw.memsize".as_ptr().cast(),
+            (&raw mut size).cast(),
+            &raw mut size_len,
+            std::ptr::null_mut(),
+            0,
+        );
+        if ret == 0 {
+            Some(size)
+        } else {
+            let error = std::io::Error::last_os_error();
+            tracing::error!(%error, "failed to get installed physical memory via sysctlbyname");
+            None
+        }
+    }
+}
+
 macro_rules! ferror {
     ($($t: tt)*) => {
         {

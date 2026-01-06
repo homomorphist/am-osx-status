@@ -339,9 +339,18 @@ impl PollingContext {
         let musicdb: core::pin::Pin<Box<dyn Send + Future<Output = Result<Option<musicdb::MusicDB>, _>>>> = {
             let path = config.musicdb.path.clone();
             if config.musicdb.enabled { Box::pin(tokio::task::spawn_blocking(|| {
-                Some(tracing::trace_span!("musicdb read").in_scope(|| {
+                let musicdb = tracing::trace_span!("musicdb read").in_scope(|| {
                     musicdb::MusicDB::read_path(path)
-                }))
+                });
+                
+                if let Some(installed) = util::get_installed_physical_memory() {
+                    const MEMORY_WARNING_THRESHOLD: f64 = 100. / 8192.; // 100 MB on systems with 8 GB of RAM; approx 1.22% of RAM
+                    #[expect(clippy::cast_precision_loss, reason = "acceptable loss of precision for this use case")]
+                    let percentage = musicdb.get_raw().len() as f64 / installed as f64;
+                    if percentage >= MEMORY_WARNING_THRESHOLD { tracing::warn!("musicdb handle is using {:.2}% of installed physical memory; disable it if this is a concern", percentage * 100.); }
+                }
+
+                Some(musicdb)
             })) } else { Box::pin(async { Ok(None) }) }
         };
         #[cfg(not(feature = "musicdb"))]
