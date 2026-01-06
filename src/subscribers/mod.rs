@@ -769,10 +769,9 @@ impl From<osa_apple_music::application::PlayerState> for DispatchedApplicationSt
     fn from(value: osa_apple_music::application::PlayerState) -> Self {
         use osa_apple_music::application::PlayerState;
         match value {
-            PlayerState::Playing => Self::Playing,
+            PlayerState::Playing | PlayerState::FastForwarding | PlayerState::Rewinding => Self::Playing,
             PlayerState::Paused => Self::Paused,
-            PlayerState::Stopped => Self::Stopped,
-            state => unimplemented!("unforeseen player state {state:?}")
+            PlayerState::Stopped => Self::Stopped
         }
     }
 }

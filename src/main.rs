@@ -438,7 +438,6 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     context.backends.dispatch_status(app.state.into()).await;
     use osa_apple_music::application::PlayerState;
     match app.state {
-        PlayerState::FastForwarding | PlayerState::Rewinding => unimplemented!("unforeseen player state"),
         PlayerState::Stopped => {
             context.listened.lock().await.flush_current();
             
@@ -457,7 +456,12 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
             }
         }
         PlayerState::Paused => {},
-        PlayerState::Playing => {
+        state @ (PlayerState::Playing | PlayerState::FastForwarding | PlayerState::Rewinding) => {
+            if state != PlayerState::Playing {
+                // TODO: Figure out how we want to handle this. https://github.com/homomorphist/am-osx-status/issues/61
+                tracing::warn!(?state, "unsupported player state encountered; treating as normal continuous playback. behavior might be funky");
+            }
+
             let track = match context.jxa.now_playing().instrument(tracing::trace_span!("track retrieval")).await {
                 Ok(Some(track)) => track,
                 Ok(None) => return,
