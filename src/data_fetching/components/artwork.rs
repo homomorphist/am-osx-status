@@ -1,5 +1,3 @@
-use tokio::sync::Mutex;
-
 #[derive(Debug, Clone)]
 pub enum LocatedResource {
     Remote(String),
@@ -8,26 +6,27 @@ pub enum LocatedResource {
 impl LocatedResource {
     pub async fn into_uploaded(self, host: &ArtworkManager, track: &crate::subscribers::DispatchableTrack) -> Option<String> {
         match self {
-            LocatedResource::Remote(url) => Some(url),
-            LocatedResource::Local(path) => host.hosted(&path, track).await.map(|v| v.url),
+            Self::Remote(url) => Some(url),
+            Self::Local(path) => host.hosted(&path, track).await.map(|v| v.url),
         }
     }
-    pub fn as_url(&self) -> Option<&str> {
+    pub const fn as_url(&self) -> Option<&str> {
         match self {
-            LocatedResource::Remote(url) => Some(url),
-            LocatedResource::Local(path) => None
+            Self::Remote(url) => Some(url.as_str()),
+            Self::Local(_) => None
         }
     }
-    pub fn as_path(&self) -> Option<&str> {
+    #[expect(dead_code, reason = "might be useful later")]
+    pub const fn as_path(&self) -> Option<&str> {
         match self {
-            LocatedResource::Remote(_) => None,
-            LocatedResource::Local(path) => Some(path),
+            Self::Remote(_) => None,
+            Self::Local(path) => Some(path.as_str()),
         }
     }
 }
 impl From<&mzstatic::image::MzStaticImage<'_>> for LocatedResource {
     fn from(mzstatic: &mzstatic::image::MzStaticImage) -> Self {
-        LocatedResource::Remote(mzstatic.to_string())
+        Self::Remote(mzstatic.to_string())
     }
 }
 
@@ -65,10 +64,7 @@ impl ArtworkManager {
         for identity in &self.host_order.0 {
             match self.hosts.get(*identity).await?.upload(&pool, track, file_path.as_ref()).await {
                 Ok(url) => return Some(url),
-                Err(err) => {
-                    tracing::warn!(?err, "failed to upload custom artwork");
-                    continue;
-                }
+                Err(err) => tracing::warn!(?err, "failed to upload custom artwork")
             }
         }
         if self.host_order.0.is_empty() {
@@ -96,7 +92,7 @@ impl ArtworkManager {
                 .and_then(|track| db.get(track.artist_id))
                 .and_then(|artist| artist.artwork_url.as_ref())
                 .filter(|mz| mz.parameters.effect != Some(mzstatic::image::effect::Effect::SquareFitCircle)) // ugly auto-generated
-                .map(LocatedResource::from)
+                .map(LocatedResource::from);
         }
 
         if solicitation.list.contains(&Component::AlbumImage) {
@@ -105,9 +101,9 @@ impl ArtworkManager {
                     use mzstatic::image::quality::Quality;
                     mzstatic.parameters.quality = Some(Quality::new(500).unwrap());
                     LocatedResource::from(&mzstatic)
-                }).ok()
+                }).ok();
             }
-            
+
             #[cfg(feature = "musicdb")]
             if images.track.is_none() && let Some(db) = musicdb {
                 let id = musicdb::PersistentId::from(track.persistent_id);
@@ -150,14 +146,15 @@ pub struct TrackArtworkData<T = LocatedResource> {
     pub track: Option<T>
 }
 impl<T> TrackArtworkData<T> {
-    pub fn none() -> Self {
+    pub const fn none() -> Self {
         Self {
             artist: None,
             track: None,
         }
     }
 
-    async fn apple_music_web_scrape_artist_image(artist_url: &str, resolution: usize) -> Result<Option<String>, reqwest::Error> {
+    #[expect(dead_code, reason = "i've got plans")] // TODO: make use of this when musicdb isn't available
+    async fn apple_music_web_scrape_artist_image(artist_url: &str, resolution: u16) -> Result<Option<String>, reqwest::Error> {
         const ELEMENT: &str = r#"<meta property="og:image" content=""#;
         let res = reqwest::get(artist_url).await?;
         let text = res.text().await.expect("bad body");
@@ -166,11 +163,12 @@ impl<T> TrackArtworkData<T> {
             let start = start + ELEMENT.len();
             let end = text[start..].find('"').expect("element did not close") + start;
             let mut url = mzstatic::image::MzStaticImage::parse(&text[start..end]).expect("bad url");
-            url.parameters.quality = Some(Quality::new(resolution as u16).unwrap());
+            url.parameters.quality = Some(Quality::new(resolution).unwrap());
             url.to_string()
         }))
     }
 
+    #[expect(dead_code, reason = "i've got plans")]
     pub fn track_image_from_itunes(song: &itunes_api::Track) -> Option<String> {
         song.artwork_mzstatic().map(|mut mzstatic|{
             use mzstatic::image::quality::Quality;

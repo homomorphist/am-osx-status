@@ -1,5 +1,6 @@
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
+    Empty,
     UnknownVariant,
     DidNotTerminate,
     BadNumber(core::num::ParseIntError)

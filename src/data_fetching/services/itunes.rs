@@ -1,6 +1,4 @@
 use itunes_api::Client;
-use serde::Deserialize;
-
 use unicode_normalization::UnicodeNormalization;
 
 fn normalize(string: &str) -> String {

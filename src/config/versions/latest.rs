@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::*;
 pub use file::ConfigPathChoice;
+use crate::data_fetching::services::custom_artwork_host::HostConfigurations;
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
@@ -17,7 +18,7 @@ pub struct Config {
     pub socket_path: std::path::PathBuf,
 
     #[serde(default)]
-    pub artwork_hosts: crate::data_fetching::services::custom_artwork_host::HostConfigurations,
+    pub artwork_hosts: HostConfigurations,
 
     #[serde(default)]
     pub musicdb: MusicDbConfiguration
@@ -25,10 +26,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            path: Default::default(),
-            backends: Default::default(),
+            path: ConfigPathChoice::default(),
+            backends: ConfigurableBackends::default(),
             socket_path: crate::service::ipc::socket_path::clone_default(),
-            artwork_hosts: Default::default(),
+            artwork_hosts: HostConfigurations::default(),
             musicdb: MusicDbConfiguration::default()
         }
     }
@@ -53,7 +54,7 @@ impl crate::config::LoadableConfig for Config {
 }
 impl From<Config> for super::VersionedConfig {
     fn from(val: Config) -> Self {
-        super::VersionedConfig::Latest(val)
+        Self::Latest(val)
     }
 }
 

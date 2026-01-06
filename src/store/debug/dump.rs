@@ -1,4 +1,5 @@
 use chrono::format;
+use core::fmt::Write;
 use sqlx::{Row, Column};
 
 pub async fn dump_schema_into(out: &mut String, pool: &sqlx::SqlitePool) {
@@ -61,7 +62,7 @@ pub async fn dump_table_into(string: &mut String, pool: &sqlx::SqlitePool, table
         .await
         .expect("failed to execute query");
     string.push('\n');
-    string.push_str(&format!("{table}:"));
+    write!(string, "{table}:");
     for row in output {
         string.push_str("\n  (");
         for column in row.columns() {
@@ -119,12 +120,12 @@ enum ColumnVisibility {
     GeneratedStored = 3,
 }
 impl ColumnVisibility {
-    fn to_str(&self) -> &'static str {
+    const fn to_str(&self) -> &'static str {
         match self {
-            ColumnVisibility::Normal => "NORMAL",
-            ColumnVisibility::HiddenVirtual => "HIDDEN VIRTUAL",
-            ColumnVisibility::GeneratedDynamic => "GENERATED DYNAMIC",
-            ColumnVisibility::GeneratedStored => "GENERATED STORED",
+            Self::Normal => "NORMAL",
+            Self::HiddenVirtual => "HIDDEN VIRTUAL",
+            Self::GeneratedDynamic => "GENERATED DYNAMIC",
+            Self::GeneratedStored => "GENERATED STORED",
         }
     }
 }

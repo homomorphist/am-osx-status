@@ -1,7 +1,6 @@
 use crate::subscribers::DispatchableTrack;
 use tokio::sync::Mutex;
-use std::sync::Arc;
-
+use alloc::sync::Arc;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OrderedHostList(pub Vec<HostIdentity>);
@@ -37,7 +36,7 @@ macro_rules! define_hosts {
             )*
         }
         impl $enum {
-            pub fn all() -> &'static [Self] {
+            pub const fn all() -> &'static [Self] {
                 &[
                     $(
                         $(#[cfg(feature = $feature)])?
@@ -45,22 +44,20 @@ macro_rules! define_hosts {
                     )*
                 ]
             }
-            pub fn aliases(&self) -> &'static [&'static str] {
+            pub const fn aliases(&self) -> &'static [&'static str] {
                 match self {
                     $(
                         $(#[cfg(feature = $feature)])?
                         Self::$variant => &$aliases,
                     )*
-                    _ => unreachable!("unrecognized custom artwork host")
                 }
             }
-            pub fn to_str(self) -> &'static str {
+            pub const fn to_str(self) -> &'static str {
                 match self {
                     $(
                         $(#[cfg(feature = $feature)])?
                         Self::$variant => $repr,
                     )*
-                    _ => unreachable!("unrecognized custom artwork host")
                 }
             }
             pub fn from_str(input: &str) -> Option<Self> {
@@ -142,7 +139,6 @@ macro_rules! define_hosts {
                                 })))
                             },
                         )*
-                        _ => unreachable!("unrecognized custom artwork host")
                     }
                 }
 
@@ -156,7 +152,6 @@ macro_rules! define_hosts {
                                 instances.$mod = Some(Mutex::new(host));
                             },
                         )*
-                        _ => unreachable!("unrecognized custom artwork host")
                     }
                 }
                 instances
@@ -196,20 +191,22 @@ pub enum UploadError {
     SqlxError(#[from] sqlx::Error),
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum RetrievalError {
-    #[error("an unknown error occurred while retrieving the custom track artwork url")]
-    UnknownError,
-}
 
+// TODO: Retrieval from web providers.
 
-#[derive(thiserror::Error, Debug)]
-pub enum CustomArtworkHostError {
-    #[error("{0}")]
-    UploadError(#[from] UploadError),
-    #[error("{0}")]
-    RetrievalError(#[from] RetrievalError)
-}
+// #[derive(thiserror::Error, Debug)]
+// pub enum RetrievalError {
+//     #[error("an unknown error occurred while retrieving the custom track artwork url")]
+//     UnknownError,
+// }
+
+// #[derive(thiserror::Error, Debug)]
+// pub enum CustomArtworkHostError {
+//     #[error("{0}")]
+//     UploadError(#[from] UploadError),
+//     #[error("{0}")]
+//     RetrievalError(#[from] RetrievalError)
+// }
 
 #[async_trait::async_trait]
 pub trait CustomArtworkHost: core::fmt::Debug + Send {
@@ -217,6 +214,7 @@ pub trait CustomArtworkHost: core::fmt::Debug + Send {
     async fn upload(&mut self, pool: &sqlx::SqlitePool, track: &DispatchableTrack, path: &str) -> Result<crate::store::entities::CustomArtworkUrl, UploadError>;
 }
 pub trait CustomArtworkHostMetadata {
+    #[expect(unused)]
     const IDENTITY: HostIdentity;
     type Config: serde::Serialize + serde::de::DeserializeOwned + Default;
 }

@@ -1,6 +1,7 @@
-use std::{ffi::OsString, iter::Product, sync::LazyLock};
+#![allow(dead_code, reason = "IPC is under construction!")]
 
-use lockfile::ActiveProcessLockfile;
+use std::sync::LazyLock;
+
 use crate::util::{ferror, REVERSE_DNS_IDENTIFIER};
 
 pub mod ipc;
@@ -41,7 +42,7 @@ impl ServiceController {
         Self::agent().remove_definition().await
     }
 
-    pub async fn start(config_path: impl AsRef<std::path::Path>, log: bool) {
+    pub async fn start(config_path: impl AsRef<std::path::Path> + Send + Sync, log: bool) {
         if let Err(err) = Self::write_job_definition(&config_path).await {
             ferror!("Failed to write job definition file: {}", err);
         }
@@ -61,7 +62,7 @@ impl ServiceController {
         }
     }
 
-    pub async fn restart(config_path: impl AsRef<std::path::Path>) {
+    pub async fn restart(config_path: impl AsRef<std::path::Path> + Send + Sync) {
         Self::stop(false).await;
         Self::start(config_path, false).await;
         println!("Service restarted!");
@@ -136,8 +137,8 @@ struct LaunchctlErrorOutput {
     status: std::process::ExitStatus,
     stderr: String,
 }
-impl std::fmt::Display for LaunchctlErrorOutput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for LaunchctlErrorOutput {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "launchctl exited with status {}: {}", self.status, self.stderr)
     }
 }
@@ -156,7 +157,7 @@ struct LaunchAgent<'a> {
     path: &'a std::path::Path,
 }
 impl<'a> LaunchAgent<'a> {
-    pub fn new(path: &'a std::path::Path) -> Self {
+    pub const fn new(path: &'a std::path::Path) -> Self {
         Self { path }
     }
 
@@ -169,9 +170,8 @@ impl<'a> LaunchAgent<'a> {
     }
 
     async fn write_definition(path: impl AsRef<std::path::Path>, body: impl AsRef<[u8]>) -> Result<(), std::io::Error> {
-        use tokio::io::{AsyncWrite, AsyncWriteExt};
+        use tokio::io::AsyncWriteExt as _;
         use tokio::fs::OpenOptions;
-        use std::os::unix::fs::OpenOptionsExt;
         let mut opts = OpenOptions::new();
         opts.create(true).write(true).truncate(true); // will overwrite if exists
         opts.mode(0o644); // rw-r--r--

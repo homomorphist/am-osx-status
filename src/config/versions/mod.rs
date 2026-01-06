@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
+#![expect(dead_code, reason = "versioned configurations are not fully implemented")]
 
-use crate::config::{ConfigPathChoice, ConfigRetrievalError};
+use serde::{Deserialize};
 
 pub mod latest;
 
@@ -17,6 +17,7 @@ impl VersionedConfig {
         loop {
             match config {
                 Self::Latest(config) => return config,
+                #[expect(unreachable_patterns, reason = "only one version currently exists")]
                 outdated => config = outdated.upgrade(),
             }
         }

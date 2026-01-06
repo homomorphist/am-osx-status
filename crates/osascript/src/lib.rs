@@ -6,11 +6,13 @@ pub mod repl;
 /// A language that can be run in the `osascript` CLI.
 /// Defaults to [`Self::AppleScript`].
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum Language {
     JavaScript,
     /// [AppleScript]; a natural language programming language for macOS.
     /// 
     /// [AppleScript]: https://en.wikipedia.org/wiki/AppleScript
+    #[default]
     AppleScript
 }
 impl Language {
@@ -24,11 +26,6 @@ impl Language {
 impl core::fmt::Display for Language {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.to_str())
-    }
-}
-impl Default for Language {
-    fn default() -> Self {
-        Self::AppleScript
     }
 }
 
@@ -90,13 +87,13 @@ impl SingleEvaluationOutput {
     /// The output piped to the standard output stream.
     /// Notably, this does not include the final output of the script, which can be found in `stderr`.
     /// If something is logged to the console, it'll end up here.
-    pub fn stdout(&self) -> std::borrow::Cow<str> {
+    pub fn stdout(&self) -> std::borrow::Cow<'_, str> {
         String::from_utf8_lossy(&self.raw.stdout)
     }
 
     /// The output piped to the standard error stream.
     /// This includes the final output of the script.
-    pub fn stderr(&self) -> std::borrow::Cow<str> {
+    pub fn stderr(&self) -> std::borrow::Cow<'_, str> {
         String::from_utf8_lossy(&self.raw.stderr)
     }
 }

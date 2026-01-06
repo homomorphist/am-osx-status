@@ -1,16 +1,14 @@
-use crate::store::types::MillisecondTimestamp;
-
-use super::{GlobalPool, DB_POOL};
+use super::DB_POOL;
 use include_dir::Dir;
-use sqlx::{Row, Column};
+use sqlx::Row;
 
 static MIGRATIONS_DIRECTORY: Dir<'static> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/src/store/sql/migrations/");
 
 /// Zero signifies no migrations, including any initialization, such that the database is empty.
 pub type MigrationID = u16;
-type MigrationQuantity = MigrationID;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Migration {
     pub name: &'static str,
     pub id: MigrationID,
@@ -57,14 +55,10 @@ pub(super) fn get_migrations() -> Vec<Migration> {
     migrations.sort_by_key(|migration| migration.id);
     
     for (i, migration) in migrations.iter().enumerate() {
-        assert_eq!(migrations[i].id as usize, i + 1, "migration ids must be sequential starting from 1");
+        assert_eq!(migration.id as usize, i + 1, "migration ids must be sequential starting from 1");
     }
 
     migrations
-}
-
-fn is_from_missing_sessions_table(err: &sqlx::Error) -> bool {
-    err.as_database_error().is_some_and(|v| v.message() == "no such table: sessions")
 }
 
 /// Returns the new migration ID.
@@ -74,9 +68,9 @@ fn is_from_missing_sessions_table(err: &sqlx::Error) -> bool {
 /// or they might be caught in the crossfire and multiple pools could exist.
 /// (Though it'd probably be a bad idea to use the DB while this is happening in the first place...)
 pub async fn migrate() -> MigrationID {
-    let mut id = get_last_migration_id().await;
     let mut pool = DB_POOL.get().await.expect("failed to get pool");
     let migrations = get_migrations();
+    let id = get_last_migration_id().await;
 
     for migration in migrations.iter().filter(|m| m.id > id) {
         tracing::debug!(?migration, "applying migration");
@@ -89,7 +83,7 @@ pub async fn migrate() -> MigrationID {
         pool = DB_POOL.get().await.expect("failed to get pool");
     }
 
-    migrations.last().map(|m| m.id).unwrap_or(0)
+    migrations.last().map_or(0, |m| m.id)
 }
 
 async fn get_last_migration_id() -> MigrationID {
@@ -98,8 +92,7 @@ async fn get_last_migration_id() -> MigrationID {
         .await
         .ok()
         .flatten()
-        .map(|row| row.get::<MigrationID, _>(0) as MigrationID)
-        .unwrap_or(0)
+        .map_or(0, |row| row.get::<MigrationID, _>(0) as MigrationID)
 }
 
 #[cfg(test)]

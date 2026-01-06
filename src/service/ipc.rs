@@ -1,13 +1,11 @@
-use std::{os::fd::AsFd, pin::Pin, sync::Arc, sync::LazyLock};
 use core::{num::NonZero, sync::atomic::{AtomicUsize, Ordering}};
+use alloc::sync::Arc;
 
 use futures_util::SinkExt;
 use tokio_stream::StreamExt;
 use tokio_serde::{formats::SymmetricalBincode, Framed, SymmetricallyFramed};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-use tokio::{sync::Mutex, io::AsyncWriteExt, net::{unix::{OwnedReadHalf, OwnedWriteHalf, SocketAddr}, UnixListener, UnixStream}};
-
-use crate::util;
+use tokio::{sync::Mutex, net::{unix::{OwnedReadHalf, OwnedWriteHalf}, UnixListener, UnixStream}};
 
 macro_rules! def_serde_compatibly_omissible_config_default {
     ($ident: ident, <$ty: ty> { $($def: tt)* }) => {
@@ -38,8 +36,10 @@ mod s {
 static PACKET_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[allow(clippy::unsafe_derive_deserialize, reason = "deserializer for NonZero ensures non-zero")]
 pub struct PacketID<T: PacketIdCounterSource>(NonZero<usize>, core::marker::PhantomData<T>);
 impl<T: PacketIdCounterSource> PacketID<T> {
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     pub const unsafe fn from_usize(usize: usize) -> Self {
         Self({
@@ -59,8 +59,7 @@ impl PacketID<s::Local> {
 
 const IPC_PROTOCOL_VERSION: usize = 0;
 pub mod packets {
-    use super::{IPC_PROTOCOL_VERSION, PacketID, s};
-    use crate::util::OWN_PID;
+    use super::{IPC_PROTOCOL_VERSION, s};
     use serde::{Serialize, Deserialize};
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -72,7 +71,7 @@ pub mod packets {
     }
     impl Hello {
         pub fn new() -> Self {
-            Hello {
+            Self {
                 version: IPC_PROTOCOL_VERSION,
                 process: *crate::util::OWN_PID
             }
@@ -80,10 +79,11 @@ pub mod packets {
     }
     impl From<Hello> for super::Packet {
         fn from(val: Hello) -> Self {
-            super::Packet::Hello(val)
+            Self::Hello(val)
         }
     }
 
+    #[allow(clippy::unsafe_derive_deserialize, reason = "only casting source marker type; no runtime invariant can be broken")]
     #[derive(Serialize, Deserialize, Debug)]
     pub struct GeneralFailure {
         /// The packet this failure is a reaction to.
@@ -108,6 +108,7 @@ pub mod packets {
 
 }
 
+#[expect(clippy::unsafe_derive_deserialize, reason = "safe transmutation of enum discriminants")]
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[repr(u16)]
 pub enum Packet {
@@ -121,7 +122,7 @@ impl Packet {
     }
 
     /// ## Safety
-    /// See: https://doc.rust-lang.org/stable/core/mem/fn.discriminant.html#accessing-the-numeric-value-of-the-discriminant
+    /// See: <https://doc.rust-lang.org/stable/core/mem/fn.discriminant.html#accessing-the-numeric-value-of-the-discriminant>
     pub fn discriminant(&self) -> u16 {
         unsafe { *<*const Self>::from(self).cast::<u16>() }
     }
@@ -143,7 +144,7 @@ impl Listener {
         
         // lockfile ensures there is only one legit host at a time
         match tokio::fs::remove_file(&path).await {
-            Ok(_) => tracing::debug!(?path, "removed stale ipc socket file"),
+            Ok(()) => tracing::debug!(?path, "removed stale ipc socket file"),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(err),
         }
@@ -174,16 +175,13 @@ impl Listener {
     }
 
     async fn next_connection(&mut self) -> Option<PacketConnection> {
-        match self.receiver.recv().await {
-            Some(stream) => Some(PacketConnection::from_stream(stream).await),
-            None => None, // channel closed
-        }
+        self.receiver.recv().await.map(PacketConnection::from_stream)
     }
 }
 impl Drop for Listener {
     fn drop(&mut self) {
         match std::fs::remove_file(&self.path) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => tracing::debug!(?self.path, "ipc socket file already gone"),
             Err(err) => tracing::warn!(%err, ?self.path, "could not remove ipc socket file"), // best-effort attempt
         }
@@ -215,17 +213,17 @@ pub struct PacketConnection {
 }
 impl PacketConnection {
     pub async fn from_path(path: impl AsRef<std::path::Path>) -> Result<Self, std::io::Error> {
-        Ok(Self::from_stream(tokio::net::UnixStream::connect(path).await?).await)
+        Ok(Self::from_stream(tokio::net::UnixStream::connect(path).await?))
     }
 
-    pub async fn from_stream(stream: UnixStream) -> Self {
+    pub fn from_stream(stream: UnixStream) -> Self {
         let (read, write) = stream.into_split();
 
         let framed_write = FramedWrite::new(write, LengthDelimitedCodec::new());
         let framed_read = FramedRead::new(read, LengthDelimitedCodec::new());
 
-        let mut outgoing = SymmetricallyFramed::new(framed_write, SymmetricalBincode::<Packet>::default());
-        let mut incoming = SymmetricallyFramed::new(framed_read, SymmetricalBincode::<Packet>::default());
+        let outgoing = SymmetricallyFramed::new(framed_write, SymmetricalBincode::<Packet>::default());
+        let incoming = SymmetricallyFramed::new(framed_read, SymmetricalBincode::<Packet>::default());
 
         Self { outgoing, incoming }
     }
@@ -244,16 +242,12 @@ pub async fn listen(
     context: Arc<Mutex<crate::PollingContext>>,
     config: Arc<Mutex<crate::config::Config>>
 ) -> tokio::task::AbortHandle {
-    let socket_path = { config.lock().await.socket_path.to_owned() };
+    let socket_path = { config.lock().await.socket_path.clone() };
     let mut listener = Listener::new(socket_path).await.expect("failed to listen on IPC socket");
 
     tokio::spawn(async move {
         loop {
-            let taken = listener.next_connection().await;
-            let mut connection = match taken {
-                Some(conn) => conn,
-                None => break,
-            };
+            let Some(mut connection) = listener.next_connection().await else { break };
 
             let hello = match connection.recv().await {
                 Ok(None) => return,
@@ -271,7 +265,7 @@ pub async fn listen(
             #[allow(clippy::while_let_loop)]
             loop {
                 match act_upon_next_packet(&hello, &mut connection, context.clone(), config.clone()).await {
-                    ConnectionAction::Continue => continue,
+                    ConnectionAction::Continue => {},
                     ConnectionAction::Break => break,
                 }
             }
@@ -284,6 +278,7 @@ enum ConnectionAction {
     Break,
 }
 
+#[expect(clippy::significant_drop_tightening, reason = "holding a config lock is desired, since possible race conditions would be wacky")]
 async fn act_upon_next_packet(
     hello: &packets::Hello,
     connection: &mut PacketConnection,

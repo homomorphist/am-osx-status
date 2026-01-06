@@ -1,5 +1,3 @@
-use std::{collections::HashSet, ops::AddAssign};
-
 pub mod artwork;
 
 #[derive(Eq, PartialEq, Hash, Debug)]
@@ -11,10 +9,11 @@ pub enum Component {
 
 #[derive(Default, Debug)]
 pub struct ComponentSolicitation {
-    pub list: HashSet<Component>
+    // TODO: Use a BitSet or similar for efficiency / reduce allocations
+    pub list: std::collections::HashSet<Component>
 }
-impl AddAssign<ComponentSolicitation> for ComponentSolicitation {
-    fn add_assign(&mut self, rhs: ComponentSolicitation) {
+impl core::ops::AddAssign<Self> for ComponentSolicitation {
+    fn add_assign(&mut self, rhs: Self) {
         for component in rhs.list {
             self.list.insert(component);
         }

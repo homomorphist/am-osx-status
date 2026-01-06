@@ -1,6 +1,7 @@
-use std::{borrow::Cow, path::Path, sync::LazyLock};
+use std::path::Path;
+use alloc::borrow::Cow;
 
-use crate::util::{APPLICATION_SUPPORT_FOLDER, HOME};
+use crate::util::APPLICATION_SUPPORT_FOLDER;
 
 macro_rules! get_path_env_var { () => { "AM_OSX_STATUS_PATH" } }
 pub static PATH_ENV_VAR: &str = get_path_env_var!();
@@ -19,12 +20,12 @@ pub enum ConfigPathChoice {
     Automatic(std::path::PathBuf)
 }
 impl ConfigPathChoice {
-    pub fn new(explicit: Option<&'static std::path::Path>) -> ConfigPathChoice {
+    #[expect(clippy::option_if_let_else, reason = "suggestion looks ugly")]
+    pub fn new(explicit: Option<&'static std::path::Path>) -> Self {
         if let Some(explicit) = explicit {
             Self::Explicit(explicit)
         } else {
-            std::env::var_os(PATH_ENV_VAR).map(Self::Environmental)
-                .unwrap_or_else(Self::automatic)
+            std::env::var_os(PATH_ENV_VAR).map_or_else(Self::automatic, Self::Environmental)
         }
     }
 
@@ -68,25 +69,5 @@ impl AsRef<Path> for ConfigPathChoice {
 impl core::default::Default for ConfigPathChoice {
     fn default() -> Self {
         Self::automatic()
-    }
-}
-
-#[derive(thiserror::Error, Debug)]
-enum ConfigFileAccessError {
-    #[error("{0}")]
-    PermissionDenied(std::io::Error),
-    #[error("{0}")]
-    DoesNotExist(std::io::Error),
-    #[error("unknown io error: {0}")]
-    Unknown(std::io::Error)
-}
-impl From<std::io::Error> for ConfigFileAccessError {
-    fn from(error: std::io::Error) -> Self {
-        use std::io::ErrorKind;
-        match error.kind() {
-            ErrorKind::PermissionDenied => Self::PermissionDenied(error),
-            ErrorKind::NotFound => Self::DoesNotExist(error),
-            _ => Self::Unknown(error)
-        }
     }
 }

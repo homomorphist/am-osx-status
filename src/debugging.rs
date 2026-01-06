@@ -26,6 +26,8 @@ impl DebuggingSession {
         }
 
         if let Ok(created) = Self::make_logging_dir() {
+            tracing::debug!(%created, "logging directory ready");
+
             let appender = tracing_appender::rolling::Builder::default()
                 .filename_suffix("log")
                 .rotation(tracing_appender::rolling::Rotation::DAILY)
@@ -67,13 +69,13 @@ impl DebuggingSession {
     /// Create the logging directory if it doesn't already exist. Returns `Ok(true)` if it was created, `Ok(false)` if it already existed.
     fn make_logging_dir() -> Result<bool, std::io::Error> {
         match std::fs::create_dir(crate::util::HOME.join("Library/Logs/am-osx-status")) {
-            Ok(_) => Ok(true),
+            Ok(()) => Ok(true),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
             Err(err) => Err(err)
         }
     }
 
-    /// Get the filter for log output. The `AMXS_LOG`` environmental variable takes priority over CLI arguments.
+    /// Get the filter for log output. The `AMXS_LOG` environmental variable takes priority over CLI arguments.
     fn get_filter(args: &crate::cli::Cli) -> tracing_subscriber::EnvFilter {
         use tracing_subscriber::EnvFilter;
 
@@ -84,15 +86,13 @@ impl DebuggingSession {
             }
             EnvFilter::try_from_env(ENV).expect("bad log filter")
         } else {
-            let mut level = Some(tracing::Level::INFO);
-            if args.verbose.is_present() {
-                level = args.verbose.tracing_level();
-            }
-            if let Some(level) = level {
-                EnvFilter::new(level.as_str())
+            let level = if args.verbose.is_present() {
+                args.verbose.tracing_level().map_or("none", |level| level.as_str())
             } else {
-                EnvFilter::new("none")
-            }
+                tracing::Level::INFO.as_str()
+            };
+
+            EnvFilter::new(level)
         }
     }
 }
@@ -106,25 +106,11 @@ impl core::default::Default for DebuggingSession {
     }
 }
 
-
-/// Currently private @ https://github.com/rust-lang/rust/blob/52618eb338609df44978b0ca4451ab7941fd1c7a/src/tools/compiletest/src/panic_hook.rs#L75-L92
-/// Seemingly stable soon-ish w/ `std::panic::PanicHookInfo::payload_as_str` but I'll wait a few versions
-fn payload_as_str<'a>(info: &'a std::panic::PanicHookInfo<'_>) -> Option<&'a str> {
-    let payload = info.payload();
-    if let Some(s) = payload.downcast_ref::<&str>() {
-        Some(s)
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        Some(s)
-    } else {
-        None
-    }
-}
-
 // thanks a lot https://github.com/rust-lang/rust/issues/67939
 // theoretically this could break across std versions but blehhh,, no way that'll happen, right?
 fn extract_thread_id(id: std::thread::ThreadId) -> core::num::NonZero<u64> {
     unsafe { 
-        std::mem::transmute::<
+        core::mem::transmute::<
             std::thread::ThreadId,
             core::num::NonZero<u64>
         >(id)
@@ -133,11 +119,11 @@ fn extract_thread_id(id: std::thread::ThreadId) -> core::num::NonZero<u64> {
 
 fn panic_hook(info: &std::panic::PanicHookInfo) {
     use std::backtrace::*;
-    use std::panic::Location;
+    use core::panic::Location;
 
     let backtrace = Backtrace::capture();
     let location = info.location().map(Location::to_string);
-    let message = payload_as_str(info);
+    let message = info.payload_as_str();
     let thread = std::thread::current();
     let thread_id = extract_thread_id(thread.id());
 
@@ -150,9 +136,7 @@ fn panic_hook(info: &std::panic::PanicHookInfo) {
             opt => format!("unknown (unrecognized status {opt:?})"),
         }),
         "{} (T{}) panicked at {}",
-        thread.name()
-            .map(|name| format!("thread '{name}'"))
-            .unwrap_or("unnamed thread".to_string()),
+        thread.name().map_or_else(|| "unnamed thread".to_owned(), |name| format!("thread '{name}'")),
         thread_id,
         message.unwrap_or("<no message>")
     );

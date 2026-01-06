@@ -1,10 +1,24 @@
-use std::{fmt::Debug, sync::{Arc, Weak}, time::Duration};
-use discord_presence::models::{Activity, ActivityAssets, ActivityType};
+use alloc::sync::{Arc, Weak};
+use core::time::Duration;
+use discord_presence::models::{Activity, ActivityAssets, ActivityType, DisplayType};
 use tokio::sync::Mutex;
 
 use crate::data_fetching::components::{Component, ComponentSolicitation};
+use crate::listened;
 
 use super::error::DispatchError;
+
+fn f32_round_to_u64(value: f32) -> u64 {
+    if value < 0.0 {
+        panic!("value must be non-negative");
+    } else {
+        #[expect(clippy::cast_possible_truncation, reason = "permissible loss, larger values are realistically infeasible")]
+        #[expect(clippy::cast_sign_loss, reason = "sign already checked")]
+        {
+            value.round() as u64
+        }
+    }
+}
 
 macro_rules! define_activities {
     (
@@ -17,6 +31,7 @@ macro_rules! define_activities {
             ),*,
         }
     ) => {
+        #[allow(clippy::unreadable_literal, reason = "not meant for human digestion")]
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         #[repr(u64)]
         $(#[$meta])*
@@ -49,6 +64,8 @@ macro_rules! define_activities {
                     $($name::$activity => $display),*,
                 }
             }
+
+            #[allow(clippy::unreadable_literal, reason = "not meant for human digestion")]
             pub const fn get_id(self) -> u64 {
                 match self {
                     $($name::$activity => $num_id),*,
@@ -90,33 +107,30 @@ impl Default for Config {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum DisplayedField {
     ApplicationName,
-    State,
-    Details,
+    #[default]
+    State, // artist
+    Details, // album
 }
 impl From<DisplayedField> for discord_presence::models::DisplayType {
     fn from(val: DisplayedField) -> Self {
         match val {
-            DisplayedField::ApplicationName => discord_presence::models::DisplayType::Name,
-            DisplayedField::State => discord_presence::models::DisplayType::State,
-            DisplayedField::Details => discord_presence::models::DisplayType::Details,
+            DisplayedField::ApplicationName => Self::Name,
+            DisplayedField::State => Self::State,
+            DisplayedField::Details => Self::Details,
         }
     }
 }
-impl From<discord_presence::models::DisplayType> for DisplayedField {
-    fn from(value: discord_presence::models::DisplayType) -> Self {
+impl From<DisplayType> for DisplayedField {
+    fn from(value: DisplayType) -> Self {
         match value {
-            discord_presence::models::DisplayType::Name => DisplayedField::ApplicationName,
-            discord_presence::models::DisplayType::State => DisplayedField::State,
-            discord_presence::models::DisplayType::Details => DisplayedField::Details,
+            DisplayType::Name => Self::ApplicationName,
+            DisplayType::State => Self::State,
+            DisplayType::Details => Self::Details,
             state => unimplemented!("unexpected display type: {state:?}"),
         }
-    }
-}
-impl Default for DisplayedField {
-    fn default() -> Self {
-        Self::State // artist, in our case (for now)
     }
 }
 
@@ -159,7 +173,7 @@ impl PendingStatusClear {
     /// The amount of time a pause needs to last for before the status is cleared.
     pub const THRESHOLD: core::time::Duration = core::time::Duration::from_secs(5);
 
-    fn signal(&mut self) {
+    fn signal(&self) {
         if self.intent.compare_exchange(
             false,
             true,
@@ -176,8 +190,8 @@ impl PendingStatusClear {
             let sleep = tokio::time::sleep(Self::THRESHOLD);
             let cancelled = cancel.notified();
             tokio::select!{
-                _ = cancelled => {},
-                _ = sleep => {
+                () = cancelled => {},
+                () = sleep => {
                     if intends_to_clear.compare_exchange(
                         true,
                         false,
@@ -191,7 +205,7 @@ impl PendingStatusClear {
         });
     }
 
-    fn cancel(&mut self) {
+    fn cancel(&self) {
         self.intent.store(false, Ordering::Relaxed);
         self.cancel.clone().notify_waiters();
     }
@@ -221,7 +235,7 @@ super::subscription::define_subscriber!(pub DiscordPresence, {
     pending_clear: PendingStatusClear,
     // status_display: Option<discord_presence::models::DisplayType>,
 });
-impl Debug for DiscordPresence {
+impl core::fmt::Debug for DiscordPresence {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct(Self::NAME).finish()
     }
@@ -230,7 +244,7 @@ impl DiscordPresence {
     #[tracing::instrument(level = "debug")]
     pub async fn new(config: Config) -> Arc<Mutex<Self>> {
         let instance = Self::disconnected(config).await;
-        match DiscordPresence::try_connect_in_place(instance.clone(), CONNECTION_ATTEMPT_TIMEOUT).await {
+        match Self::try_connect_in_place(instance.clone(), CONNECTION_ATTEMPT_TIMEOUT).await {
             Ok(()) => instance,
             Err(ConnectError::TimedOut) => {
                 tracing::warn!("client creation timed out; assuming Discord isn't open");
@@ -268,15 +282,10 @@ impl DiscordPresence {
         }));
 
         let weak = Arc::downgrade(&this);
-        DiscordPresence::enable_auto_reconnect(weak.clone()).await;
-        DiscordPresence::react_to_pending_clear(weak, pending_clear_act);
+        Self::enable_auto_reconnect(weak.clone()).await;
+        Self::react_to_pending_clear(weak, pending_clear_act);
 
         this
-    }
-
-    pub async fn connect(mut self) -> Self {
-        self.connect_in_place().await;
-        self
     }
 
     /// not `tokio::select!` safe
@@ -313,33 +322,13 @@ impl DiscordPresence {
         }
     }
 
-
-    pub async fn try_connect(self, timeout: Duration) -> Result<Self, ConnectError> {
-        let timeout = tokio::time::sleep(timeout);
-        let handle = tokio::spawn(self.connect());
-        let abortion_handle = handle.abort_handle();
-
-        tokio::select! {
-            outcome = handle => {
-                Ok(outcome.expect("task did not finish successfully"))
-            },
-            _ = timeout => {
-                abortion_handle.abort();
-                Err(ConnectError::TimedOut)
-            }
-        }
-    }
-
     /// not `tokio::select!` safe
     pub async fn try_connect_in_place(instance: Arc<Mutex<Self>>, timeout: Duration) -> Result<(), ConnectError> {
         tokio::time::timeout(
             timeout,
             instance.lock().await.connect_in_place()
-        ).await
-            .map(|_| ())
-            .map_err(|_| ConnectError::TimedOut)
+        ).await.map_err(|_| ConnectError::TimedOut)
     }
-
 
     async fn enable_auto_reconnect(weak: Weak<Mutex<Self>>) {
         let mut rx = if let Some(instance) = weak.upgrade() {
@@ -347,7 +336,7 @@ impl DiscordPresence {
 
             if let Some(old_handle) = &lock.auto_reconnect_task_handle {
                 old_handle.abort();
-            };
+            }
             
             lock.state_channel.subscribe()
         } else { return };
@@ -372,14 +361,14 @@ impl DiscordPresence {
                 };
 
                 match state {
-                    DiscordPresenceState::Ready => continue,
+                    DiscordPresenceState::Ready => {},
                     DiscordPresenceState::Disconnected => {
                         if let Some(instance) = sent.upgrade() {
                             if let Err(error) = Self::try_connect_in_place(
                                 instance,
                                 CONNECTION_ATTEMPT_TIMEOUT
                             ).await {
-                                tracing::debug!(?error, "couldn't connect")
+                                tracing::debug!(?error, "couldn't connect");
                             }
                         } else { break }
                     }
@@ -397,8 +386,9 @@ impl DiscordPresence {
             loop {
                 signal.notified().await;
                 if let Some(this) = instance.upgrade() {
-                    if let Err(error) = this.lock().await.clear().await {
-                        tracing::error!(?error, "unable to clear discord status")
+                    let result = this.lock().await.clear();
+                    if let Err(error) = result {
+                        tracing::error!(?error, "unable to clear discord status");
                     }
                 } else {
                     tracing::debug!("discord presence instance was dropped, stopping pending clear task");
@@ -408,8 +398,10 @@ impl DiscordPresence {
         });
     }
 
-    pub async fn client(&mut self) -> Option<&mut discord_presence::Client> {
-        match *self.state.try_lock().unwrap() {
+    pub fn client(&mut self) -> Option<&mut discord_presence::Client> {
+        // TODO: Isn't this dangerous?
+        let state = *self.state.try_lock().unwrap();
+        match state {
             DiscordPresenceState::Ready => self.client.as_mut(),
             DiscordPresenceState::Disconnected => None
         }
@@ -418,9 +410,9 @@ impl DiscordPresence {
     /// Returns whether the status was cleared.
     /// (If the status was already empty, it will return false.)
     #[tracing::instrument(skip(self), level = "debug")]
-    pub async fn clear(&mut self) -> Result<bool, UpdateError> {
+    pub fn clear(&mut self) -> Result<bool, UpdateError> {
         let has_content = self.has_content;
-        if let Some(client) = self.client().await {
+        if let Some(client) = self.client() {
             if has_content {
                 client.clear_activity()?;
                 self.has_content = false;
@@ -435,15 +427,17 @@ impl DiscordPresence {
 
     #[tracing::instrument(skip(self), level = "debug")]
     async fn send_activity(&mut self) -> Result<(), DispatchError> {
-        let activity = self.activity.clone().ok_or(DispatchError::internal_msg("no activity to dispatch", false))?;
-        let client = self.client.as_mut().ok_or(DispatchError::internal_msg("cannot dispatch without client", true))?;
+        let activity = self.activity.clone().ok_or_else(|| DispatchError::internal_msg("no activity to dispatch", false))?;
+        let client = self.client.as_mut().ok_or_else(|| DispatchError::internal_msg("cannot dispatch without client", true))?;
 
         client.set_activity(|_| activity.timestamps(|mut activity| {
             if let Some(position) = self.position {
-                let start = chrono::Utc::now().timestamp() as u64 - position as u64;
+                let now: u64 = chrono::Utc::now().timestamp().try_into().expect("current timestamp should be non-negative");
+                let position: u64 = f32_round_to_u64(position);
+                let start = now - position;
                 activity = activity.start(start);
                 if let Some(duration) = self.duration {
-                    activity = activity.end(start + duration as u64);
+                    activity = activity.end(start + f32_round_to_u64(duration));
                 }
             } 
             activity
@@ -467,13 +461,23 @@ impl DiscordPresence {
     /// 
     /// This also updates the duration and position fields based on the new context.
     async fn should_dispatch_progress_update(&mut self, context: &super::BackendContext<()>) -> bool {
+        use crate::listened::CurrentListened;
         const STATUS_UPDATE_RATELIMIT_SECONDS: f32 = 15.;
         self.duration = context.track.duration.map(|d| d.as_secs_f32());
-        self.position = context.listened.lock().await.current.as_ref().map(|c| c.get_expected_song_position());
-        let duration = if let Some(duration) = self.duration { duration } else { return true };
-        let position = if let Some(position) = self.position { position } else { return true };
+        self.position = context.listened.lock().await.current.as_ref().map(CurrentListened::get_expected_song_position);
+        let Some(duration) = self.duration else { return true }; // TODO: Unless was *already* `None`?
+        let Some(position) = self.position else { return true };
         let remaining = duration - position;
         remaining > (STATUS_UPDATE_RATELIMIT_SECONDS / 3. * 2.)
+    }
+
+    /// Discord, for no good reason, requires that the content of all present status fields be at least two characters long.
+    /// This function will pad a string to ensure it meets this requirement.
+    fn pad_field(mut string: String) -> String {
+        if string.len() < 2 {
+            string += "  "; // two spaces
+        }
+        string
     }
 }
 impl Drop for DiscordPresence {
@@ -501,31 +505,28 @@ super::subscribe!(DiscordPresence, TrackStarted, {
     async fn dispatch(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) -> Result<(), DispatchError> {
         use osa_apple_music::track::MediaKind;
         let super::BackendContext { track, listened, data: additional_info, .. } = context;
-        self.position = listened.lock().await.current.as_ref().map(|position| position.get_expected_song_position());
+        self.position = listened.lock().await.current.as_ref().map(listened::CurrentListened::get_expected_song_position);
         self.duration = track.duration.map(|d| d.as_secs_f32());
         let image_urls = additional_info.images.urls();
 
-        fn make_minimum_length(mut s: String) -> String {
-            if s.len() < 2 {
-                s += "  "; // two spaces
-            }
-            s
-        }
-
         let mut activity = Activity::new()
             .activity_type(match track.media_kind {
-                MediaKind::Song | 
-                MediaKind::Unknown => ActivityType::Listening,
                 MediaKind::MusicVideo => ActivityType::Watching,
+                MediaKind::Song => ActivityType::Listening, 
+                MediaKind::Unknown => {
+                    let persistent_id = track.persistent_id;
+                    tracing::warn!(%persistent_id, "unknown media kind; defaulting to listening", );
+                    ActivityType::Listening
+                },
             })
             .status_display(self.config.displayed_field.into())
-            .details(make_minimum_length(track.name.clone()))
-            .state(track.artist.clone().map(make_minimum_length).unwrap_or("Unknown Artist".to_owned()))
+            .details(Self::pad_field(track.name.clone()))
+            .state(track.artist.clone().map_or_else(|| "Unknown Artist".to_owned(), Self::pad_field))
             .assets(|_| ActivityAssets {
-                large_text: track.album.clone().map(make_minimum_length),
-                large_image: image_urls.track.map(str::to_owned).map(make_minimum_length),
-                small_image: image_urls.artist.map(str::to_owned).map(make_minimum_length),
-                small_text: track.artist.clone().map(make_minimum_length),
+                large_text: track.album.clone().map(Self::pad_field),
+                large_image: image_urls.track.map(str::to_owned).map(Self::pad_field),
+                small_image: image_urls.artist.map(str::to_owned).map(Self::pad_field),
+                small_text: track.artist.clone().map(Self::pad_field),
             });
 
         if let Some(itunes) = &additional_info.itunes {
@@ -557,10 +558,7 @@ super::subscribe!(DiscordPresence, ApplicationStatusUpdate, {
         match status != DispatchedApplicationStatus::Playing {
             true  => self.pending_clear.signal(),
             false => self.pending_clear.cancel(),
-        };
+        }
         Ok(())
     }
 });
-
-
-

@@ -1,16 +1,18 @@
 use chrono::TimeDelta;
 type DateTime = chrono::DateTime<chrono::Utc>;
 
+#[allow(dead_code)]
 pub trait TimeDeltaExtension {
     fn from_secs_f32(secs: f32) -> Self;
     fn as_secs_f32(&self) -> f32;
     fn as_secs_f64(&self) -> f64;
 }
+#[allow(clippy::cast_sign_loss, clippy::cast_precision_loss, clippy::cast_possible_truncation)]
 impl TimeDeltaExtension for TimeDelta {
     fn from_secs_f32(secs: f32) -> Self {
         let seconds = secs.trunc() as i64;
         let nanoseconds = (secs.fract() * 1e9) as u32;
-        TimeDelta::new(seconds, nanoseconds).expect("bad duration")
+        Self::new(seconds, nanoseconds).expect("bad duration")
     }
     fn as_secs_f32(&self) -> f32 {
         self.num_microseconds().expect("duration overflow") as f32 / 1e6
@@ -30,6 +32,7 @@ pub struct ListenedChunk {
     duration: chrono::TimeDelta 
 }
 impl ListenedChunk {
+    #[expect(dead_code, reason = "might be useful later")]
     pub fn ended_at(&self) -> DateTime {
         self.started_at.checked_add_signed(self.duration).expect("date out of range")
     }
@@ -45,7 +48,7 @@ pub struct CurrentListened {
 }
 impl From<CurrentListened> for ListenedChunk {
     fn from(value: CurrentListened) -> Self {
-        ListenedChunk {
+        Self {
             started_at: value.started_at,
             started_at_song_position: value.started_at_song_position,
             duration: chrono::Utc::now().signed_duration_since(value.started_at),
@@ -64,14 +67,17 @@ impl CurrentListened {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Listened {
     pub contiguous: Vec<ListenedChunk>,
     pub current: Option<CurrentListened>,
 }
 impl Listened {
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            contiguous: vec![],
+            current: None,
+        }
     }
 
     pub fn new_with_current(position: f32) -> Self {
@@ -100,12 +106,10 @@ impl Listened {
     ///             ^-- An index of three (zero-indexed) would be best
     ///                 to preserve proper ordering, so that'd what'd be returned.
     /// </pre>
-    // TODO: Utilize a binary search for this.
     fn find_index_for_current(&self, current: &CurrentListened) -> usize {
-        self.contiguous.iter()
-            .enumerate()
-            .filter(|(_, chunk)| chunk.started_at_song_position < current.started_at_song_position)
-            .next_back().map(|(i, _)| i + 1).unwrap_or_default()
+        self.contiguous.binary_search_by(|chunk| {
+            chunk.started_at_song_position.total_cmp(&current.started_at_song_position)
+        }).unwrap_or_else(|i| i)
     }
 
     /// Rid the current listening session to place it into the ordered
@@ -119,10 +123,12 @@ impl Listened {
     
     pub fn set_new_current(&mut self, current_song_position: f32) {
         if self.current.replace(CurrentListened::new_with_position(current_song_position)).is_some() {
-            tracing::warn!("overwrote current before it was flushed")
+            tracing::warn!("overwrote current before it was flushed");
         }
     }
     
+    // TODO: Allow user to configure this behavior for checks instead.
+    #[expect(unused)]
     pub fn total_heard_unique(&self) -> chrono::TimeDelta {
         if self.contiguous.is_empty() {
             return self.current.as_ref()
@@ -138,7 +144,7 @@ impl Listened {
             Into::<ListenedChunk>::into(current),
         ));
         
-        for index in 0..self.contiguous.len() + if current.is_some() { 1 } else { 0 } {
+        for index in 0..self.contiguous.len() + usize::from(current.is_some()) {
             let chunk = if let Some((current_idx, current)) = &current {
                 use core::cmp::Ordering;
                 match index.cmp(current_idx) {
@@ -153,8 +159,7 @@ impl Listened {
 
             if chunk_end > last_end_position {
                 let len = chunk_end - chunk_start.max(last_end_position);
-                
-                total += chrono::TimeDelta::new(len.trunc() as i64, (len.fract() * 1e6) as u32).expect("bad duration");
+                total += chrono::TimeDelta::from_secs_f32(len);
                 last_end_position = chunk_end;
             }
         }
@@ -171,5 +176,10 @@ impl Listened {
                     .unwrap_or_default(),
                 |a, b| a + b
             )
+    }
+}
+impl Default for Listened {
+    fn default() -> Self {
+        Self::new()
     }
 }

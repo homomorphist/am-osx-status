@@ -19,11 +19,11 @@ pub enum ConfigRetrievalError {
     PermissionDenied(ConfigPathChoice)
 }
 impl ConfigRetrievalError {
-    pub fn path(&self) -> &ConfigPathChoice {
+    pub const fn path(&self) -> &ConfigPathChoice {
         match self {
-            Self::UnknownFs { path, .. } => path,
-            Self::DeserializationFailure { path, .. } => path,
-            Self::NotFound(path) => path,
+            Self::UnknownFs { path, .. } |
+            Self::DeserializationFailure { path, .. } |
+            Self::NotFound(path) |
             Self::PermissionDenied(path) => path,
         }
     }
@@ -37,9 +37,9 @@ pub trait LoadableConfig where Self: Sized + for <'de> Deserialize<'de> + Serial
     }
 
     async fn from_path(path: ConfigPathChoice) -> Result<Self, ConfigRetrievalError> {
-        match std::fs::read(&path) {
+        match tokio::fs::read(&path).await {
             Err(error) => {
-                use std::io::ErrorKind;
+                use tokio::io::ErrorKind;
                 match error.kind() {
                     ErrorKind::PermissionDenied => Err(ConfigRetrievalError::PermissionDenied(path)),
                     ErrorKind::NotFound => Err(ConfigRetrievalError::NotFound(path)),
@@ -92,7 +92,8 @@ pub trait LoadableConfig where Self: Sized + for <'de> Deserialize<'de> + Serial
         tokio::fs::write(&path, LoadableConfig::serialize(self).as_bytes()).await.expect("could not write configuration");
     }
 
-    async fn upgrade(self) -> versions::VersionedConfig {
+    #[expect(unused, reason = "versioned configurations are not fully implemented")]
+    fn upgrade(self) -> versions::VersionedConfig {
         self.into().upgrade()
     }
 }

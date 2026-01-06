@@ -401,16 +401,16 @@ impl<'a> MzStaticImage<'a> {
         let tls = eat!(url, [optional] "s");
         eat!(url, [assert] "://", BadProtocol);
 
-        // fixme
+        // FIXME: Don't panic!
         let subdomain = read!(url, delimit: ".").unwrap().into();
 
         eat!(url, [assert] "mzstatic.com/", BadDomain);
 
         let prefix = eat!(url, [pass] Prefix::read(url));
         let directives = eat!(url, [pass] Directives::read(url)?);
-        let pool =  eat!(url, [pass] Some(Pool::read(url)?)).unwrap(); // fixme
+        let pool =  eat!(url, [pass] Some(Pool::read(url)?)).unwrap(); // FIXME: Don't panic!
     
-        let last_slash = url.rfind('/').unwrap();
+        let last_slash = url.rfind('/').unwrap(); // FIXME: Don't panic!
         let (path, details) = url.split_at(last_slash);
         let details = Details::new(&details[1..])?;
 

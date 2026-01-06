@@ -1,14 +1,16 @@
+#![expect(dead_code, reason = "some stuff here is under construction")]
+
 use crate::{store::types::{MillisecondTimestamp, StoredPersistentId}, subscribers::error::DispatchError};
 use super::MaybeStaticSqlError;
 
 pub struct Key<T>(i64, core::marker::PhantomData<T>);
 impl<'r, T> sqlx::Encode<'r, sqlx::Sqlite> for Key<T> where i64: sqlx::Encode<'r, sqlx::Sqlite> {
-    fn encode_by_ref(&self, buf: &mut <sqlx::Sqlite as sqlx::Database>::ArgumentBuffer<'r>) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + 'static + Send + Sync>> {
+    fn encode_by_ref(&self, buf: &mut <sqlx::Sqlite as sqlx::Database>::ArgumentBuffer<'r>) -> Result<sqlx::encode::IsNull, Box<dyn core::error::Error + 'static + Send + Sync>> {
         <i64 as sqlx::Encode<sqlx::Sqlite>>::encode_by_ref(&self.0, buf)
     }
 }
 impl<'r, T,  DB: sqlx::Database> sqlx::Decode<'r, DB> for Key<T> where i64: sqlx::Decode<'r, DB> {
-    fn decode(value: DB::ValueRef<'r>) -> Result<Self, Box<dyn std::error::Error + 'static + Send + Sync>> {
+    fn decode(value: DB::ValueRef<'r>) -> Result<Self, Box<dyn core::error::Error + 'static + Send + Sync>> {
         let value = <i64 as sqlx::Decode<DB>>::decode(value)?;
         Ok(Self(value, core::marker::PhantomData))
     }
@@ -32,7 +34,7 @@ impl<T> Clone for Key<T> {
 impl<T> Copy for Key<T> {}
 impl<T> core::fmt::Debug for Key<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Key::<{}>({})", std::any::type_name::<T>(), self.0)
+        write!(f, "Key::<{}>({})", core::any::type_name::<T>(), self.0)
     }
 }
 
@@ -40,6 +42,7 @@ trait KeyCollection<T>: Sized {
     fn len(&self) -> usize;
     fn as_slice(&self) -> &[Key<T>];
 }
+#[expect(clippy::use_self, reason = "method overlap; this is clearer")]
 impl<T> KeyCollection<T> for Vec<Key<T>> {
     fn len(&self) -> usize {
         Vec::len(self)
@@ -124,7 +127,7 @@ impl FromKey for DeferredTrack {
 }
 impl DeferredTrack {
     pub async fn insert_in_pool(pool: &sqlx::SqlitePool, track: &crate::DispatchableTrack) -> sqlx::Result<Key<Self>> {
-        sqlx::query_as::<_, Self>(r#"
+        sqlx::query_as::<_, Self>(r"
             INSERT INTO deferred_tracks (
                 title,
                 artist,
@@ -135,14 +138,14 @@ impl DeferredTrack {
                 duration,
                 media_kind
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-        "#)
+        ")
             .bind(&track.name)
             .bind(&track.artist)
             .bind(&track.album)
             .bind(&track.album_artist)
             .bind(track.track_number)
             .bind(track.persistent_id)
-            .bind(track.duration.map(|d| d.as_secs_f32() as f64))
+            .bind(track.duration.map(|d| f64::from(d.as_secs_f32())))
             .bind(&track.media_kind)
             .fetch_one(pool).await
             .map(|v| v.id)
@@ -153,9 +156,9 @@ impl DeferredTrack {
     }
 
     pub async fn get_with_persistent_id_in_pool(pool: &sqlx::SqlitePool, persistent_id: StoredPersistentId) -> sqlx::Result<Option<Self>> {
-        sqlx::query_as::<_, Self>(r#"
+        sqlx::query_as::<_, Self>(r"
             SELECT * FROM deferred_tracks WHERE persistent_id = ?
-        "#)
+        ")
             .bind(persistent_id)
             .fetch_optional(pool).await
     }
@@ -195,7 +198,7 @@ pub struct Session {
 }
 impl Session {
     pub fn duration(&self) -> chrono::Duration {
-        self.ended_at.map(|v| v.0).unwrap_or_else(chrono::Utc::now) - self.started_at.0
+        self.ended_at.map_or_else(chrono::Utc::now, |v| v.0) - self.started_at.0
     }
 }
 impl FromKey for Session {
@@ -206,14 +209,14 @@ impl Session {
         player_version: &str,
         migration_id: super::migrations::MigrationID
     ) -> sqlx::Result<Self> {
-        sqlx::query_as::<_, Self>(r#"
+        sqlx::query_as::<_, Self>(r"
             INSERT INTO sessions (
                 ver_crate,
                 ver_player,
                 ver_os,
                 migration_id
             ) VALUES (?, ?, ?, ?) RETURNING * 
-        "#)
+        ")
             .bind(clap::crate_version!())
             .bind(player_version)
             .bind(crate::util::get_macos_version().await)
@@ -269,13 +272,13 @@ impl FromKey for Error {
 }
 impl Error {
     async fn new(pool: &sqlx::SqlitePool, session: &Session, source: &DispatchError) -> sqlx::Result<Self> {
-        sqlx::query_as::<_, Self>(r#"
+        sqlx::query_as::<_, Self>(r"
             INSERT INTO errors (
                 fmt_display,
                 fmt_debug,
                 session
             ) VALUES (?, ?, ?) RETURNING *
-        "#)
+        ")
             .bind(format!("{source}"))
             .bind(format!("{source:?}"))
             .bind(session.id)
@@ -320,13 +323,13 @@ impl CustomArtworkUrl {
         artwork_url: &str,
     ) -> sqlx::Result<Self> {
         let expires_at = expires_at.map(|dt| dt.timestamp_millis());
-        sqlx::query_as::<_, Self>(r#"
+        sqlx::query_as::<_, Self>(r"
             INSERT INTO custom_artwork_urls (
                 expires_at,
                 source_path,
                 artwork_url
             ) VALUES (?, ?, ?) RETURNING *
-        "#)
+        ")
             .bind(expires_at)
             .bind(source_path)
             .bind(artwork_url)
@@ -337,9 +340,9 @@ impl CustomArtworkUrl {
         pool: &sqlx::SqlitePool,
         source_path: &str,
     ) -> sqlx::Result<Option<Self>> {
-        sqlx::query_as::<_, Self>(r#"
+        sqlx::query_as::<_, Self>(r"
             SELECT * FROM custom_artwork_urls WHERE source_path = ?
-        "#)
+        ")
             .bind(source_path)
             .fetch_optional(pool).await
     }
@@ -383,13 +386,13 @@ impl CachedFirstArtist {
         artists: &str,
         artist: &str,
     ) -> sqlx::Result<Self> {
-        sqlx::query_as::<_, Self>(r#"
+        sqlx::query_as::<_, Self>(r"
             INSERT INTO first_artists (
                 persistent_id,
                 artists,
                 artist
             ) VALUES (?, ?, ?) RETURNING *
-        "#)
+        ")
             .bind(persistent_id)
             .bind(artists)
             .bind(artist)
@@ -413,18 +416,16 @@ impl CachedFirstArtist {
         persistent_id: StoredPersistentId,
         artists: &str,
     ) -> sqlx::Result<Option<Self>> {
-        let got = sqlx::query_as::<_, Self>(r#"
+        let got = sqlx::query_as::<_, Self>(r"
             SELECT * FROM first_artists WHERE persistent_id = ?
-        "#)
+        ")
             .bind(persistent_id)
             .fetch_optional(pool).await;
 
-        if let Ok(Some(got)) = &got {
-            if got.artists != artists {
-                // data mismatch, will need to be recomputed
-                Self::remove_by_id(pool, got.id).await?;
-                return Ok(None);
-            }
+        if let Ok(Some(got)) = &got && got.artists != artists {
+            // data mismatch, will need to be recomputed
+            Self::remove_by_id(pool, got.id).await?;
+            return Ok(None);
         }
 
         got
@@ -446,12 +447,12 @@ impl CachedUncensoredTitle {
         persistent_id: StoredPersistentId,
         uncensored: &str,
     ) -> sqlx::Result<Self> {
-        sqlx::query_as::<_, Self>(r#"
+        sqlx::query_as::<_, Self>(r"
             INSERT INTO uncensored_titles (
                 persistent_id,
                 uncensored
             ) VALUES (?, ?) RETURNING *
-        "#)
+        ")
             .bind(persistent_id)
             .bind(uncensored)
             .fetch_one(pool).await

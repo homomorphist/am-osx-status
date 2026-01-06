@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use alloc::sync::Arc;
 use maybe_owned_string::MaybeOwnedStringDeserializeToOwned;
 
 use super::{error::dispatch::DispatchError, DispatchableTrack, subscribe};
@@ -42,8 +42,8 @@ impl From<ListenSubmissionError> for DispatchError {
     fn from(error: ListenSubmissionError) -> Self {
         match error {
             ListenSubmissionError::NetworkFailure(err) => err.into(),
-            ListenSubmissionError::HistoricDateError(_) => DispatchError::invalid_data("date of listen is too far in the past"),
-            ListenSubmissionError::InvalidToken(_) => DispatchError::unauthorized(Some("invalid token")),
+            ListenSubmissionError::HistoricDateError(_) => Self::invalid_data("date of listen is too far in the past"),
+            ListenSubmissionError::InvalidToken(_) => Self::unauthorized(Some("invalid token")),
             ListenSubmissionError::Ratelimited => todo!("ratelimited"),
             ListenSubmissionError::Other(..) => todo!(),
         }
@@ -55,7 +55,7 @@ impl From<CurrentlyPlayingSubmissionError> for DispatchError {
     fn from(error: CurrentlyPlayingSubmissionError) -> Self {
         match error {
             CurrentlyPlayingSubmissionError::NetworkFailure(err) => err.into(),
-            CurrentlyPlayingSubmissionError::InvalidToken(_) => DispatchError::unauthorized(Some("invalid token")),
+            CurrentlyPlayingSubmissionError::InvalidToken(_) => Self::unauthorized(Some("invalid token")),
             CurrentlyPlayingSubmissionError::Ratelimited => todo!("ratelimited"),
             CurrentlyPlayingSubmissionError::Other(..) => todo!(),
         }
@@ -87,7 +87,7 @@ impl ListenBrainz {
         use brainz::listen::v1::submit_listens::additional_info::*;
         AdditionalInfo {
             duration: track.duration,
-            track_number: track.track_number.map(|n| n.get() as u32),
+            track_number: track.track_number.map(|n| n.get().into()),
             submission_client: Some(program),
             music_service: Some(MusicService::Domain("music.apple.com")),
             media_player: Some(MediaPlayer {
@@ -99,7 +99,7 @@ impl ListenBrainz {
     }
 
     /// - <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html#post--1-submit-listens>
-    async fn is_eligible_for_submission<T>(&self, context: &super::BackendContext<T>) -> bool {
+    async fn is_eligible_for_submission<T>(&self, context: &super::BackendContext<T>) -> bool where T: Send + Sync {
         if let Some(duration) = context.track.duration {
             let time_listened = context.listened.lock().await.total_heard();
             time_listened >= FOUR_MINUTES ||

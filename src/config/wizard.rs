@@ -49,14 +49,8 @@ pub mod io {
                 stdout.flush().unwrap();
             }
     
-            {
-
-                let mut stdin = std::io::stdin().lock();
-                let r = stdin.read_line(&mut answer);
-                r.expect("could not process user input");
-            }
-
-            if let Some(bool) = str_to_boolish(&answer) { return bool };
+            std::io::stdin().lock().read_line(&mut answer).expect("could not process user input");
+            if let Some(bool) = str_to_boolish(&answer) { return bool }
             println!(r#"Invalid input! Enter "yes" or "no"."#);
             println!();
             answer.clear();
@@ -90,26 +84,22 @@ pub mod io {
                 stdout.flush().unwrap();
             }
 
-            {
-                let mut stdin = std::io::stdin().lock();
-                let r = stdin.read_line(&mut answer);
-                r.expect("could not process user input");
-            }
+            std::io::stdin().lock().read_line(&mut answer).expect("could not process user input");
 
-            if let Ok(index) = answer.trim().parse::<usize>() {
-                if index < options.len() { return Some(index) }
-            }
+            if let Ok(index) = answer.trim().parse::<usize>()
+                && index < options.len() { return Some(index) }
 
             if marked_optional && answer.trim().is_empty() {
                 return None
             }
             
-            println!(r#"Invalid input! Enter a number from 0 to {}."#, options.len() - 1);
+            println!("Invalid input! Enter a number from 0 to {}.", options.len() - 1);
             println!();
             answer.clear();
         }
     }
 
+    #[expect(dead_code, reason = "may be used in the future")]
     pub fn prompt_choice(options: &[&str], prompt: &str) -> usize {
         prompt_choice_maybe_optional(options, prompt, false).expect("prompt returned `None` despite being marked as non-optional")
     }
@@ -158,7 +148,7 @@ pub mod io {
             use discord::EnumeratedApplicationIdentifier;
             let mut options = Vec::<&str>::with_capacity(EnumeratedApplicationIdentifier::VARIANT_COUNT + 1);
             options.push("Other (requires a custom application ID)");
-            for id in EnumeratedApplicationIdentifier::VARIANTS.iter() {
+            for id in &EnumeratedApplicationIdentifier::VARIANTS {
                 options.push(id.get_display_text());
             }
 
@@ -168,19 +158,15 @@ pub mod io {
                         0 => {
                             const MAX_U64_LENGTH_IN_BASE_TEN: usize = 20;
                             let id = super::prompt("Enter your custom application ID:", MAX_U64_LENGTH_IN_BASE_TEN + '\n'.len_utf8());
-                            match id.trim().parse() {
-                                Ok(id) => return Some(id),
-                                Err(_) => {
-                                    eprintln!("could not parse application id; please try again");
-                                    continue;
-                                }
-                            }
+                            if let Ok(id) = id.trim().parse() { return Some(id) }
+                            eprintln!("could not parse application id; please try again");
+                            continue;
                         },
                         index => return Some(EnumeratedApplicationIdentifier::VARIANTS[choice - index].get_id())
                     }
-                } else {
-                    return None
                 }
+                
+                return None
             }
         }
     }
@@ -188,20 +174,19 @@ pub mod io {
     #[cfg(feature = "lastfm")]
     pub mod lastfm {
         use super::*;
-        use crate::subscribers::lastfm::{self, *};
+        use crate::subscribers::lastfm;
 
         pub async fn prompt(config: &mut Option<lastfm::Config>)  {
             if prompt_bool("Enable last.fm Scrobbling?") {
                 if let Some(config) = config.as_mut() {
                     config.enabled = true;
                 } else {
-                    *config = authorize().await
+                    *config = authorize().await;
                 }
             } else if let Some(config) = config.as_mut() {
                 config.enabled = false;
             }
         }
-        
 
         pub async fn authorize() -> Option<lastfm::Config> {
             let client = &crate::subscribers::lastfm::DEFAULT_CLIENT_IDENTITY;
@@ -240,7 +225,7 @@ pub mod io {
                 if let Some(config) = config.as_mut() {
                     config.enabled = true;
                 } else {
-                    *config = authorize().await
+                    *config = authorize().await;
                 }
             } else if let Some(config) = config.as_mut() {
                 config.enabled = false;

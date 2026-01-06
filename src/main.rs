@@ -1,5 +1,19 @@
-#![allow(unused)]
-use std::{ops::DerefMut, process::ExitCode, sync::{atomic::AtomicBool, Arc}, time::Duration};
+#![warn(clippy::pedantic)]
+#![warn(clippy::nursery)]
+#![allow(
+    clippy::match_bool,
+    clippy::wildcard_imports,
+    clippy::too_many_lines,
+    clippy::if_not_else,
+    
+    reason = "stylistic and explicitness preferences"
+)]
+
+extern crate alloc;
+use alloc::sync::Arc;
+use core::{time::Duration, sync::atomic::AtomicBool};
+use std::process::ExitCode;
+
 use config::{ConfigPathChoice, ConfigRetrievalError};
 use subscribers::{subscription, BackendContext, DispatchableTrack};
 use tokio::sync::Mutex;
@@ -22,14 +36,14 @@ mod store;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-type TerminationFuture = std::pin::Pin<Box<dyn std::future::Future<Output = tokio::signal::unix::SignalKind> + Send>>;
+type TerminationFuture = core::pin::Pin<Box<dyn core::future::Future<Output = tokio::signal::unix::SignalKind> + Send>>;
 
 fn watch_for_termination() -> (
-    Arc<std::sync::atomic::AtomicBool>,
+    Arc<core::sync::atomic::AtomicBool>,
     TerminationFuture,
 ) {
     use tokio::signal::unix::{SignalKind, signal};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, Ordering};
     let flag = Arc::new(AtomicBool::new(false));
     let mut set = tokio::task::JoinSet::new();
     for kind in [
@@ -39,10 +53,10 @@ fn watch_for_termination() -> (
         SignalKind::terminate(),
     ] {
         let mut sig = signal(kind).unwrap();
-        let sent = flag.clone();
+        let flag = flag.clone();
         set.spawn(async move {
             sig.recv().await;
-            sent.store(true, Ordering::Relaxed);
+            flag.store(true, Ordering::Relaxed);
             kind
         });
     }
@@ -54,6 +68,8 @@ fn watch_for_termination() -> (
 
 #[tokio::main(worker_threads = 2)]
 async fn main() -> ExitCode {
+    use cli::Command;
+
     let args = Box::leak(Box::new(<cli::Cli as clap::Parser>::parse()));
     let config = config::Config::get(args).await;
     let debugging = debugging::DebuggingSession::new(args);
@@ -73,22 +89,12 @@ async fn main() -> ExitCode {
         }
     }
 
-    macro_rules! get_config_os_string {
-        () => {
-            std::ffi::OsString::from(&*match get_config_or_path!() {
-                Ok(config) => config.path,
-                Err(path) => path
-            }.to_string_lossy())
-        };
-    }
-
     macro_rules! get_config_or_error {
         () => {
             get_config_or_path!().unwrap_or_else(|path| util::ferror!("no configuration file @ {}", path.to_string_lossy()))
         }
     }
 
-    use cli::Command;
     match args.command {
         Command::Start { kill_existing } => {
             if let Some(pid) = ActiveProcessLockfile::get().await {
@@ -106,7 +112,9 @@ async fn main() -> ExitCode {
                 }
             }
 
-            ActiveProcessLockfile::write().await;
+            if let Err(error) = ActiveProcessLockfile::write().await {
+                tracing::error!(?error, "failed to write active process lockfile");
+            }
 
             let config = match get_config_or_path!() {
                 Ok(config) => {
@@ -164,22 +172,14 @@ async fn main() -> ExitCode {
             let mut interval = tokio::time::interval(POLL_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-            while !term.load(std::sync::atomic::Ordering::Relaxed) {
+            while !term.load(core::sync::atomic::Ordering::Relaxed) {
                 proc_once(context.clone()).await;
                 interval.tick().await;
             }
         },
         Command::Service { ref action } => {
             use cli::ServiceAction;
-            use service::*;
-
-            #[derive(thiserror::Error, Debug)]
-            enum ServiceIpcError {
-                #[error("failed to dispatch IPC packet ({0})")]
-                Dispatch(#[from] std::io::Error),
-                #[error("failed to establish IPC connection ({0})")]
-                Connection(std::io::Error),
-            }
+            use service::{ServiceController, ipc};
 
             match action {
                 ServiceAction::Start => ServiceController::start(get_config_or_error!().path.as_path(), true).await,
@@ -226,23 +226,25 @@ async fn main() -> ExitCode {
                 ServiceAction::Reload => {
                     use ipc::{Packet, PacketConnection};
                     let path = get_config_or_error!().socket_path;
-                    let mut connection = dbg!(PacketConnection::from_path(path).await).unwrap();
-                    connection.send(Packet::hello()).await;
-                    connection.send(Packet::ReloadConfiguration).await;
+                    let mut connection = PacketConnection::from_path(path).await.unwrap();
+                    connection.send(Packet::hello()).await.expect("failed to send hello packet");
+                    connection.send(Packet::ReloadConfiguration).await.expect("failed to send reload packet");
                     println!("Reload command sent to service.");
                 }
             }
         },
         Command::Configure { ref action } => {
+            use cli::ConfigurationAction;
+
             tokio::spawn(async {
                 pending_term.await;
                 std::process::exit(0);
             });
 
-            use cli::ConfigurationAction;
-
             match action {
                 ConfigurationAction::Where { show_reason, escape} => {
+                    use std::io::IsTerminal;
+
                     let path = match &config {
                         Ok(config) => &config.path,
                         Err(error) => error.path()
@@ -255,18 +257,14 @@ async fn main() -> ExitCode {
                             .into()
                     };
 
-                    use std::io::IsTerminal;
-                    let show_reason = match show_reason {
-                        Some(show) => *show,
-                        None => std::io::stdout().is_terminal()
-                    };
+                    let show_reason = show_reason.unwrap_or_else(|| std::io::stdout().is_terminal());
 
                     println!("{path_str}");
                     if show_reason {
                         use config::ConfigRetrievalError;
                         eprint!("This path is used because it is {}", path.describe_for_choice_reasoning_suffix());
                         if let Err(err) = &config {
-                            use std::borrow::Cow;
+                            use alloc::borrow::Cow;
                             eprintln!(", but {}", match err {
                                 ConfigRetrievalError::DeserializationFailure { .. } => Cow::Borrowed("it couldn't be successfully deserialized"),
                                 ConfigRetrievalError::NotFound { .. } => Cow::Borrowed(if path.was_auto() { "it currently doesn't exist" } else { "it couldn't be found" }),
@@ -331,13 +329,14 @@ struct PollingContext {
     
     jxa: osa_apple_music::Session,
     app_open: bool,
+    #[expect(dead_code, reason = "planned to be used in the future")]
     app_paused: Option<bool>,
     session: store::entities::Session,
 }
 impl PollingContext {
     async fn from_config(config: &config::Config, terminating: Arc<AtomicBool>) -> Self {
         #[cfg(feature = "musicdb")]
-        let musicdb: core::pin::Pin<Box<dyn Future<Output = Result<Option<musicdb::MusicDB>, _>>>> = {
+        let musicdb: core::pin::Pin<Box<dyn Send + Future<Output = Result<Option<musicdb::MusicDB>, _>>>> = {
             let path = config.musicdb.path.clone();
             if config.musicdb.enabled { Box::pin(tokio::task::spawn_blocking(|| {
                 Some(tracing::trace_span!("musicdb read").in_scope(|| {
@@ -357,7 +356,7 @@ impl PollingContext {
                 let jxa_socket = crate::util::APPLICATION_SUPPORT_FOLDER.join("osa-socket");
                 let mut jxa = osa_apple_music::Session::new(jxa_socket).await.expect("failed to create JXA session");
                 // TODO: Get the player version without JXA, so that the app doesn't need to be open.
-                let player_version = jxa.application().await.expect("failed to retrieve application data").map(|app| app.version).unwrap_or_else(|| "?".into());
+                let player_version = jxa.application().await.expect("failed to retrieve application data").map_or_else(|| "?".into(), |app| app.version);
                 (jxa, player_version)
             }
         );
@@ -393,14 +392,15 @@ impl PollingContext {
     }
 
     pub fn is_terminating(&self) -> bool {
-        self.terminating.load(std::sync::atomic::Ordering::Relaxed)
+        self.terminating.load(core::sync::atomic::Ordering::Relaxed)
     }
 }
 
+#[expect(clippy::significant_drop_tightening, reason = "concurrent execution of this function is undesirable")]
 #[tracing::instrument(skip(context), level = "trace")]
 async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     let mut guard = context.lock().await;
-    let context = guard.deref_mut();
+    let context = &mut *guard;
 
     let app = match tracing::trace_span!("app status retrieval").in_scope(|| context.jxa.application()).await {
         Ok(Some(app)) => {
@@ -499,10 +499,9 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
             let previous = context.last_track.as_ref().map(|v| &v.persistent_id);
             if previous != Some(&track.persistent_id) {
                 tracing::trace!(?track, "new track");
-                
-                use data_fetching::AdditionalTrackData;
+
                 let solicitation = context.backends.get_solicitations(subscription::Identity::TrackStarted).await;
-                let additional_data_pending = AdditionalTrackData::from_solicitation(solicitation, track.as_ref(),
+                let additional_data_pending = data_fetching::AdditionalTrackData::from_solicitation(solicitation, track.as_ref(),
                     #[cfg(feature = "musicdb")]
                     context.musicdb.as_ref().as_ref(),
                     context.artwork_manager.clone()
@@ -529,7 +528,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                     additional_data_pending.await
                 };
 
-                let track_start = app.position.or(track_playable_range.as_ref().map(|r| r.start)).unwrap_or(0.);
+                let track_start = app.position.or_else(|| track_playable_range.as_ref().map(|r| r.start)).unwrap_or(0.);
                 let listened = Listened::new_with_current(track_start);
                 let listened = Arc::new(Mutex::new(listened));
                 context.listened = listened.clone();

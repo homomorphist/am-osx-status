@@ -35,7 +35,7 @@ async fn get_source_info(persistent_id: i64, pool: &sqlx::SqlitePool) -> Result<
         .transpose()
 }
 
-
+#[repr(transparent)]
 struct ImageInfoKey(u64);
 struct ImageInfo {
     pub hash_string: String,
@@ -60,9 +60,8 @@ async fn get_image_info(key: ImageInfoKey, pool: &sqlx::SqlitePool) -> Result<Op
         .transpose()
 }
 
-use std::{ops::DerefMut, sync::LazyLock};
+use std::sync::LazyLock;
 
-use sqlx::{pool, Connection};
 static ARTWORKD_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     crate::util::HOME.as_path().join("Library/Containers/com.apple.AMPArtworkAgent/Data/Documents")
 });
@@ -75,7 +74,7 @@ static ARTWORKD_SQLITE_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
 
 // Merely knowing this function exists has brought me great pain, to say much less of writing it.
 // One day I hope it may be rendered unnecessary. 
-fn get_file_extension(info: &ImageInfo) -> maybe_owned_string::MaybeOwnedString {
+fn get_file_extension(info: &ImageInfo) -> maybe_owned_string::MaybeOwnedString<'_> {
     if info.kind == Kind::UserCustomAlbumArt {
         let folder = &*ARTWORKD_ARTWORK_PATH;
         for file in std::fs::read_dir(folder).expect("cannot read album art folder") {
@@ -88,7 +87,7 @@ fn get_file_extension(info: &ImageInfo) -> maybe_owned_string::MaybeOwnedString 
                     .into()
             }
         }
-    };
+    }
 
     "jpeg".into()
 }
@@ -108,7 +107,7 @@ use crate::data_fetching::components::artwork::LocatedResource;
 pub async fn get_artwork(persistent_id: i64) -> Result<Option<LocatedResource>, crate::store::MaybeStaticSqlError> {
     let pool = POOL.get().await?;
     let source = get_source_info(persistent_id, &pool).await?;
-    let source = if let Some(source) = source { source } else { return Ok(None) };
+    let Some(source) = source else { return Ok(None) };
     if let Some(url) = source.url { return Ok(Some(LocatedResource::Remote(url))) }
     if let Some(fk) = source.fk_image_info {
         return match get_image_info(fk, &pool).await? {

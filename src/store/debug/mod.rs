@@ -1,5 +1,4 @@
-use chrono::format;
-use sqlx::{Row, Column};
+#![expect(unused, reason = "used in tests or debugging")]
 
 pub mod dump;
 
@@ -24,7 +23,7 @@ macro_rules! mk_test_db {
             super::super::GlobalPoolOptions { connect, pool }
         });
 
-        let mut $ident = POOL.get().await.expect("failed to get pool");
+        let $ident = POOL.get().await.expect("failed to get pool");
     }
 }
 
@@ -68,6 +67,8 @@ macro_rules! assert_eq_diff {
                 let left = $left;
                 let right = $right;
                 if $left != right {
+                    const ANSI_RESET: &str = "\x1b[0m";
+
                     let script = r#"diff -u --color=always <(printf '%s' "$1") <(printf '%s' "$2")"#;
                     let output = std::process::Command::new("bash")
                         .arg("-c").arg(script)
@@ -79,13 +80,12 @@ macro_rules! assert_eq_diff {
                         Err(e) => panic!("Failed to run diff command: {e}")
                     };
 
-                    const ANSI_RESET: &str = "\x1b[0m";
                     panic!("assertion `left == right` failed{}{}\n=== BEGIN DIFF ===\n{diff}{ANSI_RESET}\n=== END DIFF ===\n", $msg_delim, $msg);
                 }
             }
             #[cfg(not(unix))]
             {
-                assert_eq!($left, $right, "assertion failed: `(left == right)`\n\n(nDiff output is only available on Unix-like systems.)");
+                assert_eq!($left, $right, "assertion failed: `(left == right)`\n\n(Diff output is only available on Unix-like systems.)");
             }
         }
     };

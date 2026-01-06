@@ -64,8 +64,7 @@ pub struct ScrobbleEnrichmentParameters {
     pub chosen_by_user: Option<bool>,
 }
 
-
-
+pub use response::ScrobbleError;
 pub mod response {
     use maybe_owned_string::MaybeOwnedString;
 
@@ -391,6 +390,3 @@ pub mod response {
         }
     }
 }
-
-
-

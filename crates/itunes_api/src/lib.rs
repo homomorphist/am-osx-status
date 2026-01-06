@@ -143,7 +143,7 @@ pub struct Track {
 impl Track {
     pub fn artwork_mzstatic(&self) -> Result<
         mzstatic::image::MzStaticImage<'_>,
-        mzstatic::image::ParseError,
+        mzstatic::image::ParseError<'_>,
     > {
         mzstatic::image::MzStaticImage::parse(&self.artwork_preview_url)
     }

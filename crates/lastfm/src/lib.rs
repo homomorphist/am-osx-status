@@ -73,7 +73,7 @@ impl<'a> Client<auth::state::Authorized> {
     }
 
 
-    pub async fn scrobble(&self, scrobbles: &[scrobble::Scrobble<'a>]) -> Result<scrobble::response::ScrobbleServerResponse> {
+    pub async fn scrobble(&self, scrobbles: &[scrobble::Scrobble<'_>]) -> Result<scrobble::response::ScrobbleServerResponse<'_>> {
         let response = self.dispatch_authorized(ApiRequest {
             endpoint: "track.scrobble",
             method: reqwest::Method::POST,
@@ -86,7 +86,7 @@ impl<'a> Client<auth::state::Authorized> {
         Ok(response)
     }
 
-    pub async fn set_now_listening(&self, track: &scrobble::HeardTrackInfo<'_>) -> Result<scrobble::response::ServerUpdateNowPlayingResponse> {
+    pub async fn set_now_listening(&self, track: &scrobble::HeardTrackInfo<'_>) -> Result<scrobble::response::ServerUpdateNowPlayingResponse<'_>> {
         let response = self.dispatch_authorized(ApiRequest {
             endpoint: "track.updateNowPlaying",
             method: reqwest::Method::POST,

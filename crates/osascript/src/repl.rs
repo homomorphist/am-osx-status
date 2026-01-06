@@ -266,12 +266,12 @@ impl RawOutput {
     }
     
     /// Returns the raw output as a lossy string; the characters that were put to stdout/stderr, including any logged strings and the output prefix (`=> `).
-    pub fn as_lossy_str(&self) -> Cow<str> {
+    pub fn as_lossy_str(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(&self.0[..])
     }
 
     /// Returns an iterator that yields lines in the output.
-    fn lines(&self) -> iter::CarriageReturnedLinesIterator {
+    fn lines(&self) -> iter::CarriageReturnedLinesIterator<'_> {
         iter::CarriageReturnedLinesIterator::new(&self.0)
     }
 
@@ -290,7 +290,7 @@ impl RawOutput {
 
     /// Returns the presumed returned output as a lossy string; the characters that followed the final instance of "=> " or "=> " in the output.
     /// If it couldn't be found for whatever reason, `None` will be returned.
-    pub fn get_likely_returned_as_lossy_str(&self) -> Option<Cow<str>> {
+    pub fn get_likely_returned_as_lossy_str(&self) -> Option<Cow<'_, str>> {
         self.get_likely_returned().map(|x| String::from_utf8_lossy(x))
     }
 }
@@ -344,7 +344,7 @@ impl core::fmt::Display for OutputExtractionFailure {
 pub struct Output { pub raw: RawOutput }
 impl Output {
     /// Returns what is plausibly (but not certainly) the outputted value as a result of running the expression.
-    pub fn guess(&self) -> Result<Cow<str>, OutputExtractionFailure> {
+    pub fn guess(&self) -> Result<Cow<'_, str>, OutputExtractionFailure> {
         self.raw.get_likely_returned_as_lossy_str().ok_or(OutputExtractionFailure)
     }
 }

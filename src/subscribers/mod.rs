@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use alloc::sync::Arc;
 use maybe_owned_string::MaybeOwnedString;
 use tokio::sync::Mutex;
 use serde::{Serialize, Deserialize};
@@ -7,6 +7,8 @@ use crate::data_fetching::components::ComponentSolicitation;
 use crate::store::types::StoredPersistentId;
 
 use error::dispatch::DispatchError;
+
+#[allow(dead_code, reason = "recovery logic not fully implemented")]
 pub mod error {
     pub use dispatch::DispatchError;
     pub mod dispatch {
@@ -34,16 +36,16 @@ pub mod error {
             /// Returns the associated attributes, if present.
             pub const fn attributes(&self) -> Option<&RecoveryAttributes> {
                 match self {
-                    Recovery::Continue(attributes) => Some(attributes),
-                    Recovery::Skip { attributes, .. } => Some(attributes),
-                    _ => None
+                    Self::Continue(attributes) |
+                    Self::Skip { attributes, .. } => Some(attributes),
+                    Self::CriticallyFail => None
                 }
             }
 
             /// Returns the log level, if present.
             pub fn log_level(&self) -> Option<tracing::Level> {
                 self.attributes().and_then(|a| a.log).or({
-                    if matches!(self, Recovery::CriticallyFail) {
+                    if matches!(self, Self::CriticallyFail) {
                         Some(tracing::Level::ERROR)
                     } else { None }
                 })
@@ -51,7 +53,7 @@ pub mod error {
             
             /// Returns whether or not more attempt(s) should be deferred.
             pub fn defer(&self) -> bool {
-                self.attributes().map(|a| a.defer).unwrap_or_default()
+                self.attributes().is_some_and(|a| a.defer)
             }
         }
 
@@ -109,9 +111,9 @@ pub mod error {
             impl From<reqwest::Error> for RequestError {
                 fn from(error: reqwest::Error) -> Self {
                     if error.is_connect() {
-                        RequestError::ConnectionFailure
+                        Self::ConnectionFailure
                     } else {
-                        RequestError::NetworkError(error)
+                        Self::NetworkError(error)
                     }
                 }
             }
@@ -140,11 +142,11 @@ pub mod error {
                 /// Something went wrong concerning the [`Subscriber`](crate::subscribers::Subscriber) implementation itself.
                 /// Contains an elaboration on what went wrong.
                 #[error("internal error: {0}")]
-                Internal(Box<dyn std::error::Error + Send + Sync>),
+                Internal(Box<dyn core::error::Error + Send + Sync>),
             }
             impl Cause {
                 /// Add a recovery method to the cause and convert it into a full [`DispatchError`](super::DispatchError).
-                pub fn with_recovery(self, recovery: super::Recovery) -> super::DispatchError {
+                pub const fn with_recovery(self, recovery: super::Recovery) -> super::DispatchError {
                     super::DispatchError {
                         cause: self,
                         recovery
@@ -162,18 +164,18 @@ pub mod error {
                     }
                     impl core::error::Error for InternalError {}
 
-                    Cause::Internal(Box::new(InternalError(msg.into())))
+                    Self::Internal(Box::new(InternalError(msg.into())))
                 }
             }
 
             impl From<reqwest::Error> for Cause {
                 fn from(error: reqwest::Error) -> Self {
-                    Cause::Request(error.into())
+                    Self::Request(error.into())
                 }
             }
             impl From<serde_json::Error> for Cause {
                 fn from(error: serde_json::Error) -> Self {
-                    Cause::Request(error.into())
+                    Self::Request(error.into())
                 }
             }
         }
@@ -186,8 +188,8 @@ pub mod error {
             /// How the program should respond to the error.
             pub recovery: Recovery,
         }
-        impl std::error::Error for DispatchError {
-            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        impl core::error::Error for DispatchError {
+            fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
                 match &self.cause {
                     Cause::Request(cause::RequestError::NetworkError(err)) => Some(err),
                     _ => None
@@ -201,7 +203,7 @@ pub mod error {
         }
         impl DispatchError {
             /// Log the error with the specified context, if applicable.
-            pub fn log(&self, backend: &'static str, event: impl crate::subscription::TypeIdentity) {
+            pub fn log(&self, backend: &'static str, event: &impl crate::subscription::TypeIdentity) {
                 if let Some(level) = self.recovery.log_level() {
                     // Uhm, so, we can't using `tracing::event` with a non-constant level, so...
                     macro_rules! bind {
@@ -231,8 +233,8 @@ pub mod error {
 
             /// Returns a tuple of the track ID and whether it was this operation which added the track was added to the database.
             /// (If the second element is false, the track was already in the database.)
+            #[expect(unused, reason = "recovery logic not fully implemented")]
             async fn add_to_deferred(&self, backend: &'static str, event: impl crate::subscription::TypeIdentity, track: &DispatchableTrack) -> Result<(Key<DeferredTrack>, bool), MaybeStaticSqlError> {
-                use crate::store::entities::FromKey;
                 Ok(match DeferredTrack::get_with_persistent_id(track.persistent_id).await? {
                     Some(track) => (track.id, false),
                     None => (DeferredTrack::insert(track).await?, true)
@@ -240,14 +242,14 @@ pub mod error {
             }
             
             /// Log the error and panic if it is fatal.
-            pub fn handle(&self, backend: &'static str, event: impl crate::subscription::TypeIdentity) {
+            pub fn handle(&self, backend: &'static str, event: &impl crate::subscription::TypeIdentity) {
                 self.log(backend, event);
                 self.handle_fatal();
             }
 
         }
         impl DispatchError { // constructors
-            pub fn internal(error: Box<dyn std::error::Error + Send + Sync>, recovery: Recovery) -> Self {
+            pub fn internal(error: Box<dyn core::error::Error + Send + Sync>, recovery: Recovery) -> Self {
                 Self {
                     cause: Cause::Internal(error),
                     recovery
@@ -255,21 +257,18 @@ pub mod error {
             }
 
             pub fn internal_msg(msg: &'static str, skip: bool) -> Self {
+                let attributes = RecoveryAttributes {
+                    log: Some(tracing::Level::ERROR),
+                    defer: true
+                };
+
                 Self {
                     cause: Cause::internal(msg),
-                    recovery: if skip {
+                    recovery: if !skip { Recovery::Continue(attributes) } else {
                         Recovery::Skip {
                             until: SkipPredicate::Restart,
-                            attributes: RecoveryAttributes {
-                                log: Some(tracing::Level::ERROR),
-                                defer: true,
-                            }
+                            attributes
                         }
-                    } else {
-                        Recovery::Continue(RecoveryAttributes {
-                            log: Some(tracing::Level::ERROR),
-                            defer: true
-                        })
                     }
                 }
             }
@@ -342,7 +341,9 @@ pub mod error {
 
 macro_rules! use_backends {
     ([ $(($name: ident, $ident: ident, $feature: literal, $id: literal)$(,)?)* ]) => {
-        pub const MAX_ENABLED_BACKEND_COUNT: usize = {
+        type BackendIdentityIndex = u8;
+
+        pub const MAX_ENABLED_BACKEND_COUNT: BackendIdentityIndex = {
             $(
                 ({
                     #[cfg(feature = $feature)]
@@ -365,6 +366,7 @@ macro_rules! use_backends {
                 $ident,
             )*
         }
+        // #[allow(unreachable_patterns)]
         impl BackendIdentity {
             pub const fn get_name(&self) -> &'static str {
                 match self {
@@ -372,19 +374,17 @@ macro_rules! use_backends {
                         #[cfg(feature = $feature)]
                         Self::$ident => stringify!($ident),
                     )*
-                    _ => panic!("feature doesn't exist")
                 }
             }
-            pub const fn get_holey_index(&self) -> u16 {
+            pub const fn get_holey_index(&self) -> BackendIdentityIndex {
                 match self {
                     $(
                         #[cfg(feature = $feature)]
                         Self::$ident => $id,
                     )*
-                    _ => panic!("feature doesn't exist")
                 }
             }
-            pub const fn from_holey_index(index: u16) -> Option<Self> {
+            pub const fn from_holey_index(index: BackendIdentityIndex) -> Option<Self> {
                 match index {
                     $(
                         #[cfg(feature = $feature)]
@@ -411,7 +411,7 @@ macro_rules! use_backends {
             }
         }
         impl<'a, T> BackendMap<T> {
-            pub fn new() -> Self {
+            pub const fn new() -> Self {
                 Self {
                     $(
                         #[cfg(feature = $feature)]
@@ -426,7 +426,7 @@ macro_rules! use_backends {
                 self.into_iter()
             }
 
-            pub fn take(&mut self, identity: BackendIdentity) -> Option<T> {
+            pub const fn take(&mut self, identity: BackendIdentity) -> Option<T> {
                 match identity {
                     $(
                         #[cfg(feature = $feature)]
@@ -462,14 +462,14 @@ macro_rules! use_backends {
 
             pub struct BackendMapIterator<'a, T> {
                 inner: &'a BackendMap<T>,
-                index: usize,
+                index: BackendIdentityIndex,
             }
             impl<'a, T> Iterator for BackendMapIterator<'a, T> {
                 type Item = (BackendIdentity, &'a Option<T>);
                 fn next(&mut self) -> Option<Self::Item> {                
                     while self.index < MAX_ENABLED_BACKEND_COUNT {
                         let index = self.index;
-                        let identity = BackendIdentity::from_holey_index(index as u16);
+                        let identity = BackendIdentity::from_holey_index(index);
                         self.index += 1;
                         if let Some(identity) = identity {
                             return Some((identity, &self.inner[identity]));
@@ -488,7 +488,7 @@ macro_rules! use_backends {
             
             pub struct BackendMapIntoIterator<T> {
                 inner: BackendMap<T>,
-                index: usize,
+                index: BackendIdentityIndex,
                 _type: core::marker::PhantomData<T>,
             }
             impl<T> IntoIterator for BackendMap<T> {
@@ -503,19 +503,19 @@ macro_rules! use_backends {
                 }
             }
             impl<T> Iterator for BackendMapIntoIterator<T> {
-            type Item = (BackendIdentity, Option<T>);
-            fn next(&mut self) -> Option<Self::Item> {
-                while self.index < MAX_ENABLED_BACKEND_COUNT {
-                    let index = self.index;
-                    let identity = BackendIdentity::from_holey_index(index as u16);
-                    self.index += 1;
-                    if let Some(identity) = identity {
-                        return Some((identity, self.inner.take(identity)));
+                type Item = (BackendIdentity, Option<T>);
+                fn next(&mut self) -> Option<Self::Item> {
+                    while self.index < MAX_ENABLED_BACKEND_COUNT {
+                        let index = self.index;
+                        let identity = BackendIdentity::from_holey_index(index);
+                        self.index += 1;
+                        if let Some(identity) = identity {
+                            return Some((identity, self.inner.take(identity)));
+                        }
                     }
+                    None
                 }
-                None
             }
-        }
         }
 
         pub struct Backends {
@@ -526,7 +526,7 @@ macro_rules! use_backends {
         }
         impl Backends {
             pub fn all(&self) -> Vec<Arc<Mutex<dyn Subscriber>>> {
-                let mut backends: Vec<Arc<Mutex<dyn Subscriber>>> = Vec::with_capacity(MAX_ENABLED_BACKEND_COUNT);
+                let mut backends: Vec<Arc<Mutex<dyn Subscriber>>> = Vec::with_capacity(MAX_ENABLED_BACKEND_COUNT as usize);
         
                 $(
                     #[cfg(feature = $feature)]
@@ -560,7 +560,7 @@ use_backends!([
 
 impl<T, E> BackendMap<Result<T, E>> {
     fn into_errors_iter(self) -> impl Iterator<Item = (BackendIdentity, E)> {
-        self.into_iter().filter_map(|(i, r)| r.and_then(|r| r.err()).map(|e| (i, e)))
+        self.into_iter().filter_map(|(i, r)| r.and_then(Result::err).map(|e| (i, e)))
     }
 }
 
@@ -637,11 +637,7 @@ pub mod uncensor {
             }
     
             for (canon, censored) in sorting.chars().zip(display.chars()) {
-                match (canon, censored) {
-                    (_, '*') => continue, // true value unknown; treat as wildcard
-                    (l, r) if l == r => continue,
-                    _ => return false
-                }
+                if canon != censored && censored != '*' { return false }
             }
     
             true
@@ -651,13 +647,15 @@ pub mod uncensor {
     
         [NO_PREFIX, "The ", "A ", "An "]
             .iter()
-            .flat_map(|prefix| display.strip_prefix(prefix).map(|stripped| (prefix, stripped)))
-            .filter(|(prefix, stripped)| do_names_match_lhs_wildcarded(stripped, sorting))
+            .filter_map(|prefix| display.strip_prefix(prefix).map(|stripped| (prefix, stripped)))
+            .filter(|(_, stripped)| do_names_match_lhs_wildcarded(stripped, sorting))
             .map(|(prefix, _)| match prefix.len() {
                 0 => MaybeOwnedString::Borrowed(sorting),
                 _ => MaybeOwnedString::Owned(format!("{prefix}{sorting}"))
             }).next()
     }
+
+    #[expect(unused_imports, reason = "may be used in the future with nice verb form `uncensor::heuristically`")]
     pub use heuristically_uncensor_name as heuristically;
 
     pub async fn uncensor_name_itunes(track: &osa_apple_music::track::BasicTrack) -> Option<String> {
@@ -672,19 +670,19 @@ pub mod uncensor {
                 tracing::error!(error = ?err, "failed to fetch track info from iTunes");
             }).ok().flatten().map(|track| track.name)
     }
+
+    #[expect(unused_imports, reason = "may be used in the future with nice verb form `uncensor::with_itunes`")]
     pub use uncensor_name_itunes as with_itunes;
 
-    pub async fn uncensor_track<'a>(track: &'a osa_apple_music::track::BasicTrack, pool: Option<sqlx::SqlitePool>) -> Option<MaybeOwnedString<'a>> {
+    pub async fn uncensor_track(track: &osa_apple_music::track::BasicTrack, pool: Option<sqlx::SqlitePool>) -> Option<MaybeOwnedString<'_>> {
         use crate::store::entities::CachedUncensoredTitle;
 
         if !track.name.contains('*') {
             return Some(MaybeOwnedString::Borrowed(&track.name));
         }
 
-        if let Some(sorting) = &track.sorting.name {
-            if let Some(name) = heuristically_uncensor_name(&track.name, sorting) {
-                return Some(name);
-            }
+        if let Some(uncensored) = track.sorting.name.as_ref().and_then(|sorting| heuristically_uncensor_name(&track.name, sorting)) {
+            return Some(uncensored);
         }
 
         let id = match StoredPersistentId::from_hex(&track.persistent_id) {
@@ -704,7 +702,8 @@ pub mod uncensor {
         }
 
         let uncensored = uncensor_name_itunes(track).await;
-            
+        
+        #[expect(clippy::collapsible_if, reason = "collapsing this one looks ugly")]
         if let Some(uncensored) = &uncensored {
             if let Some(pool) = pool {
                 if let Err(error) = CachedUncensoredTitle::new(&pool, id, uncensored).await {
@@ -755,7 +754,7 @@ impl<A> Clone for BackendContext<A> {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum DispatchedApplicationStatus {
     Playing,
     /// The music stopped and there is no more music that will start playing soon.
@@ -860,6 +859,7 @@ pub mod subscription {
                     $dollar(#[$sub_meta])*
                     $vis struct $sub_name $dollar($def)*
                     impl $sub_name {
+                        #[allow(unused, reason = "used by some variants")]
                         pub const NAME: &'static str = stringify!($sub_name);
                     }
                     #[async_trait::async_trait]
@@ -889,12 +889,13 @@ pub mod subscription {
                             match event {
                                 $(
                                     $crate::subscribers::subscription::Identity::$name => {
-                                        let typed = <dyn $crate::subscribers::subscription::Subscriber as cast_trait_object::DynCast<$crate::subscribers::subscription::cast_configs::$name>>::dyn_cast_mut(self).ok()?;
                                         type Context = $crate::subscribers::subscription::type_identity::context::$name;
-                                        let context = context.0 as *mut Context;
+                                        let typed = <dyn $crate::subscribers::subscription::Subscriber as cast_trait_object::DynCast<$crate::subscribers::subscription::cast_configs::$name>>::dyn_cast_mut(self).ok()?;
+                                        #[allow(clippy::cast_ptr_alignment, reason = "known to actually be context, will be well-aligned")]
+                                        let context = context.0.cast::<Context>();
                                         let context = unsafe { Box::from_raw(context) };
                                         let output = typed.dispatch(*context).await;
-                                        let output = output.map(Box::new).map(Box::into_raw).map(|ptr| $crate::subscribers::TransientSendableUntypedRawBoxPointer(ptr as *mut u8));
+                                        let output = output.map(Box::new).map(Box::into_raw).map(|ptr| $crate::subscribers::TransientSendableUntypedRawBoxPointer(ptr.cast::<u8>()));
                                         Some(output)
                                     }
                                 )*,
@@ -1020,9 +1021,9 @@ impl Backends {
                 Ok(None) => (),
                 Err(err) => {
                     let backend = self.all()[i].lock().await.get_identity().get_name();
-                    tracing::error!(?err, backend, "error getting solicitation; skipping")
+                    tracing::error!(?err, backend, "error getting solicitation; skipping");
                 },
-            };
+            }
         }
         solicitation
     }
@@ -1036,10 +1037,9 @@ impl Backends {
         for backend in backends {
             let context = context.clone();
             let context = Box::into_raw(Box::new(context));
-            let context = TransientSendableUntypedRawBoxPointer(context as *mut u8);
+            let context = TransientSendableUntypedRawBoxPointer(context.cast::<u8>());
             jobs.push(tokio::spawn(async move {
                 let mut backend = backend.lock().await;
-                let backend = &mut *backend;
                 unsafe { backend.dispatch_untyped(T::IDENTITY, context).await }
                     .map(|result| (backend.get_identity(), result))
             }));
@@ -1050,14 +1050,14 @@ impl Backends {
                 Ok(None) => {},
                 Ok(Some((identity, result))) => {
                     outputs[identity] = Some(result.map(|ptr| {
-                        let ptr = ptr.0 as *mut T::DispatchReturn;
+                        let ptr = ptr.0.cast::<T::DispatchReturn>();
                         let ptr = unsafe { Box::from_raw(ptr) };
                         *ptr
                     }));
                 },
                 Err(err) => {
                     let backend = self.all()[i].lock().await.get_identity().get_name();
-                    tracing::error!(?err, backend, "error dispatching track completion")
+                    tracing::error!(?err, backend, "error dispatching track completion");
                 }
             }
         };
@@ -1069,7 +1069,7 @@ impl Backends {
     pub async fn dispatch_track_started(&self, context: BackendContext<crate::data_fetching::AdditionalTrackData>) {
         type Variant = subscription::type_identity::TrackStarted;
         for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
-            error.handle(identity.get_name(), Variant {});
+            error.handle(identity.get_name(), &Variant {});
         }
     }
 
@@ -1077,7 +1077,7 @@ impl Backends {
     pub async fn dispatch_track_ended(&self, context: BackendContext<()>) {
         type Variant = subscription::type_identity::TrackEnded;
         for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
-            error.handle(identity.get_name(), Variant {});
+            error.handle(identity.get_name(), &Variant {});
         }
     }
 
@@ -1085,7 +1085,7 @@ impl Backends {
     pub async fn dispatch_current_progress(&self, context: BackendContext<()>) {
         type Variant = subscription::type_identity::ProgressJolt;
         for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
-            error.handle(identity.get_name(), Variant {});
+            error.handle(identity.get_name(), &Variant {});
         }
     }
 
@@ -1093,12 +1093,11 @@ impl Backends {
     pub async fn dispatch_status(&self, status: DispatchedApplicationStatus) {
         type Variant = subscription::type_identity::ApplicationStatusUpdate;
         for (identity, error) in self.dispatch::<Variant>(status).await.into_errors_iter() {
-            error.handle(identity.get_name(), Variant {});
+            error.handle(identity.get_name(), &Variant {});
         }
     }
 
-
-    pub async fn new(config: &crate::config::Config) -> Backends {        
+    pub async fn new(config: &crate::config::Config) -> Self {        
         #[cfg(feature = "lastfm")]
         use crate::subscribers::lastfm::*;
 
@@ -1134,7 +1133,9 @@ impl Backends {
             _ => None
         };
 
-        Backends {
+        // TODO: Macro-ize this method.
+        #[allow(clippy::inconsistent_struct_constructor)]
+        Self {
             #[cfg(feature = "lastfm")] lastfm,
             #[cfg(feature = "discord")] discord,
             #[cfg(feature = "listenbrainz")] listenbrainz

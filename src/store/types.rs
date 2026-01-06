@@ -1,12 +1,12 @@
-use sqlx::{Encode, FromRow};
+use sqlx::Encode;
 use sqlx::decode::Decode;
 use sqlx::types::Type;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct BadTimestamp;
-impl std::error::Error for BadTimestamp {}
-impl std::fmt::Display for BadTimestamp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::error::Error for BadTimestamp {}
+impl core::fmt::Display for BadTimestamp {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "invalid timestamp value")
     }
 }
@@ -27,7 +27,7 @@ impl Decode<'_, sqlx::Sqlite> for MillisecondTimestamp {
     fn decode(value: sqlx::sqlite::SqliteValueRef<'_>) -> Result<Self, sqlx::error::BoxDynError> {
         let millis: i64 = Decode::<sqlx::Sqlite>::decode(value)?;
         let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis).ok_or(BadTimestamp)?;
-        Ok(MillisecondTimestamp(dt))
+        Ok(Self(dt))
     }
 }
 impl Type<sqlx::Sqlite> for MillisecondTimestamp {
@@ -50,7 +50,7 @@ impl AsMut<chrono::DateTime<chrono::Utc>> for MillisecondTimestamp {
 }
 impl From<chrono::DateTime<chrono::Utc>> for MillisecondTimestamp {
     fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
-        MillisecondTimestamp(dt)
+        Self(dt)
     }
 }
 impl From<MillisecondTimestamp> for chrono::DateTime<chrono::Utc> {
@@ -64,7 +64,7 @@ impl PartialEq<chrono::DateTime<chrono::Utc>> for MillisecondTimestamp {
     }
 }
 impl PartialOrd<chrono::DateTime<chrono::Utc>> for MillisecondTimestamp {
-    fn partial_cmp(&self, other: &chrono::DateTime<chrono::Utc>) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &chrono::DateTime<chrono::Utc>) -> Option<core::cmp::Ordering> {
         self.0.partial_cmp(other)
     }
 }
@@ -73,7 +73,7 @@ impl From<i64> for MillisecondTimestamp {
         let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis)
             .unwrap_or_else(|| panic!("timestamp millis out of valid date range: {millis}"));
 
-        MillisecondTimestamp(dt)
+        Self(dt)
     }
 }
 
@@ -96,11 +96,11 @@ impl StoredPersistentId {
         format!("{:x}", self.0)
     }
 
-    pub fn get(&self) -> u64 {
+    pub const fn get(self) -> u64 {
         i64::cast_unsigned(self.0)
     }
 
-    pub fn signed(&self) -> i64 {
+    pub const fn signed(self) -> i64 {
         self.0
     }
 }
@@ -126,7 +126,7 @@ impl sqlx::Decode<'_, sqlx::Sqlite> for StoredPersistentId {
     fn decode(value: sqlx::sqlite::SqliteValueRef<'_>) -> Result
         <Self, sqlx::error::BoxDynError> {
         let signed: i64 = sqlx::Decode::<sqlx::Sqlite>::decode(value)?;
-        Ok(StoredPersistentId(signed))
+        Ok(Self(signed))
     }
 }
 impl sqlx::Type<sqlx::Sqlite> for StoredPersistentId {
@@ -138,14 +138,14 @@ impl sqlx::Type<sqlx::Sqlite> for StoredPersistentId {
     }
 }
 impl core::fmt::Display for StoredPersistentId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.get())
     }
 }
 #[cfg(feature = "musicdb")]
 impl<T> From<StoredPersistentId> for musicdb::PersistentId<T> {
     fn from(val: StoredPersistentId) -> Self {
-        musicdb::PersistentId::new(val.get())
+        Self::new(val.get())
     }
 }
 #[cfg(feature = "musicdb")]
@@ -157,22 +157,19 @@ impl<T> From<musicdb::PersistentId<T>> for StoredPersistentId {
 
 #[cfg(test)]
 mod tests {
-    use mzstatic::pool;
-
     use super::*;
     use super::super::debug::*;
 
     #[tokio::test]
     async fn stored_persistent_id() {
-        mk_test_db!("stored-persistent-id", pool);
-
         #[derive(sqlx::FromRow)]
         struct TestRow { value: StoredPersistentId }
-  
-        const VALUE: u64 = 10213095753550683260;
-
+        
+        const VALUE: u64 = 10_213_095_753_550_683_260;
         assert!(VALUE > i64::MAX as u64, "test value must be greater than i64::MAX to test preservation in casting");
 
+        mk_test_db!("stored-persistent-id", pool);
+  
         sqlx::query("CREATE TABLE test (value INTEGER PRIMARY KEY NOT NULL);")
             .execute(&pool)
             .await

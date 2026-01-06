@@ -1,10 +1,8 @@
 pub mod services;
+pub mod components;
 
 use components::{Component, ComponentSolicitation};
 use components::artwork::TrackArtworkData;
-use services::artworkd::get_artwork;
-
-pub mod components;
 
 #[derive(Debug)]
 pub struct AdditionalTrackData {
@@ -17,7 +15,7 @@ impl AdditionalTrackData {
         track: &crate::subscribers::DispatchableTrack,
         #[cfg(feature = "musicdb")]
         musicdb: Option<&musicdb::MusicDB>,
-        artwork_manager: std::sync::Arc<components::artwork::ArtworkManager>
+        artwork_manager: alloc::sync::Arc<components::artwork::ArtworkManager>
     ) -> Self {
         let mut itunes: Option<itunes_api::Track> = None;
 

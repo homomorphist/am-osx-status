@@ -1,4 +1,6 @@
-use std::{fmt::Debug, sync::Arc};
+use std::sync::LazyLock;
+
+use lastfm::{auth::ClientIdentity, scrobble::ScrobbleError};
 use chrono::TimeDelta;
 use maybe_owned_string::MaybeOwnedString;
 
@@ -8,8 +10,6 @@ use crate::{data_fetching::AdditionalTrackData, listened::TimeDeltaExtension as 
 const FOUR_MINUTES: TimeDelta = TimeDelta::new(4 * 60, 0).unwrap();
 const THIRTY_SECONDS: core::time::Duration = core::time::Duration::new(30, 0);
 
-use std::sync::LazyLock;
-use lastfm::auth::ClientIdentity;
 
 pub static DEFAULT_CLIENT_IDENTITY: LazyLock<ClientIdentity> = LazyLock::new(|| {
     ClientIdentity::new(
@@ -53,18 +53,18 @@ fn clean_album(mut str: &str) -> &str {
     str
 }
 
-impl From<lastfm::scrobble::response::ScrobbleError> for DispatchError {
-    fn from(error: lastfm::scrobble::response::ScrobbleError) -> Self {
+impl From<ScrobbleError> for DispatchError {
+    fn from(error: ScrobbleError) -> Self {
         match error {
-            lastfm::scrobble::response::ScrobbleError::BadArtist => DispatchError::invalid_data("artist name is blacklisted"),
-            lastfm::scrobble::response::ScrobbleError::BadTrack => DispatchError::invalid_data("track name is blacklisted"),
-            lastfm::scrobble::response::ScrobbleError::TimestampTooOld => DispatchError::invalid_data("timestamp too old"),
-            lastfm::scrobble::response::ScrobbleError::TimestampTooNew => DispatchError::invalid_data("timestamp too new"),
-            lastfm::scrobble::response::ScrobbleError::DailyLimitReached => todo!("handle daily scrobble limit reached"),
+            ScrobbleError::BadArtist => Self::invalid_data("artist name is blacklisted"),
+            ScrobbleError::BadTrack => Self::invalid_data("track name is blacklisted"),
+            ScrobbleError::TimestampTooOld => Self::invalid_data("timestamp too old"),
+            ScrobbleError::TimestampTooNew => Self::invalid_data("timestamp too new"),
+            ScrobbleError::DailyLimitReached => todo!("handle daily scrobble limit reached"),
         }
     }
 }
-impl<T: Into<super::DispatchError> + lastfm::error::code::ErrorCode> From<lastfm::Error<T>> for super::DispatchError {
+impl<T: Into<Self> + lastfm::error::code::ErrorCode> From<lastfm::Error<T>> for super::DispatchError {
     fn from(error: lastfm::Error<T>) -> Self {
         use lastfm::Error;
         match error {
@@ -77,7 +77,7 @@ impl<T: Into<super::DispatchError> + lastfm::error::code::ErrorCode> From<lastfm
 impl From<lastfm::error::code::general::Authentication> for super::DispatchError {
     fn from(val: lastfm::error::code::general::Authentication) -> Self {
         use super::error::dispatch::*;
-        DispatchError {
+        Self {
             cause: Cause::Request(cause::RequestError::Unauthorized(Some(val.to_string().into()))),
             recovery: Recovery::Skip {
                 until: SkipPredicate::Restart,
@@ -92,7 +92,7 @@ impl From<lastfm::error::code::general::Authentication> for super::DispatchError
 impl From<lastfm::error::code::general::InvalidUsage> for super::DispatchError {
     fn from(val: lastfm::error::code::general::InvalidUsage) -> Self {
         use super::error::dispatch::*;
-        DispatchError {
+        Self {
             cause: Cause::internal(val.to_string()),
             recovery: Recovery::Skip {
                 until: SkipPredicate::Restart,
@@ -107,7 +107,7 @@ impl From<lastfm::error::code::general::InvalidUsage> for super::DispatchError {
 impl From<lastfm::error::code::general::ServiceAvailability> for super::DispatchError {
     fn from(_: lastfm::error::code::general::ServiceAvailability) -> Self {
         use super::error::dispatch::*;
-        DispatchError {
+        Self {
             cause: Cause::Request(cause::RequestError::Unavailable),
             recovery: Recovery::Skip {
                 until: SkipPredicate::Restart,
@@ -154,6 +154,7 @@ impl<'a> From<&'a DispatchableTrack> for FirstArtistQuery<'a> {
 /// Uses external data sources (the iTunes store, ListenBrainz) to resolve conflicts. When this occurs, the result is cached to prevent future lookups.
 // TODO: What if an artist uses a comma within their name?
 // TODO: Don't depend on the `listenbrainz` backend, which can be disabled with a feature flag.
+#[allow(clippy::items_after_statements)]
 async fn extract_first_artist<'a, 'b: 'a>(
     track: impl Into<FirstArtistQuery<'a>>,
     db: Option<&'b musicdb::MusicDB>,
@@ -173,7 +174,6 @@ async fn extract_first_artist<'a, 'b: 'a>(
             Err(err) => tracing::error!(?err, ?track.id, "failed to query cached first artist, extracting")
         }
     }
-
 
     fn title_without_credits(title: &str) -> &str {
         let mut buffer = String::with_capacity(11); // fits largest
@@ -217,6 +217,7 @@ async fn extract_first_artist<'a, 'b: 'a>(
         }
 
         #[derive(serde::Deserialize, Debug)]
+        #[allow(unused)]
         struct Response {
             created: String, // ISO 8601
             count: u32,
@@ -279,13 +280,19 @@ async fn extract_first_artist<'a, 'b: 'a>(
         if let Some(cloud_artist_id) = track.numerics.cloud_catalog_artist_id {
             let matching_artists = db.artists().values()
                 .filter(|artist| artist.cloud_catalog_id == Some(cloud_artist_id)).collect::<Vec<_>>();
+
             // But we can know for certain that it *is* a single artist if we check their name and there isn't an ampersand in it.
-            for artist in matching_artists {
-                if let Some(name) = &artist.name {
-                    if !name.chars().any(|c| c == '&') {
-                        return name.to_string().into()
-                    }
+            let mut singles = matching_artists.iter()
+                .filter_map(|artist| artist.name)
+                .filter(|name| !name.chars().any(|c| c == '&'));
+
+            if let Some(single) = singles.next() {
+                if singles.next().is_none() {
+                    // There's only one matching artist without an ampersand in their name.
+                    return single.to_string().into()
                 }
+
+                tracing::warn!(?cloud_artist_id, ?matching_artists, "unexpectedly found multiple matching artists without ampersands");
             }
 
             // Well, we seemingly didn't have the original artist in the library, but
@@ -322,9 +329,6 @@ async fn extract_first_artist<'a, 'b: 'a>(
 #[tokio::test]
 #[ignore = "requires suitable library"]
 async fn artist_extraction() {
-    let db = musicdb::MusicDB::default();
-    let net = reqwest::Client::new();
-
     fn prepare_query<'a>(track_name: &'a str, artists: &'a str, db: &'a musicdb::MusicDB) -> FirstArtistQuery<'a> {
         let artist_id = db.artists().values().find(|artist| artist.name.is_some_and(|v| v == artists)).unwrap_or_else(|| {
             panic!("missing required track for testing: artist(s) not found: \"{artists}\"")
@@ -341,6 +345,8 @@ async fn artist_extraction() {
         }
     }
 
+    let db = musicdb::MusicDB::default();
+    let net = reqwest::Client::new();
 
     // Has one artist. Nothing unusual.
     let pictures_of_space = prepare_query("Pictures of Space", "The Age of Rockets", &db);
@@ -368,7 +374,7 @@ subscribe!(LastFM, TrackStarted, {
         let pool = crate::store::DB_POOL.get().await.ok();
         let track = context.track.as_ref();
         let artist = extract_first_artist(track, db, pool, &self.client.net).await;
-        let info = Self::track_to_heard(track, &artist).await;
+        let info = Self::track_to_heard(track, &artist);
         self.client.set_now_listening(&info).await?;
         Ok(())
     }
@@ -386,7 +392,7 @@ subscribe!(LastFM, TrackEnded, {
         let response = self.client.scrobble(&[lastfm::scrobble::Scrobble {
             chosen_by_user: None, // TODO: Detect radio stations and such.
             timestamp: chrono::Utc::now(),
-            info: Self::track_to_heard(track, &artist).await
+            info: Self::track_to_heard(track, &artist)
         }]).await?;
 
         if let Some(outcome) = response.results.into_iter().next() {
@@ -405,17 +411,17 @@ impl LastFM {
     }
 
     /// - <https://www.last.fm/api/scrobbling#scrobble-requests>
-    async fn is_eligible(track: &DispatchableTrack, listened: Arc<tokio::sync::Mutex<crate::Listened>>) -> bool {
+    async fn is_eligible(track: &DispatchableTrack, listened: alloc::sync::Arc<tokio::sync::Mutex<crate::Listened>>) -> bool {
         if let Some(duration) = track.duration {
             let time_listened = listened.lock().await.total_heard();
-            if duration < THIRTY_SECONDS { return false };
+            if duration < THIRTY_SECONDS { return false }
             time_listened >= FOUR_MINUTES ||
             time_listened.as_secs_f32() >= (duration.as_secs_f32() / 2.)
         } else { false }
     }
 
     /// Returns `None` if the track is missing required data (the artist or track name).
-    async fn track_to_heard<'a>(track: &'a DispatchableTrack, artist: &'a str) -> lastfm::scrobble::HeardTrackInfo<'a> {
+    fn track_to_heard<'a>(track: &'a DispatchableTrack, artist: &'a str) -> lastfm::scrobble::HeardTrackInfo<'a> {
         lastfm::scrobble::HeardTrackInfo {
             artist,
             track: &track.name,
@@ -423,8 +429,8 @@ impl LastFM {
             album_artist: if track.album_artist.as_ref().is_some_and(|v| v != artist) {
                 Some(track.album_artist.as_ref().unwrap())
             } else { None },
-            duration_in_seconds: track.duration.map(|d| d.as_secs()as u32),
-            track_number: track.track_number.map(|n| n.get() as u32),
+            duration_in_seconds: track.duration.map(|d| d.as_secs().try_into().inspect_err(|error| tracing::warn!(%error, "track duration exceeds u32::MAX; clamping")).unwrap_or(u32::MAX)),
+            track_number: track.track_number.map(|n| n.get().into()),
             mbid: None
         }
     }

@@ -6,7 +6,7 @@ pub mod types;
 pub mod entities;
 
 #[cfg(any(test, debug_assertions))]
-pub(crate) mod debug;
+mod debug;
 
 pub static DB_PATH: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
     crate::util::APPLICATION_SUPPORT_FOLDER.join("sqlite.db")
@@ -45,7 +45,7 @@ impl GlobalPool {
             if let Some(pool) = &*self.inner.lock().await {
                 return Ok(pool.clone())
             } else if let Some(error) = &*self.error.lock().await {
-                return Err(error)
+                return Err(*error)
             }
         }
         
@@ -65,9 +65,10 @@ impl GlobalPool {
 
     /// Totally refresh the pool.
     /// This will either panic or cause multiple pools to exist if called at an inopportune time. Maybe. I dunno.
+    #[expect(clippy::significant_drop_tightening, reason = "holding the lock is desired; would otherwise allow a new connection to be established while the prior still exists")] // and I lowkey dunno if that's actually bad but I don't wanna risk it
     pub async fn refresh(&self) {
         let mut db = self.inner.try_lock().expect("cannot obtain lock");
-        if let Some(db) = db.take() { db.close(); }
+        if let Some(db) = db.take() { db.close().await; }
         *self.error.try_lock().expect("cannot obtain lock") = None;
     }
 }
@@ -85,8 +86,8 @@ impl core::ops::Deref for MaybeStaticSqlError {
     type Target = sqlx::Error;
     fn deref(&self) -> &Self::Target {
         match self {
-            MaybeStaticSqlError::Owned(e) => e,
-            MaybeStaticSqlError::Static(e) => e
+            Self::Owned(e) => e,
+            Self::Static(e) => e
         }
     }
 }

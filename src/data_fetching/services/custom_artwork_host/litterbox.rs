@@ -1,15 +1,14 @@
-use crate::{data_fetching::services, subscribers::DispatchableTrack};
-
+use crate::subscribers::DispatchableTrack;
 /// Free temporary file host, <https://litterbox.catbox.moe/>.
 #[derive(Debug, Default)]
 pub struct LitterboxHost;
 #[async_trait::async_trait]
 impl super::CustomArtworkHost for LitterboxHost {
-    async fn new(config: &<Self as super::CustomArtworkHostMetadata>::Config) -> Self where Self: Sized + super::CustomArtworkHostMetadata {
+    async fn new((): &<Self as super::CustomArtworkHostMetadata>::Config) -> Self where Self: Sized + super::CustomArtworkHostMetadata {
         Self
     }
     
-    async fn upload(&mut self, pool: &sqlx::SqlitePool, track: &DispatchableTrack, path: &str) -> Result<crate::store::entities::CustomArtworkUrl, super::UploadError> {
+    async fn upload(&mut self, pool: &sqlx::SqlitePool, _: &DispatchableTrack, path: &str) -> Result<crate::store::entities::CustomArtworkUrl, super::UploadError> {
         const EXPIRES_IN_HOURS: u8 = 12;
 
         let url = ::catbox::litter::upload(path, EXPIRES_IN_HOURS).await.map_err(|error| {
@@ -23,7 +22,7 @@ impl super::CustomArtworkHost for LitterboxHost {
             return Err(super::UploadError::UnknownError);
         }
 
-        let expires_at = chrono::Utc::now() + chrono::Duration::hours(EXPIRES_IN_HOURS as i64);
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(i64::from(EXPIRES_IN_HOURS));
         Ok(crate::store::entities::CustomArtworkUrl::new(pool, Some(expires_at), path, &url).await?)
     }
 }

@@ -41,7 +41,7 @@ pub enum DecodeError {
     Decompression(std::io::Error)
 }
 
-pub fn decode_in_place(data: &mut [u8]) -> Result<(Vec<u8>, PackedFileInfo), DecodeError> {
+pub fn decode_in_place<'a>(data: &'a mut [u8]) -> Result<(Vec<u8>, PackedFileInfo<'a>), DecodeError> {
     let mut data = core::cell::UnsafeCell::new(data);
     let mut cursor = std::io::Cursor::new({
         // SAFETY: This data won't get mutated; the header is preserved and we only apply the decryption in-place on the encrypted data.
