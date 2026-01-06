@@ -2,6 +2,8 @@
 use std::{fmt::Debug, io::Cursor, path::Path, pin::Pin};
 pub(crate) type Utf16Str = unaligned_u16::utf16::Utf16Str<unaligned_u16::endian::LittleEndian>;
 
+#[cfg(feature = "cli")]
+pub mod cli;
 
 pub mod chunk;
 mod chunks;
