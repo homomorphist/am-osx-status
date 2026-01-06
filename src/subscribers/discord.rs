@@ -217,7 +217,7 @@ const TRY_AGAIN_DEBOUNCE: tokio::time::Duration = tokio::time::Duration::from_se
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DiscordPresenceState {
-    Ready,
+    Connected,
     Disconnected,
 }
 
@@ -305,7 +305,7 @@ impl DiscordPresence {
         let tx_disconnect = self.state_channel.clone();
 
         client.on_event(discord_presence::Event::Connected, move |_| {
-            tx_ready.send(DiscordPresenceState::Ready).unwrap();
+            tx_ready.send(DiscordPresenceState::Connected).unwrap();
         }).persist();
         client.on_disconnected(move |_| {
             tx_disconnect.send(DiscordPresenceState::Disconnected).unwrap();
@@ -318,7 +318,7 @@ impl DiscordPresence {
 
         loop {
             let state = rx_ready.recv().await.unwrap();
-            if state == DiscordPresenceState::Ready { break }
+            if state == DiscordPresenceState::Connected { break }
         }
     }
 
@@ -347,12 +347,12 @@ impl DiscordPresence {
             // If it's ready, wait for that to change, and then if it disconnects, reconnect. Repeat.
             // If it's disconnected, wait a bit before trying again. Repeat.
             loop {
-                let state = if let Some(task) = sent.upgrade() {
-                    *task.lock().await.state.lock().await
+                let state = if let Some(instance) = sent.upgrade() {
+                    *instance.lock().await.state.lock().await
                 } else { break };
 
                 let state = match state {
-                    DiscordPresenceState::Ready => rx.recv().await.unwrap(),
+                    DiscordPresenceState::Connected => rx.recv().await.unwrap(),
                     DiscordPresenceState::Disconnected => {
                         tracing::debug!("disconnected; polling again in {:.2} seconds", TRY_AGAIN_DEBOUNCE.as_secs_f64());
                         tokio::time::sleep(TRY_AGAIN_DEBOUNCE).await;
@@ -361,13 +361,14 @@ impl DiscordPresence {
                 };
 
                 match state {
-                    DiscordPresenceState::Ready => {},
+                    DiscordPresenceState::Connected => {},
                     DiscordPresenceState::Disconnected => {
                         if let Some(instance) = sent.upgrade() {
-                            if let Err(error) = Self::try_connect_in_place(
-                                instance,
-                                CONNECTION_ATTEMPT_TIMEOUT
-                            ).await {
+                            if *instance.lock().await.state.lock().await == DiscordPresenceState::Connected {
+                                break;
+                            }
+
+                            if let Err(error) = Self::try_connect_in_place(instance, CONNECTION_ATTEMPT_TIMEOUT).await {
                                 tracing::debug!(?error, "couldn't connect");
                             }
                         } else { break }
@@ -402,7 +403,7 @@ impl DiscordPresence {
         // TODO: Isn't this dangerous?
         let state = *self.state.try_lock().unwrap();
         match state {
-            DiscordPresenceState::Ready => self.client.as_mut(),
+            DiscordPresenceState::Connected => self.client.as_mut(),
             DiscordPresenceState::Disconnected => None
         }
     }
