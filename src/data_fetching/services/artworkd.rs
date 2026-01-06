@@ -29,14 +29,14 @@ async fn get_source_info(persistent_id: i64, pool: &sqlx::SqlitePool) -> Result<
             use sqlx::Row;
             Ok(SourceInfo {
                 url: row.get(1),
-                fk_image_info: row.get::<Option<u64>, usize>(0).map(ImageInfoKey)
+                fk_image_info: row.get::<Option<i64>, usize>(0).map(ImageInfoKey)
             })
         })
         .transpose()
 }
 
 #[repr(transparent)]
-struct ImageInfoKey(u64);
+struct ImageInfoKey(i64);
 struct ImageInfo {
     pub hash_string: String,
     pub kind: Kind,
@@ -48,7 +48,7 @@ async fn get_image_info(key: ImageInfoKey, pool: &sqlx::SqlitePool) -> Result<Op
         FROM ZIMAGEINFO
         WHERE Z_PK = ?1;
     ")
-        .bind(key.0 as i64)
+        .bind(key.0)
         .fetch_optional(pool).await?
         .map(|out| {
             use sqlx::Row;
