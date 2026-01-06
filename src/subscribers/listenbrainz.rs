@@ -45,7 +45,10 @@ impl From<ListenSubmissionError> for DispatchError {
             ListenSubmissionError::HistoricDateError(_) => Self::invalid_data("date of listen is too far in the past"),
             ListenSubmissionError::InvalidToken(_) => Self::unauthorized(Some("invalid token")),
             ListenSubmissionError::Ratelimited => todo!("ratelimited"),
-            ListenSubmissionError::Other(..) => todo!(),
+            ListenSubmissionError::Other(status, output) => {
+                tracing::error!(%status, ?output, "unexpected listenbrainz submission error");
+                Self::internal_msg("unexpected listenbrainz submission error", false)
+            }
         }
     }
 }
@@ -57,7 +60,10 @@ impl From<CurrentlyPlayingSubmissionError> for DispatchError {
             CurrentlyPlayingSubmissionError::NetworkFailure(err) => err.into(),
             CurrentlyPlayingSubmissionError::InvalidToken(_) => Self::unauthorized(Some("invalid token")),
             CurrentlyPlayingSubmissionError::Ratelimited => todo!("ratelimited"),
-            CurrentlyPlayingSubmissionError::Other(..) => todo!(),
+            CurrentlyPlayingSubmissionError::Other(status, output) =>  {
+                tracing::error!(%status, ?output, "unexpected listenbrainz submission error");
+                Self::internal_msg("unexpected listenbrainz submission error", false)
+            }
         }
     }
 }
