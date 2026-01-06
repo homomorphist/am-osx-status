@@ -1,3 +1,10 @@
+#![no_std]
+#![warn(clippy::pedantic)]
+#![warn(clippy::nursery)]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 #[cfg(feature = "utf16")]
 pub mod utf16;
 pub mod endian;
@@ -10,7 +17,7 @@ pub mod error {
     pub struct BadByteLength;
     impl core::error::Error for BadByteLength {}
     impl core::fmt::Display for BadByteLength {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             write!(f, "byte length must be a multiple of two")
         }
     }
@@ -20,7 +27,7 @@ pub mod error {
     pub struct AlignmentError;
     impl core::error::Error for AlignmentError {}
     impl core::fmt::Display for AlignmentError {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             write!(f, "slice is not correctly aligned")
         }
     }
@@ -37,6 +44,7 @@ pub mod iter {
         _lifetime: core::marker::PhantomData<&'a ()>,
     }
     impl<'a> UnalignedU16SliceIterator<'a> {
+        #[must_use]
         pub fn new(slice: &'a super::UnalignedU16Slice, endianness: super::Endianness) -> Self {
             let ointer: EndianMarkedU16SliceAddress<'a> = unsafe { ointers::NotNull::new({
                 let ptr = core::ptr::addr_of!(slice.0) as *mut u8;
@@ -80,7 +88,8 @@ pub mod iter {
                 )
             };
         }
-        pub fn remaining(&self) -> usize {
+        #[must_use]
+        pub const fn remaining(&self) -> usize {
             self.len / 2
         }
     }
@@ -116,58 +125,87 @@ pub mod iter {
     }
 }
 
-// pub(crate)
-pub fn u16_slice_as_u8_slice(slice: &[u16]) -> &[u8] {
+#[must_use]
+pub const fn u16_slice_as_u8_slice(slice: &[u16]) -> &[u8] {
     let len = slice.len() * 2;
     let ptr = slice.as_ptr().cast();
     unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
+/// A slice of `u16` values that may not be aligned to `u16` boundaries.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct UnalignedU16Slice([u8]);
 impl<'a> UnalignedU16Slice {
+    /// Creates a new `UnalignedU16Slice` from the provided byte slice.
+    /// Returns an error if the length of the slice is not a multiple of two.
+    /// 
+    /// # Errors
+    /// - [`error::BadByteLength`]: The length of the slice is not a multiple of two.
     pub const fn new(slice: &[u8]) -> Result<&Self, error::BadByteLength> {
-        if slice.len() % 2 != 0 { return Err(error::BadByteLength) }
+        if !slice.len().is_multiple_of(2) { return Err(error::BadByteLength) }
         Ok(unsafe { Self::new_unchecked(slice) })
     }
 
     /// # Safety
     /// - The provided slice must have a length that is a multiple of two.
+    #[must_use]
     pub const unsafe fn new_unchecked(slice: &[u8]) -> &Self {
         unsafe { core::mem::transmute(slice) }
     }
 
-    /// Returns the amount of `u16` elements.
+    /// The amount of `u16` elements.
+    #[must_use]
     pub const fn len(&self) -> usize {
         self.bytes().len() / 2
     }
 
-    /// Returns true if the slice is empty.
+    /// Whether the slice is empty.
+    #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
+    /// How many bytes are in the slice.
+    #[must_use]
     pub const fn byte_len(&self) -> usize {
         self.bytes().len()
     }
 
+    /// The underlying byte slice.
+    #[must_use]
     pub const fn bytes(&self) -> &[u8] {
         &self.0
     }
 
+    /// Get the `u16` element at the specified index with the specified endianness.
+    /// Returns `None` if the index is out of bounds.
+    #[must_use]
     pub const fn get(&self, index: usize, endianness: Endianness) -> Option<u16> {
         if index >= self.len() { return None }
         Some(unsafe { self.get_unchecked(index, endianness) })
     }
-    
+
+    /// Get the raw bytes at the specified index.
+    /// Returns `None` if the index is out of bounds.
+    #[must_use]
+    pub const fn get_raw_bytes(&self, index: usize) -> Option<[u8; 2]> {
+        if index >= self.len() { return None }
+        let real = index * 2;
+        let bytes = self.bytes();
+        Some([bytes[real], bytes[real + 1]])
+    }
+
     /// # Safety
     /// - The index must be less than the length of the slice.
+    #[must_use]
     pub const unsafe fn get_unchecked(&self, index: usize, endianness: Endianness) -> u16 {
+        #[expect(clippy::inline_always)]
+        #[inline(always)]
         const unsafe fn get_element_const_unchecked<T>(slice: &[T], index: usize) -> u8 {
             let offset = index * core::mem::size_of::<T>();
             let offset = slice.as_ptr().add(offset);
-            core::ptr::read(offset as *const u8)
+            core::ptr::read(offset.cast::<u8>())
         }
 
         let real = index * 2;
@@ -184,6 +222,8 @@ impl<'a> UnalignedU16Slice {
         }
     }
 
+    /// Returns an iterator over the `u16` elements in the slice with the specified endianness.
+    #[must_use]
     pub fn iter(&'a self, endianness: Endianness) -> iter::UnalignedU16SliceIterator<'a> {
         iter::UnalignedU16SliceIterator::new(self, endianness)
     }
@@ -214,52 +254,52 @@ impl<'a> TryFrom<&'a UnalignedU16Slice> for &'a [u16] {
 }
 
 impl core::ops::Index<core::ops::Range<usize>> for UnalignedU16Slice {
-    type Output = UnalignedU16Slice;
+    type Output = Self;
     fn index(&self, index: core::ops::Range<usize>) -> &Self::Output {
         let len: usize = self.len();
         let s = index.start;
         let e = index.end;
-        if s > len || e > len { panic!("index out of bounds") }
+        assert!(s < len && e <= len, "index out of bounds");
         let slice = &self.0[(s * 2)..(e * 2)];
-        unsafe { UnalignedU16Slice::new_unchecked(slice) }
+        unsafe { Self::new_unchecked(slice) }
     }
 }
 impl core::ops::Index<core::ops::RangeFrom<usize>> for UnalignedU16Slice {
-    type Output = UnalignedU16Slice;
+    type Output = Self;
     fn index(&self, index: core::ops::RangeFrom<usize>) -> &Self::Output {
         let len: usize = self.len();
-        if index.start >= len { panic!("index out of bounds") }
+        assert!(index.start < len, "index out of bounds");
         let slice = &self.0[(index.start * 2)..];
-        unsafe { UnalignedU16Slice::new_unchecked(slice) }
+        unsafe { Self::new_unchecked(slice) }
     }
 }
 impl core::ops::Index<core::ops::RangeInclusive<usize>> for UnalignedU16Slice {
-    type Output = UnalignedU16Slice;
+    type Output = Self;
     fn index(&self, index: core::ops::RangeInclusive<usize>) -> &Self::Output {
         let len: usize = self.len();
         let s = *index.start();
         let e = *index.end();
-        if s > len || e > len { panic!("index out of bounds") }
+        assert!(s < len && e < len, "index out of bounds");
         let slice = &self.0[(s * 2)..=((e * 2) + 1)];
-        unsafe { UnalignedU16Slice::new_unchecked(slice) }
+        unsafe { Self::new_unchecked(slice) }
     }
 }
 impl core::ops::Index<core::ops::RangeTo<usize>> for UnalignedU16Slice {
-    type Output = UnalignedU16Slice;
+    type Output = Self;
     fn index(&self, index: core::ops::RangeTo<usize>) -> &Self::Output {
         let len: usize = self.len();
-        if index.end > len { panic!("index out of bounds") }
+        assert!(index.end <= len, "index out of bounds");
         let slice = &self.0[..(index.end * 2)];
-        unsafe { UnalignedU16Slice::new_unchecked(slice) }
+        unsafe { Self::new_unchecked(slice) }
     }
 }
 impl core::ops::Index<core::ops::RangeToInclusive<usize>> for UnalignedU16Slice {
-    type Output = UnalignedU16Slice;
+    type Output = Self;
     fn index(&self, index: core::ops::RangeToInclusive<usize>) -> &Self::Output {
         let len: usize = self.len();
-        if index.end > len { panic!("index out of bounds") }
+        assert!(index.end < len, "index out of bounds");
         let slice = &self.0[..(index.end + 1) * 2];
-        unsafe { UnalignedU16Slice::new_unchecked(slice) }
+        unsafe { Self::new_unchecked(slice) }
     }
 }
 

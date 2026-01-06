@@ -70,6 +70,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ointers"
+version = "4.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "669f91a4f4754537768e2017deb44c3e46e687c5e04f802edb5ae672ef663c95"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -134,6 +140,7 @@ dependencies = [
 name = "unaligned_u16"
 version = "0.0.0"
 dependencies = [
+ "ointers",
  "thiserror",
 ]
 

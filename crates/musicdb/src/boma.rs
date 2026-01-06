@@ -281,7 +281,7 @@ pub enum BomaUtf16Error<'a> {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("invalid utf-16 string: {0}")]
-    InvalidUtf16(unaligned_u16::utf16::error::InvalidUtf16, &'a [u8])
+    InvalidUtf16(unaligned_u16::utf16::InvalidUtf16Error, &'a [u8])
 }
 
 
