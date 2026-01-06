@@ -28,7 +28,7 @@ impl serde::Serialize for ListenType {
 pub struct BasicTrackMetadata<'a> {
     #[serde(rename = "artist_name")] pub artist: &'a str,
     #[serde(rename = "track_name")] pub track: &'a str,
-    #[serde(rename = "release_name")] pub release: Option<&'a str>
+    #[serde(rename = "release_name", skip_serializing_if = "Option::is_none")] pub release: Option<&'a str>
 }
 
 #[derive(serde::Serialize, Debug)]
