@@ -78,6 +78,7 @@ fn decompress(source: impl Read, compressed_size: usize) -> Result<Vec<u8>, std:
     const EXPANDED_SIZE_MULTIPLIER_HEURISTIC: usize = 8;
     let mut decompressed = Vec::with_capacity(compressed_size * EXPANDED_SIZE_MULTIPLIER_HEURISTIC);
     ZlibDecoder::new(source).read_to_end(&mut decompressed)?;
+    decompressed.shrink_to_fit();
     Ok(decompressed)
 }
 
