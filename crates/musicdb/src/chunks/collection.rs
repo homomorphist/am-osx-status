@@ -112,6 +112,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
                 _boma => {
                     match _boma.get_subtype() {
                         Err(UnknownBomaError(201 | 202)) => continue, // TODO: figure out what these are
+                        #[allow(unused, reason = "used in feature-gated logging")]
                         subtype => {
                             #[cfg(feature = "tracing")]
                             tracing::warn!("Unexpected subtype present: {:?}", subtype);

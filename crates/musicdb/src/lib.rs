@@ -16,30 +16,6 @@ use boma::*;
 use chunk::*;
 pub use chunks::*;
 
-#[cfg(not(feature = "tracing"))]
-#[allow(unused)]
-mod tracing {
-    // mock
-    pub struct Span;
-    impl Span {
-        pub fn in_scope<T>(self, f: impl FnOnce() -> T) -> T {
-            f()
-        }
-    }
-
-    macro_rules! debug_span {
-        ($name: expr) => {
-            tracing::Span
-        };
-    }
-    macro_rules! _warn {
-        ($($arg: tt)*) => {};
-    }
-    
-    pub(crate) use debug_span;
-    pub(crate) use _warn as warn;
-}
-
 pub(crate) fn convert_timestamp(seconds: u32) -> Option<chrono::DateTime<chrono::Utc>> {
     if seconds == 0 { return None }
     
@@ -125,9 +101,8 @@ impl<'a> MusicDbView<'a> {
         match T::IDENTITY {
             id::persistent::PossessorIdentity::Account => {
                 let id: PersistentId<Account<'a>> = unsafe { core::mem::transmute(id) };
-                if self.accounts.is_none() {
-                    tracing::warn!("account ID passed without existence of accounts field");
-                };
+                #[cfg(feature = "tracing")]
+                if self.accounts.is_none() { tracing::warn!("account ID passed without existence of accounts field"); };
                 let account = self.accounts.as_ref().and_then(|accounts| {
                     accounts.iter().find(|account| account.persistent_id == id)
                  });

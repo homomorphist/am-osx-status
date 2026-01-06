@@ -54,12 +54,10 @@ impl<'a> SizedFirstReadableChunk<'a> for Artist<'a> {
                     if value.starts_with("\t<key>artwork-url</key>\n\t<string>") {
                         value = &value["\t<key>artwork-url</key>\n\t<string>".len()..];
                         value = &value[..value.len() - "</string>\n</dict>\n</plist>\n".len()];
-                        artwork_url = mzstatic::image::MzStaticImage::parse(value)
-                            .inspect_err(|error| {
-                                #[cfg(feature = "tracing")]
-                                tracing::error!(?error, %value, "bad artwork URL");
-                            })
-                            .ok();
+                        let parsed = mzstatic::image::MzStaticImage::parse(value);
+                        #[cfg(feature = "tracing")]
+                        let parsed = parsed.inspect_err(|error| tracing::error!(?error, %value, "bad artwork URL"));
+                        artwork_url = parsed.ok();
                     }
                 },
                 _ => unimplemented!()
