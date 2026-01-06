@@ -220,13 +220,40 @@ impl<T: Endian> core::fmt::Display for Utf16Str<T> {
 }
 impl<T: Endian> core::fmt::Debug for Utf16Str<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        struct DebugEscapingFormatter<'a, T: Endian>(&'a Utf16Str<T>);
+        impl<T: Endian> core::fmt::Debug for DebugEscapingFormatter<'_, T> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                use core::fmt::Write;
+                f.write_char('"')?;
+                for char in self.0.chars() {
+                    for escape in char.escape_debug() {
+                        f.write_char(escape)?;
+                    }
+                }
+                f.write_char('"')?;
+                Ok(())
+            }
+        }
+
+        struct DebugEndianFormatter { is_little: bool }
+        impl core::fmt::Debug for DebugEndianFormatter {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                if self.is_little {
+                    write!(f, "LE")
+                } else {
+                    write!(f, "BE")
+                }
+            }
+        }
+
         if f.sign_minus() {
             f.debug_struct("Utf16Str")
                 .field("bytes", &self.bytes())
                 .finish()
         } else {
             f.debug_tuple("Utf16Str")
-                .field(&self)
+                .field(&DebugEndianFormatter { is_little: T::IS_LITTLE })
+                .field(&DebugEscapingFormatter(self))
                 .finish()
         }
     }
@@ -547,17 +574,33 @@ mod tests {
         assert_eq!(utf16!(BE, "hello").bytes(), b"\0h\0e\0l\0l\0o");
     }
 
-    #[test]
-    fn display() {
+    mod formatting {
         extern crate alloc;
-        use alloc::string::ToString;
-        for str in ["", "hello", "こんにちは", "👨‍👩‍👧‍👦", "a𐍈b𐍈c", "🧑🏾‍❤️‍💋‍🧑🏻",] {
-            let le = str.encode_utf16().flat_map(u16::to_le_bytes).collect::<alloc::vec::Vec<u8>>();
-            let be = str.encode_utf16().flat_map(u16::to_be_bytes).collect::<alloc::vec::Vec<u8>>();
-            let le = super::Utf16Str::<crate::endian::LittleEndian>::new(&le[..]).unwrap().to_string();
-            let be = super::Utf16Str::<crate::endian::   BigEndian>::new(&be[..]).unwrap().to_string();
-            assert_eq!(str, le);
-            assert_eq!(str, be);
+        use alloc::{format, string::ToString};
+        use crate::utf16::Utf16Str;
+
+        #[test]
+        fn display() {
+            for str in ["", "hello", "こんにちは", "👨‍👩‍👧‍👦", "a𐍈b𐍈c", "🧑🏾‍❤️‍💋‍🧑🏻",] {
+                let le = str.encode_utf16().flat_map(u16::to_le_bytes).collect::<alloc::vec::Vec<u8>>();
+                let be = str.encode_utf16().flat_map(u16::to_be_bytes).collect::<alloc::vec::Vec<u8>>();
+                let le = Utf16Str::<crate::endian::LittleEndian>::new(&le[..]).unwrap().to_string();
+                let be = Utf16Str::<crate::endian::   BigEndian>::new(&be[..]).unwrap().to_string();
+                assert_eq!(str, le);
+                assert_eq!(str, be);
+            }
+        }
+
+        #[test]
+        fn debug() {
+            for str in ["", "hello", "こんにちは", "👨‍👩‍👧‍👦", "a𐍈b𐍈c", "🧑🏾‍❤️‍💋‍🧑🏻",] {
+                let le = str.encode_utf16().flat_map(u16::to_le_bytes).collect::<alloc::vec::Vec<u8>>();
+                let be = str.encode_utf16().flat_map(u16::to_be_bytes).collect::<alloc::vec::Vec<u8>>();
+                let le = Utf16Str::<crate::endian::LittleEndian>::new(&le[..]).unwrap();
+                let be = Utf16Str::<crate::endian::   BigEndian>::new(&be[..]).unwrap();
+                assert_eq!(format!("{le:?}"), format!("Utf16Str(LE, {str:?})"));
+                assert_eq!(format!("{be:?}"), format!("Utf16Str(BE, {str:?})"));
+            }
         }
     }
 
