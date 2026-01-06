@@ -1,7 +1,6 @@
 use alloc::sync::{Arc, Weak};
-use core::time::Duration;
-use discord_presence::models::{Activity, ActivityAssets, ActivityType, DisplayType};
 use tokio::sync::Mutex;
+use discord_presence::models::{Activity, ActivityAssets, ActivityType, DisplayType};
 
 use crate::data_fetching::components::{Component, ComponentSolicitation};
 use crate::listened;
@@ -139,7 +138,9 @@ pub enum ConnectError {
     // library will hang sometimes when discord is closed ; TODO: investigate & patch
     // this will also occur if a normal error occurs due to my workaround and it prevents it from reaching a "ready" state :shrug:
     #[error("timed out")]
-    TimedOut
+    TimedOut,
+    #[error("unknown")]
+    Unknown
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -154,12 +155,13 @@ use core::sync::atomic::Ordering;
 
 /// A cancelable status clear that will occur after [`THRESHOLD`](Self::THRESHOLD) amount of time.
 /// 
-/// A [`Pause`](super::subscription::Pause) can get dispatched during
-/// not just deliberate user intent, but also the time when waiting
-/// for a song to load.
+/// A pause state can get dispatched from not just deliberate user intent,
+/// but also the time in which a song being streamed has to wait and buffer.
+/// 
 /// If we immediately clear the status when this occurs, the ratelimit
 /// imposed by Discord means that it will take some time before the
 /// status gets correctly set to the new song.
+/// 
 /// As such, a delay is used to ensure that the pause lasts a reasonable
 /// duration that is unlikely to just be buffering or a quick pause before
 /// making the decision to clear the status.
@@ -244,8 +246,13 @@ impl DiscordPresence {
     #[tracing::instrument(level = "debug")]
     pub async fn new(config: Config) -> Arc<Mutex<Self>> {
         let instance = Self::disconnected(config).await;
-        match Self::try_connect_in_place(instance.clone(), CONNECTION_ATTEMPT_TIMEOUT).await {
+        let result = (*instance.lock().await).connect_in_place(CONNECTION_ATTEMPT_TIMEOUT).await;
+        match result {
             Ok(()) => instance,
+            Err(ConnectError::Unknown) => {
+                tracing::warn!("unknown error occurred during client creation; assuming Discord isn't open");
+                Self::disconnected(config).await
+            }
             Err(ConnectError::TimedOut) => {
                 tracing::warn!("client creation timed out; assuming Discord isn't open");
                 Self::disconnected(config).await
@@ -257,12 +264,12 @@ impl DiscordPresence {
         let (tx, mut rx) = tokio::sync::broadcast::channel(4);
 
         let state = Arc::new(Mutex::new(DiscordPresenceState::Disconnected));
-        let update_v = state.clone();
+        let state_clone = state.clone();
         let state_update_hook = tokio::spawn(async move {
-            loop {
-                let state = rx.recv().await.expect("channel closed: all senders were dropped");
-                *update_v.try_lock().unwrap() = state;
+            while let Ok(state) = rx.recv().await {
+                *state_clone.lock().await = state;
             }
+            tracing::debug!("discord presence state update task ending as channel was closed");
         });
 
         let pending_clear = PendingStatusClear::default();
@@ -290,112 +297,112 @@ impl DiscordPresence {
 
     /// not `tokio::select!` safe
     #[tracing::instrument(skip(self), level = "debug")]
-    pub async fn connect_in_place(&mut self) {
-        let client = discord_presence::Client::new(self.config.application_id);            
-        if let Some(old_client) = self.client.replace(client) {
-            // TODO: i assume this will set fire the tx and thus set state to disconnected, but i haven't tested
-            if let Err(error) = old_client.shutdown() {
-                tracing::warn!(?error, "could not shutdown client");
+    pub async fn connect_in_place(&mut self, timeout: core::time::Duration) -> Result<(), ConnectError> {
+        let client = discord_presence::Client::new(self.config.application_id);
+
+        if let Some(previous) = self.client.replace(client) {
+            if let Err(error) = previous.shutdown() {
+                tracing::error!(?error, "could not shutdown previous client for to reconnect; continuing regardless");
+                // i don't think this'll cause too much trouble since it looks like an error state renders it inert
+            } else {
+                tracing::debug!("successfully shut down previous client");
             }
         }
-        let client = self.client.as_mut().unwrap();
-                
-        let mut rx_ready = self.state_channel.subscribe();         
-        let tx_ready = self.state_channel.clone();
-        let tx_disconnect = self.state_channel.clone();
+
+        let client = self.client.as_mut().unwrap(); // we just set it
+
+        // TODO: These might receive from the old client, still, possibly?
+        let mut rx_event = self.state_channel.subscribe();         
+        let tx_event_connect = self.state_channel.clone();
+        let tx_event_disconnect = self.state_channel.clone();
 
         client.on_event(discord_presence::Event::Connected, move |_| {
-            tx_ready.send(DiscordPresenceState::Connected).unwrap();
+            tx_event_connect.send(DiscordPresenceState::Connected).expect("no receiver for discord connection event");
         }).persist();
         client.on_disconnected(move |_| {
-            tx_disconnect.send(DiscordPresenceState::Disconnected).unwrap();
+            tx_event_disconnect.send(DiscordPresenceState::Disconnected).expect("no receiver for discord disconnection event");
         }).persist();
-        client.on_error(|err| {
-            tracing::error!(?err, "discord rpc error");
+        
+        client.on_error(move |context| {
+            use discord_presence::models::EventData;
+            let EventData::Error(error) = context.event else {
+                tracing::warn!("received non-error event in error handler context: {:?}", context);
+                return;
+            };
+
+            tracing::error!(?error, "discord rpc error");
         }).persist();
+
         client.start();
 
-
-        loop {
-            let state = rx_ready.recv().await.unwrap();
-            if state == DiscordPresenceState::Connected { break }
+        match tokio::time::timeout(timeout, rx_event.recv()).await.map_err(|_| ConnectError::TimedOut)?.expect("discord client event channel closed") {
+            DiscordPresenceState::Connected => {
+                tracing::debug!("successfully connected to discord rpc");
+                Ok(())
+            }
+            DiscordPresenceState::Disconnected => {
+                tracing::warn!("disconnected during connection attempt; see logged errors");
+                Err(ConnectError::Unknown)
+            }
         }
-    }
-
-    /// not `tokio::select!` safe
-    pub async fn try_connect_in_place(instance: Arc<Mutex<Self>>, timeout: Duration) -> Result<(), ConnectError> {
-        tokio::time::timeout(
-            timeout,
-            instance.lock().await.connect_in_place()
-        ).await.map_err(|_| ConnectError::TimedOut)
     }
 
     async fn enable_auto_reconnect(weak: Weak<Mutex<Self>>) {
-        let mut rx = if let Some(instance) = weak.upgrade() {
-            let lock = instance.lock().await;
+        let Some(instance) = weak.upgrade() else {
+            tracing::warn!("couldn't enable auto-reconnect; instance was dropped");
+            return;
+        };
 
-            if let Some(old_handle) = &lock.auto_reconnect_task_handle {
+        let mut status_update = {
+            let guard = instance.lock().await;
+
+            if let Some(old_handle) = &guard.auto_reconnect_task_handle {
+                tracing::warn!("auto-reconnect task already exists; removing prior");
                 old_handle.abort();
             }
-            
-            lock.state_channel.subscribe()
-        } else { return };
 
-        let sent = weak.clone();
+            guard.state_channel.subscribe()
+        };
 
         let auto_reconnect_task_handle = tokio::spawn(async move {
             // If it's ready, wait for that to change, and then if it disconnects, reconnect. Repeat.
-            // If it's disconnected, wait a bit before trying again. Repeat.
-            loop {
-                let state = if let Some(instance) = sent.upgrade() {
-                    *instance.lock().await.state.lock().await
-                } else { break };
+            // If it's disconnected, see if it stays that way and reconnect if not. Repeat.
+            while let Some(instance) = weak.upgrade() {
+                macro_rules! fetch_state { () => { *instance.lock().await.state.lock().await }; }
 
+                let state = fetch_state!();
                 let state = match state {
-                    DiscordPresenceState::Connected => rx.recv().await.unwrap(),
+                    DiscordPresenceState::Connected => status_update.recv().await.unwrap(), // wait for disconnect
                     DiscordPresenceState::Disconnected => {
                         tracing::debug!("disconnected; polling again in {:.2} seconds", TRY_AGAIN_DEBOUNCE.as_secs_f64());
                         tokio::time::sleep(TRY_AGAIN_DEBOUNCE).await;
-                        DiscordPresenceState::Disconnected
+                        fetch_state!()
                     }
                 };
-
-                match state {
-                    DiscordPresenceState::Connected => {},
-                    DiscordPresenceState::Disconnected => {
-                        if let Some(instance) = sent.upgrade() {
-                            if *instance.lock().await.state.lock().await == DiscordPresenceState::Connected {
-                                break;
-                            }
-
-                            if let Err(error) = Self::try_connect_in_place(instance, CONNECTION_ATTEMPT_TIMEOUT).await {
-                                tracing::debug!(?error, "couldn't connect");
-                            }
-                        } else { break }
+            
+                if state == DiscordPresenceState::Disconnected {
+                    let result = instance.lock().await.connect_in_place(CONNECTION_ATTEMPT_TIMEOUT).await;
+                    if let Err(error) = result  {
+                        tracing::debug!(?error, "couldn't connect");
                     }
                 }
             }
         });
 
-        if let Some(instance) = weak.upgrade() {
-            instance.lock().await.auto_reconnect_task_handle = Some(auto_reconnect_task_handle);
-        }
+        instance.lock().await.auto_reconnect_task_handle = Some(auto_reconnect_task_handle);
     }
 
     fn react_to_pending_clear(instance: Weak<Mutex<Self>>, signal: Arc<tokio::sync::Notify>) {
        tokio::spawn(async move {
-            loop {
+            while let Some(this) = instance.upgrade() {
                 signal.notified().await;
-                if let Some(this) = instance.upgrade() {
-                    let result = this.lock().await.clear();
-                    if let Err(error) = result {
-                        tracing::error!(?error, "unable to clear discord status");
-                    }
-                } else {
-                    tracing::debug!("discord presence instance was dropped, stopping pending clear task");
-                    break;
+                let result = this.lock().await.clear();
+                if let Err(error) = result {
+                    tracing::error!(?error, "unable to clear discord status");
                 }
             }
+
+            tracing::debug!("discord presence instance was dropped, stopping pending clear task");
         });
     }
 
