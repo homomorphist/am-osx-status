@@ -30,6 +30,5 @@ pub async fn find_track(query: &Query<'_>) -> Result<Option<itunes_api::Track>, 
     let search = search.trim();
     let client = Client::new(reqwest::Client::new()); // TODO: use a shared client.
     let songs = client.search_songs(search, 10).await?;
-    if songs.len() == 1 { return Ok(songs.into_iter().next()) }
     Ok(songs.into_iter().find(|result| does_track_match_search(query, result)))
 }
