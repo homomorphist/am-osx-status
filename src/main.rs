@@ -11,7 +11,7 @@
 
 extern crate alloc;
 use alloc::sync::Arc;
-use core::{time::Duration, sync::atomic::AtomicBool};
+use core::time::Duration;
 use std::process::ExitCode;
 
 use config::{ConfigPathChoice, ConfigRetrievalError};
@@ -36,15 +36,15 @@ mod store;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
+type Terminating = Arc<std::sync::atomic::AtomicBool>;
 type TerminationFuture = core::pin::Pin<Box<dyn core::future::Future<Output = tokio::signal::unix::SignalKind> + Send>>;
 
 fn watch_for_termination() -> (
-    Arc<core::sync::atomic::AtomicBool>,
+    Terminating,
     TerminationFuture,
 ) {
     use tokio::signal::unix::{SignalKind, signal};
-    use core::sync::atomic::{AtomicBool, Ordering};
-    let flag = Arc::new(AtomicBool::new(false));
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut set = tokio::task::JoinSet::new();
     for kind in [
         SignalKind::quit(),
@@ -52,11 +52,14 @@ fn watch_for_termination() -> (
         SignalKind::interrupt(),
         SignalKind::terminate(),
     ] {
-        let mut sig = signal(kind).unwrap();
+        let mut signal = match signal(kind) {
+            Ok(signal) => signal,
+            Err(error) => { tracing::error!(?kind, ?error, "failed to register signal handler"); continue }
+        };
         let flag = flag.clone();
         set.spawn(async move {
-            sig.recv().await;
-            flag.store(true, Ordering::Relaxed);
+            signal.recv().await;
+            flag.store(true, core::sync::atomic::Ordering::Relaxed);
             kind
         });
     }
@@ -73,7 +76,7 @@ async fn main() -> ExitCode {
     let args = Box::leak(Box::new(<cli::Cli as clap::Parser>::parse()));
     let config = config::Config::get(args).await;
     let debugging = debugging::DebuggingSession::new(args);
-    let (term, pending_term) = watch_for_termination();
+    let (terminating, termination_signal) = watch_for_termination();
 
     macro_rules! get_config_or_path {
         () => {
@@ -136,46 +139,55 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let context = Arc::new(Mutex::new(PollingContext::from_config(&config, Arc::clone(&term)).await));
+            let context = Arc::new(Mutex::new(PollingContext::from_config(&config, Arc::clone(&terminating)).await));
+            let context_for_finalizer = Arc::clone(&context);
+
             let config = Arc::new(Mutex::new(config));
-            
-            let listener = if args.running_as_service {
+
+            let ipc_listener = if args.running_as_service {
                 Some(service::ipc::listen(
                     context.clone(),
                     config.clone()
                 ).await)
             } else { None };
 
-            // If we get stuck somewhere in the main loop, we still want a way to exit if the user/system desires.
-            let session_closer_ctx = context.clone();
-            tokio::spawn(async move {
-                pending_term.await;
-                if let Some(listener) = listener {
-                   listener.abort();
+            let main_loop = tokio::spawn(async move {
+                tracing::info!("starting main loop");
+                let mut interval = tokio::time::interval(POLL_INTERVAL);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                while !terminating.load(core::sync::atomic::Ordering::Relaxed) {
+                    proc_once(context.clone()).await;
+                    tokio::time::sleep(POLL_INTERVAL).await;
                 }
-                drop(debugging.guards); // flush logs
-                let db_pool = &store::DB_POOL.get().await.expect("failed to get database pool");
-                let session = &mut session_closer_ctx.lock().await.session;
-                session.ended_at = Some(chrono::Utc::now().into());
-                let (finished, cleared) = tokio::join!(
-                    session.finish(db_pool),
-                    ActiveProcessLockfile::clear(),
-                );
-                finished.expect("failed to finish session in database");
-                cleared.expect("failed to clear active process lockfile");
-                std::process::exit(0)
             });
 
+            #[expect(clippy::significant_drop_tightening, reason = "lock is held for the remainder of the program lifetime during cleanup")]
+            let finalizer = tokio::spawn(async move {
+                let signal = termination_signal.await;
+                tracing::debug!(?signal, "termination signal received; preparing for exit");
 
-            tracing::info!("starting main loop");
+                tokio::select! {
+                    result = main_loop => if let Err(error) = result { tracing::error!(?error, "main loop task panicked before termination could complete"); },
+                    () = tokio::time::sleep(Duration::from_secs(5)) => { tracing::warn!("main loop did not quickly exit after termination signal; proceeding regardless"); }
+                }
 
-            let mut interval = tokio::time::interval(POLL_INTERVAL);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                let context = context_for_finalizer.lock().await;
+                if let Some(ipc_listener) = ipc_listener { ipc_listener.abort(); }
 
-            while !term.load(core::sync::atomic::Ordering::Relaxed) {
-                proc_once(context.clone()).await;
-                interval.tick().await;
-            }
+                let db_pool = &store::DB_POOL.get().await.expect("failed to get database pool");
+                let (cleared_lockfile, session_finished, ()) = tokio::join!(
+                    ActiveProcessLockfile::clear(),
+                    context.session.finish(db_pool),
+                    context.backends.dispatch_imminent_program_termination(signal)
+                );
+
+                if let Err(error) = session_finished { tracing::error!(?error, "failed to finalize session in database"); }
+                if let Err(error) = cleared_lockfile { tracing::error!(?error, "failed to clear active process lockfile"); }
+                tracing::info!("exiting");
+                drop(debugging.guards); // flush logs
+            });
+
+            finalizer.await.expect("finalizer task panicked");
         },
         Command::Service { ref action } => {
             use cli::ServiceAction;
@@ -237,7 +249,7 @@ async fn main() -> ExitCode {
             use cli::ConfigurationAction;
 
             tokio::spawn(async {
-                pending_term.await;
+                termination_signal.await;
                 std::process::exit(0);
             });
 
@@ -315,10 +327,9 @@ async fn main() -> ExitCode {
 
     ExitCode::SUCCESS
 }
-
 #[derive(Debug)]
 struct PollingContext {
-    terminating: Arc<AtomicBool>,
+    terminating: Terminating,
     backends: subscribers::Backends,
     pub last_track: Option<Arc<DispatchableTrack>>,
     pub listened: Arc<Mutex<Listened>>,
@@ -338,7 +349,7 @@ struct PollingContext {
     redispatch_start_request_rx_processor: tokio::task::JoinHandle<()>,
 }
 impl PollingContext {
-    async fn from_config(config: &config::Config, terminating: Arc<AtomicBool>) -> Self {
+    async fn from_config(config: &config::Config, terminating: Terminating) -> Self {
         #[cfg(feature = "musicdb")]
         let musicdb: core::pin::Pin<Box<dyn Send + Future<Output = Result<Option<musicdb::MusicDB>, _>>>> = {
             let path = config.musicdb.path.clone();

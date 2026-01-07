@@ -578,3 +578,11 @@ super::subscribe!(DiscordPresence, PlayerStatusUpdate, {
         Ok(())
     }
 });
+super::subscribe!(DiscordPresence, ImminentSubscriberTermination, {
+    async fn dispatch(&mut self, _: super::SubscriberTerminationCause) -> Result<(), DispatchError> {
+        if let Err(error) = self.clear() {
+            tracing::error!(?error, "could not clear discord presence");
+        }
+        Ok(())
+    }
+});

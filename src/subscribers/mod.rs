@@ -799,6 +799,18 @@ impl From<osa_apple_music::application::PlayerState> for DispatchedPlayerStatus 
     }
 }
 
+/// Why the subscriber is being terminated.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum SubscriberTerminationCause {
+    // TODO: Add a variant for when a backend gets configured to be disabled.
+    ProgramExit(tokio::signal::unix::SignalKind)
+}
+impl From<tokio::signal::unix::SignalKind> for SubscriberTerminationCause {
+    fn from(value: tokio::signal::unix::SignalKind) -> Self {
+        Self::ProgramExit(value)
+    }
+}
+
 struct TransientSendableUntypedRawBoxPointer(*mut u8); // are we so fr
 unsafe impl Send for TransientSendableUntypedRawBoxPointer {}
 
@@ -1003,6 +1015,7 @@ pub mod subscription {
         { TrackEnded },
         { ProgressJolt },
         { PlayerStatusUpdate<crate::subscribers::DispatchedPlayerStatus> },
+        { ImminentSubscriberTermination<crate::subscribers::SubscriberTerminationCause> }
     ], {
         async fn get_solicitation(&self, event: self::Identity) -> Option<ComponentSolicitation>;
         #[allow(private_interfaces)]
@@ -1124,6 +1137,15 @@ impl Backends {
     pub async fn dispatch_status(&self, status: DispatchedPlayerStatus) {
         type Variant = subscription::type_identity::PlayerStatusUpdate;
         for (identity, error) in self.dispatch::<Variant>(status).await.into_errors_iter() {
+            error.handle(identity.get_name(), &Variant {});
+        }
+    }
+
+    #[tracing::instrument(level = "debug")]
+    pub async fn dispatch_imminent_program_termination(&self, signal: tokio::signal::unix::SignalKind) {
+        type Variant = subscription::type_identity::ImminentSubscriberTermination;
+        let cause = SubscriberTerminationCause::from(signal);
+        for (identity, error) in self.dispatch::<Variant>(cause).await.into_errors_iter() {
             error.handle(identity.get_name(), &Variant {});
         }
     }
