@@ -327,9 +327,9 @@ struct PollingContext {
     #[cfg(feature = "musicdb")]
     musicdb: Arc<Option<musicdb::MusicDB>>,
     jxa: osa_apple_music::Session,
-    app_open: bool,
+    player_open: bool,
     #[expect(dead_code, reason = "planned to be used in the future")]
-    app_paused: Option<bool>,
+    player_paused: Option<bool>,
     session: store::entities::Session,
 
     redispatch_start_requesters: Arc<Mutex<crate::subscribers::BackendIdentitySet>>, 
@@ -380,7 +380,7 @@ impl PollingContext {
             async {
                 let jxa_socket = crate::util::APPLICATION_SUPPORT_FOLDER.join("osa-socket");
                 let mut jxa = osa_apple_music::Session::new(jxa_socket).await.expect("failed to create JXA session");
-                // TODO: Get the player version without JXA, so that the app doesn't need to be open.
+                // TODO: Get the player version without JXA, so that the player doesn't need to be open.
                 let player_version = jxa.application().await.expect("failed to retrieve application data").map_or_else(|| "?".into(), |app| app.version);
                 (jxa, player_version)
             }
@@ -406,8 +406,8 @@ impl PollingContext {
             #[cfg(feature = "musicdb")]
             musicdb,
             jxa,
-            app_open: player_version != "?",
-            app_paused: None,
+            player_open: player_version != "?",
+            player_paused: None,
             session,
 
             redispatch_start_requesters,
@@ -431,32 +431,32 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     let mut guard = context.lock().await;
     let context = &mut *guard;
 
-    let app = match tracing::trace_span!("app status retrieval").in_scope(|| context.jxa.application()).await {
-        Ok(Some(app)) => {
-            context.app_open = true;
-            Arc::new(app)
+    let player = match tracing::trace_span!("player status retrieval").in_scope(|| context.jxa.application()).await {
+        Ok(Some(player)) => {
+            context.player_open = true;
+            Arc::new(player)
         },
         Ok(None) => {
-            if !context.app_open { return; }
-            tracing::debug!("app was closed; dispatching event");
-            context.app_open = false;
-            context.backends.dispatch_status(subscribers::DispatchedApplicationStatus::Closed).await;
+            if !context.player_open { return; }
+            tracing::debug!("player was closed; dispatching event");
+            context.player_open = false;
+            context.backends.dispatch_status(subscribers::DispatchedPlayerStatus::Closed).await;
             return;
         },
         Err(err) => {
             use osa_apple_music::error::SessionEvaluationError;
             match err {
-                SessionEvaluationError::IoFailure(err) => tracing::error!(?err, "failed to retrieve application data"),
-                SessionEvaluationError::SessionFailure(err) => tracing::error!(?err, "failed to extract application data"),
-                SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract application data"),
+                SessionEvaluationError::IoFailure(err) => tracing::error!(?err, "failed to retrieve player data"),
+                SessionEvaluationError::SessionFailure(err) => tracing::error!(?err, "failed to extract player data"),
+                SessionEvaluationError::ValueExtractionFailure { .. } => tracing::error!("failed to extract player data"),
                 SessionEvaluationError::DeserializationFailure { issue, data, .. } => {
                     if !(issue.is_eof() && context.is_terminating()) {
-                        tracing::error!(?issue, "failed to deserialize application data");
+                        tracing::error!(?issue, "failed to deserialize player data");
                         tracing::debug!("could not deserialize: {:?}", String::from_utf8_lossy(&data));
                     }
                 },
                 SessionEvaluationError::QueryFailure(err) => {
-                    tracing::error!(?err, "failed to query application data");
+                    tracing::error!(?err, "failed to query player data");
                 }
             }
             return;
@@ -464,10 +464,10 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     };
 
     context.session.osa_fetches_player += 1;
-    context.backends.dispatch_status(app.state.into()).await;
+    context.backends.dispatch_status(player.state.into()).await;
 
     use osa_apple_music::application::PlayerState;
-    match app.state {
+    match player.state {
         PlayerState::Stopped => {
             context.listened.lock().await.flush_current();
             
@@ -478,7 +478,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                 context.backends.dispatch_track_ended(BackendContext {
                     listened,
                     track: previous,
-                    app: app.clone(),
+                    player: player.clone(),
                     data: ().into(),
                     #[cfg(feature = "musicdb")]
                     musicdb: context.musicdb.clone()
@@ -543,7 +543,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
 
                 let additional_data = if let Some(previous) = context.last_track.clone() {
                     let pending_dispatch = context.backends.dispatch_track_ended(BackendContext {
-                        app: app.clone(),
+                        player: player.clone(),
                         track: previous,
                         listened: context.listened.clone(),
                         data: ().into(),
@@ -562,18 +562,18 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                     additional_data_pending.await
                 };
 
-                let track_start = app.position.or_else(|| track_playable_range.as_ref().map(|r| r.start)).unwrap_or(0.);
+                let track_start = player.position.or_else(|| track_playable_range.as_ref().map(|r| r.start)).unwrap_or(0.);
                 let listened = Listened::new_with_current(track_start);
                 let listened = Arc::new(Mutex::new(listened));
                 context.listened = listened.clone();
                 context.last_track = Some(track.clone());
                 context.backends.dispatch_track_started(BackendContext {
-                    app, listened, track,
+                    player, listened, track,
                     data: Arc::new(additional_data),
                     #[cfg(feature = "musicdb")]
                     musicdb: context.musicdb.clone()
                 }).await;
-            } else if let Some(position) = app.position {
+            } else if let Some(position) = player.position {
                 {
                     use subscribers::subscription::type_identity::TrackStarted;
                     use subscribers::BackendIdentitySet;
@@ -591,7 +591,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
 
                     context.backends.dispatch_to::<TrackStarted>(backends, BackendContext {
                         track: track.clone(),
-                        app: app.clone(),
+                        player: player.clone(),
                         data: additional_data_pending.into(),
                         listened: context.listened.clone(),
                         #[cfg(feature = "musicdb")]
@@ -614,7 +614,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                             drop(listened); // give up lock
                             context.backends.dispatch_current_progress(BackendContext {
                                 track: track.clone(),
-                                app: app.clone(),
+                                player: player.clone(),
                                 data: ().into(),
                                 listened: context.listened.clone(),
                                 #[cfg(feature = "musicdb")]

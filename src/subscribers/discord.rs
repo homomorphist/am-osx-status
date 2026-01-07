@@ -502,7 +502,7 @@ impl DiscordPresence {
                 MediaKind::Song => ActivityType::Listening, 
                 MediaKind::Unknown => {
                     let persistent_id = track.persistent_id;
-                    tracing::warn!(%persistent_id, "unknown media kind; defaulting to listening", );
+                    tracing::warn!(%persistent_id, "unknown media kind; defaulting to listening");
                     ActivityType::Listening
                 },
             })
@@ -557,7 +557,6 @@ super::subscribe!(DiscordPresence, TrackStarted, {
         self.activity = Some(activity);
         self.send_activity().await
     }
-
 });
 super::subscribe!(DiscordPresence, ProgressJolt, {
     async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
@@ -569,10 +568,10 @@ super::subscribe!(DiscordPresence, ProgressJolt, {
         }
     }
 });
-super::subscribe!(DiscordPresence, ApplicationStatusUpdate, {
-    async fn dispatch(&mut self, status: super::DispatchedApplicationStatus) -> Result<(), DispatchError> {
-        use super::DispatchedApplicationStatus;
-        match status != DispatchedApplicationStatus::Playing {
+super::subscribe!(DiscordPresence, PlayerStatusUpdate, {
+    async fn dispatch(&mut self, status: super::DispatchedPlayerStatus) -> Result<(), DispatchError> {
+        use super::DispatchedPlayerStatus;
+        match status != DispatchedPlayerStatus::Playing {
             true  => self.pending_clear.signal(),
             false => self.pending_clear.cancel(),
         }

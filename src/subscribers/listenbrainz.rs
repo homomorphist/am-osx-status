@@ -89,7 +89,7 @@ impl ListenBrainz {
         })
     }
 
-    fn additional_info<'a>(track: &'a DispatchableTrack, app: &'a osa_apple_music::application::ApplicationData, program: &'a brainz::music::request_client::ProgramInfo<S>) -> brainz::listen::v1::submit_listens::additional_info::AdditionalInfo<'a> {
+    fn additional_info<'a>(track: &'a DispatchableTrack, player: &'a osa_apple_music::application::ApplicationData, program: &'a brainz::music::request_client::ProgramInfo<S>) -> brainz::listen::v1::submit_listens::additional_info::AdditionalInfo<'a> {
         use brainz::listen::v1::submit_listens::additional_info::*;
         AdditionalInfo {
             duration: track.duration,
@@ -98,7 +98,7 @@ impl ListenBrainz {
             music_service: Some(MusicService::Domain("music.apple.com")),
             media_player: Some(MediaPlayer {
                 name: "Apple Music", // TODO: #30 (iTunes)
-                version: Some(&app.version)
+                version: Some(&player.version)
             }),
             ..Default::default()
         }
@@ -116,7 +116,7 @@ impl ListenBrainz {
 subscribe!(ListenBrainz, TrackStarted, {
     async fn dispatch(&mut self, context: super::BackendContext<AdditionalTrackData>) -> Result<(), DispatchError> {
         let track_data = Self::basic_track_metadata(&context.track)?;
-        let additional_info = Self::additional_info(&context.track, &context.app, self.client.get_program_info());
+        let additional_info = Self::additional_info(&context.track, &context.player, self.client.get_program_info());
         self.client.submit_playing_now(track_data, Some(additional_info)).await.map_err(Into::into)
     }
 });
@@ -124,7 +124,7 @@ subscribe!(ListenBrainz, TrackEnded, {
     async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
         if !self.is_eligible_for_submission(&context).await { return Ok(()) }
         let track_data = Self::basic_track_metadata(&context.track)?;
-        let additional_info = Self::additional_info(&context.track, &context.app, self.client.get_program_info());
+        let additional_info = Self::additional_info(&context.track, &context.player, self.client.get_program_info());
         let started_listening_at = context.listened.lock().await.started_at().ok_or(DispatchError::missing_required_data("listen start time"))?;
         self.client.submit_listen(track_data, started_listening_at, Some(additional_info)).await.map_err(Into::into)
     }

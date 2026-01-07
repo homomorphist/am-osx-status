@@ -757,7 +757,7 @@ pub mod uncensor {
 #[derive(Debug)]
 pub struct BackendContext<A> {
     pub track: Arc<DispatchableTrack>,
-    pub app: Arc<osa_apple_music::ApplicationData>,
+    pub player: Arc<osa_apple_music::ApplicationData>,
     pub data: Arc<A>,
     pub listened: Arc<Mutex<crate::listened::Listened>>,
 
@@ -768,7 +768,7 @@ impl<A> Clone for BackendContext<A> {
     fn clone(&self) -> Self {
         Self {
             track: self.track.clone(),
-            app: self.app.clone(),
+            player: self.player.clone(),
             data: self.data.clone(),
             listened: self.listened.clone(),
             #[cfg(feature = "musicdb")]
@@ -778,7 +778,7 @@ impl<A> Clone for BackendContext<A> {
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum DispatchedApplicationStatus {
+pub enum DispatchedPlayerStatus {
     Playing,
     /// The music stopped and there is no more music that will start playing soon.
     // TODO: uhh fact-check this it's been so long
@@ -788,7 +788,7 @@ pub enum DispatchedApplicationStatus {
     Paused,
     Closed
 }
-impl From<osa_apple_music::application::PlayerState> for DispatchedApplicationStatus {
+impl From<osa_apple_music::application::PlayerState> for DispatchedPlayerStatus {
     fn from(value: osa_apple_music::application::PlayerState) -> Self {
         use osa_apple_music::application::PlayerState;
         match value {
@@ -1002,7 +1002,7 @@ pub mod subscription {
         { TrackStarted<crate::subscribers::BackendContext<crate::data_fetching::AdditionalTrackData>> },
         { TrackEnded },
         { ProgressJolt },
-        { ApplicationStatusUpdate<crate::subscribers::DispatchedApplicationStatus> },
+        { PlayerStatusUpdate<crate::subscribers::DispatchedPlayerStatus> },
     ], {
         async fn get_solicitation(&self, event: self::Identity) -> Option<ComponentSolicitation>;
         #[allow(private_interfaces)]
@@ -1121,8 +1121,8 @@ impl Backends {
     }
 
     #[tracing::instrument(level = "debug")]
-    pub async fn dispatch_status(&self, status: DispatchedApplicationStatus) {
-        type Variant = subscription::type_identity::ApplicationStatusUpdate;
+    pub async fn dispatch_status(&self, status: DispatchedPlayerStatus) {
+        type Variant = subscription::type_identity::PlayerStatusUpdate;
         for (identity, error) in self.dispatch::<Variant>(status).await.into_errors_iter() {
             error.handle(identity.get_name(), &Variant {});
         }
