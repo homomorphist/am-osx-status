@@ -359,14 +359,14 @@ macro_rules! use_backends {
             pub mod $name;
         )*
 
-        #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+        #[derive(Debug, PartialEq, Eq, Clone, Copy, enum_bitset::EnumBitset)]
+        #[bitset(name = BackendIdentitySet)]
         pub enum BackendIdentity {
             $(
                 #[cfg(feature = $feature)]
                 $ident,
             )*
         }
-        // #[allow(unreachable_patterns)]
         impl BackendIdentity {
             pub const fn get_name(&self) -> &'static str {
                 match self {
@@ -532,6 +532,29 @@ macro_rules! use_backends {
                     #[cfg(feature = $feature)]
                     if let Some(backend) = self.$name.as_ref() {
                         backends.push(backend.clone());
+                    }
+                )*
+        
+                backends
+            }
+            #[expect(unused, reason = "may be useful in the future")]
+            pub fn get(&self, identity: BackendIdentity) -> Option<Arc<Mutex<dyn Subscriber>>> {
+                match identity {
+                    $(
+                        #[cfg(feature = $feature)]
+                        BackendIdentity::$ident => self.$name.as_ref().map(|b| b.clone() as Arc<Mutex<dyn Subscriber>>),
+                    )*
+                }
+            }
+            pub fn get_many(&self, identities: BackendIdentitySet) -> Vec<Arc<Mutex<dyn Subscriber>>> {
+                let mut backends: Vec<Arc<Mutex<dyn Subscriber>>> = Vec::with_capacity(identities.len());
+        
+                $(
+                    #[cfg(feature = $feature)]
+                    if identities.contains(BackendIdentity::$ident) {
+                        if let Some(backend) = self.$name.as_ref() {
+                            backends.push(backend.clone());
+                        }
                     }
                 )*
         
@@ -858,8 +881,8 @@ pub mod subscription {
                     $dollar(#[$sub_meta])*
                     $vis struct $sub_name $dollar($def)*
                     impl $sub_name {
-                        #[allow(unused, reason = "used by some variants")]
-                        pub const NAME: &'static str = stringify!($sub_name);
+                        #[allow(unused, reason = "used by some variants")] pub const NAME: &'static str = stringify!($sub_name);
+                        #[allow(unused, reason = "used by some variants")] pub const IDENTITY: $crate::subscribers::BackendIdentity = $crate::subscribers::BackendIdentity::$sub_name;
                     }
                     #[async_trait::async_trait]
                     impl $crate::subscribers::subscription::Subscriber for $sub_name {
@@ -1006,7 +1029,11 @@ pub mod subscription {
 impl Backends {
     #[tracing::instrument(level = "debug")]
     pub async fn get_solicitations(&self, event: subscription::Identity) -> ComponentSolicitation {
-        let backends = self.all();
+        self.get_solicitations_from(self.all(), event).await
+    }
+
+    #[tracing::instrument(skip(backends), level = "debug")]
+    pub async fn get_solicitations_from(&self, backends: Vec<Arc<Mutex<dyn Subscriber>>>, event: subscription::Identity) -> ComponentSolicitation {
         let mut solicitation = ComponentSolicitation::default();
         let mut jobs = Vec::with_capacity(backends.len());
         for backend in backends {
@@ -1027,9 +1054,14 @@ impl Backends {
         solicitation
     }
 
+
     #[tracing::instrument(skip(context), level = "debug")]
-    async fn dispatch<T: subscription::TypeIdentity>(&self, context: T::DispatchContext) -> BackendMap<Result<T::DispatchReturn, DispatchError>> {
-        let backends = self.all();
+    pub async fn dispatch<T: subscription::TypeIdentity>(&self, context: T::DispatchContext) -> BackendMap<Result<T::DispatchReturn, DispatchError>> {
+        self.dispatch_to::<T>(self.all(), context).await
+    }
+
+    #[tracing::instrument(skip(backends, context), level = "debug")]
+    pub async fn dispatch_to<T: subscription::TypeIdentity>(&self, backends: Vec<Arc<Mutex<dyn Subscriber>>>, context: T::DispatchContext) -> BackendMap<Result<T::DispatchReturn, DispatchError>> {
         let mut outputs  = BackendMap::<Result<<T as subscription::TypeIdentity>::DispatchReturn, DispatchError>>::new();
         let mut jobs = Vec::with_capacity(backends.len());
 
@@ -1096,7 +1128,7 @@ impl Backends {
         }
     }
 
-    pub async fn new(config: &crate::config::Config) -> Self {        
+    pub async fn new(config: &crate::config::Config, redispatch_start_request_tx: tokio::sync::mpsc::Sender<crate::subscribers::BackendIdentity>) -> Self {        
         #[cfg(feature = "lastfm")]
         use crate::subscribers::lastfm::*;
 
@@ -1128,7 +1160,7 @@ impl Backends {
 
         #[cfg(feature = "discord")]
         let discord = match config.backends.discord.as_ref().copied() {
-            Some(config) if config.enabled => Some(DiscordPresence::new(config).await),
+            Some(config) if config.enabled => Some(DiscordPresence::new(config, redispatch_start_request_tx).await),
             _ => None
         };
 

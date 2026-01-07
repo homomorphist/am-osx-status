@@ -326,12 +326,16 @@ struct PollingContext {
     
     #[cfg(feature = "musicdb")]
     musicdb: Arc<Option<musicdb::MusicDB>>,
-    
     jxa: osa_apple_music::Session,
     app_open: bool,
     #[expect(dead_code, reason = "planned to be used in the future")]
     app_paused: Option<bool>,
     session: store::entities::Session,
+
+    redispatch_start_requesters: Arc<Mutex<crate::subscribers::BackendIdentitySet>>, 
+    redispatch_start_request_tx: tokio::sync::mpsc::Sender<crate::subscribers::BackendIdentity>,   
+    #[expect(unused, reason = "attaching for drop")]
+    redispatch_start_request_rx_processor: tokio::task::JoinHandle<()>,
 }
 impl PollingContext {
     async fn from_config(config: &config::Config, terminating: Arc<AtomicBool>) -> Self {
@@ -356,8 +360,20 @@ impl PollingContext {
         #[cfg(not(feature = "musicdb"))]
         let musicdb = Box::pin(async { Ok(None) });
 
+        let (redispatch_start_request_tx, mut redispatch_start_request_rx,) = tokio::sync::mpsc::channel(8);
+        let redispatch_start_requesters = Arc::new(Mutex::new(crate::subscribers::BackendIdentitySet::empty()));
+        let redispatch_start_request_rx_processor = {
+            let redispatch_start_requesters = Arc::clone(&redispatch_start_requesters);
+            tokio::spawn(async move {
+                while let Some(identity) = redispatch_start_request_rx.recv().await {
+                    tracing::debug!(?identity, "marking backend for a start event redispatch");
+                    redispatch_start_requesters.lock().await.insert(identity);
+                }
+            })
+        };
+
         let (backends, artwork_manager, migration_id, musicdb, (jxa, player_version)) = tokio::join!(
-            subscribers::Backends::new(config),
+            subscribers::Backends::new(config, redispatch_start_request_tx.clone()),
             data_fetching::components::artwork::ArtworkManager::new(&config.artwork_hosts),
             store::migrations::migrate(),
             musicdb,
@@ -393,11 +409,15 @@ impl PollingContext {
             app_open: player_version != "?",
             app_paused: None,
             session,
+
+            redispatch_start_requesters,
+            redispatch_start_request_tx,
+            redispatch_start_request_rx_processor
         }
     }
 
     async fn reload_from_config(&mut self, config: &config::Config) {
-        self.backends = subscribers::Backends::new(config).await;
+        self.backends = subscribers::Backends::new(config, self.redispatch_start_request_tx.clone()).await;
     }
 
     pub fn is_terminating(&self) -> bool {
@@ -445,6 +465,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
 
     context.session.osa_fetches_player += 1;
     context.backends.dispatch_status(app.state.into()).await;
+
     use osa_apple_music::application::PlayerState;
     match app.state {
         PlayerState::Stopped => {
@@ -511,7 +532,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
 
             let previous = context.last_track.as_ref().map(|v| &v.persistent_id);
             if previous != Some(&track.persistent_id) {
-                tracing::trace!(?track, "new track");
+                tracing::debug!(?track, "new track");
 
                 let solicitation = context.backends.get_solicitations(subscription::Identity::TrackStarted).await;
                 let additional_data_pending = data_fetching::AdditionalTrackData::from_solicitation(solicitation, track.as_ref(),
@@ -553,6 +574,34 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                     musicdb: context.musicdb.clone()
                 }).await;
             } else if let Some(position) = app.position {
+                {
+                    use subscribers::subscription::type_identity::TrackStarted;
+                    use subscribers::BackendIdentitySet;
+
+                    let mut requesting_redispatch = context.redispatch_start_requesters.lock().await;
+                    if !requesting_redispatch.is_empty() { let list = *requesting_redispatch; tracing::debug!(?list, "performing start redispatch"); }
+                    let backends = context.backends.get_many(*requesting_redispatch);
+
+                    let solicitation = context.backends.get_solicitations_from(backends.clone(), subscription::Identity::TrackStarted).await; // why clone needed :(
+                    let additional_data_pending = data_fetching::AdditionalTrackData::from_solicitation(solicitation, track.as_ref(),
+                        #[cfg(feature = "musicdb")]
+                        context.musicdb.as_ref().as_ref(),
+                        context.artwork_manager.clone()
+                    ).await;
+
+                    context.backends.dispatch_to::<TrackStarted>(backends, BackendContext {
+                        track: track.clone(),
+                        app: app.clone(),
+                        data: additional_data_pending.into(),
+                        listened: context.listened.clone(),
+                        #[cfg(feature = "musicdb")]
+                        musicdb: context.musicdb.clone()
+                    }).await;
+
+                    *requesting_redispatch = BackendIdentitySet::default();
+                }
+
+
                 let mut listened = context.listened.lock().await;
                 match listened.current.as_ref() {
                     None => listened.set_new_current(position),

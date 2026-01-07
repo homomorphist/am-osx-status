@@ -235,7 +235,7 @@ super::subscription::define_subscriber!(pub DiscordPresence, {
     position: Option<f32>,
     duration: Option<f32>,
     pending_clear: PendingStatusClear,
-    // status_display: Option<discord_presence::models::DisplayType>,
+    redispatch_start_request_tx: tokio::sync::mpsc::Sender<super::BackendIdentity>,
 });
 impl core::fmt::Debug for DiscordPresence {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -243,24 +243,24 @@ impl core::fmt::Debug for DiscordPresence {
     }
 }
 impl DiscordPresence {
-    #[tracing::instrument(level = "debug")]
-    pub async fn new(config: Config) -> Arc<Mutex<Self>> {
-        let instance = Self::disconnected(config).await;
+    #[tracing::instrument(level = "debug", skip(redispatch_start_request_tx))]
+    pub async fn new(config: Config, redispatch_start_request_tx: tokio::sync::mpsc::Sender<super::BackendIdentity>) -> Arc<Mutex<Self>> {
+        let instance = Self::disconnected(config, redispatch_start_request_tx.clone()).await;
         let result = (*instance.lock().await).connect_in_place(CONNECTION_ATTEMPT_TIMEOUT).await;
         match result {
             Ok(()) => instance,
             Err(ConnectError::Unknown) => {
                 tracing::warn!("unknown error occurred during client creation; assuming Discord isn't open");
-                Self::disconnected(config).await
+                Self::disconnected(config, redispatch_start_request_tx.clone()).await
             }
             Err(ConnectError::TimedOut) => {
                 tracing::warn!("client creation timed out; assuming Discord isn't open");
-                Self::disconnected(config).await
+                Self::disconnected(config, redispatch_start_request_tx.clone()).await
             }
         }
     }
 
-    pub async fn disconnected(config: Config) -> Arc<Mutex<Self>> {
+    pub async fn disconnected(config: Config, redispatch_start_request_tx: tokio::sync::mpsc::Sender<super::BackendIdentity>) -> Arc<Mutex<Self>> {
         let (tx, mut rx) = tokio::sync::broadcast::channel(4);
 
         let state = Arc::new(Mutex::new(DiscordPresenceState::Disconnected));
@@ -286,6 +286,7 @@ impl DiscordPresence {
             position: None,
             duration: None,
             pending_clear,
+            redispatch_start_request_tx,
         }));
 
         let weak = Arc::downgrade(&this);
@@ -338,6 +339,9 @@ impl DiscordPresence {
         match tokio::time::timeout(timeout, rx_event.recv()).await.map_err(|_| ConnectError::TimedOut)?.expect("discord client event channel closed") {
             DiscordPresenceState::Connected => {
                 tracing::debug!("successfully connected to discord rpc");
+                if self.redispatch_start_request_tx.send(Self::IDENTITY).await.is_err() {
+                    tracing::warn!("could not request redispatch of start event; receiver was dropped");
+                }
                 Ok(())
             }
             DiscordPresenceState::Disconnected => {
@@ -415,8 +419,7 @@ impl DiscordPresence {
         }
     }
 
-    /// Returns whether the status was cleared.
-    /// (If the status was already empty, it will return false.)
+    /// Returns whether the status was cleared; i.e. if it was already empty, it will return false.
     #[tracing::instrument(skip(self), level = "debug")]
     pub fn clear(&mut self) -> Result<bool, UpdateError> {
         let has_content = self.has_content;
