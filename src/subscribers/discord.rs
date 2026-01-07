@@ -487,6 +487,42 @@ impl DiscordPresence {
         }
         string
     }
+
+    fn build_activity(config: &Config, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) -> discord_presence::models::Activity {
+        use osa_apple_music::track::MediaKind;
+        let super::BackendContext { track, listened: _, data: additional_info, .. } = context;
+        let image_urls = additional_info.images.urls();
+
+        let mut activity = Activity::new()
+            .activity_type(match track.media_kind {
+                MediaKind::MusicVideo => ActivityType::Watching,
+                MediaKind::Song => ActivityType::Listening, 
+                MediaKind::Unknown => {
+                    let persistent_id = track.persistent_id;
+                    tracing::warn!(%persistent_id, "unknown media kind; defaulting to listening", );
+                    ActivityType::Listening
+                },
+            })
+            .status_display(config.displayed_field.into())
+            .details(Self::pad_field(track.name.clone()))
+            .state(track.artist.clone().map_or_else(|| "Unknown Artist".to_owned(), Self::pad_field))
+            .assets(|_| ActivityAssets {
+                large_text: track.album.clone().map(Self::pad_field),
+                large_image: image_urls.track.map(str::to_owned).map(Self::pad_field),
+                small_image: image_urls.artist.map(str::to_owned).map(Self::pad_field),
+                small_text: track.artist.clone().map(Self::pad_field),
+            });
+
+        if let Some(itunes) = &additional_info.itunes {
+            activity = activity
+                .append_buttons(|button| button
+                    .label("Check it out!")
+                    .url(format!("https://song.link/{}&app=music", itunes.apple_music_url))
+                );
+        }
+
+        activity
+    }
 }
 impl Drop for DiscordPresence {
     fn drop(&mut self) {
@@ -511,40 +547,10 @@ super::subscribe!(DiscordPresence, TrackStarted, {
     }
 
     async fn dispatch(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) -> Result<(), DispatchError> {
-        use osa_apple_music::track::MediaKind;
-        let super::BackendContext { track, listened, data: additional_info, .. } = context;
+        let super::BackendContext { track, listened, .. } = &context;
         self.position = listened.lock().await.current.as_ref().map(listened::CurrentListened::get_expected_song_position);
         self.duration = track.duration.map(|d| d.as_secs_f32());
-        let image_urls = additional_info.images.urls();
-
-        let mut activity = Activity::new()
-            .activity_type(match track.media_kind {
-                MediaKind::MusicVideo => ActivityType::Watching,
-                MediaKind::Song => ActivityType::Listening, 
-                MediaKind::Unknown => {
-                    let persistent_id = track.persistent_id;
-                    tracing::warn!(%persistent_id, "unknown media kind; defaulting to listening", );
-                    ActivityType::Listening
-                },
-            })
-            .status_display(self.config.displayed_field.into())
-            .details(Self::pad_field(track.name.clone()))
-            .state(track.artist.clone().map_or_else(|| "Unknown Artist".to_owned(), Self::pad_field))
-            .assets(|_| ActivityAssets {
-                large_text: track.album.clone().map(Self::pad_field),
-                large_image: image_urls.track.map(str::to_owned).map(Self::pad_field),
-                small_image: image_urls.artist.map(str::to_owned).map(Self::pad_field),
-                small_text: track.artist.clone().map(Self::pad_field),
-            });
-
-        if let Some(itunes) = &additional_info.itunes {
-            activity = activity
-                .append_buttons(|button| button
-                    .label("Check it out!")
-                    .url(format!("https://song.link/{}&app=music", itunes.apple_music_url))
-                );
-        }
-
+        let activity = Self::build_activity(&self.config, context);
         self.activity = Some(activity);
         self.send_activity().await
     }
