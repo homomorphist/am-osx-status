@@ -46,6 +46,7 @@ cast_trait_object = "0.1.4"
 sqlx = { version = "0.8.3", features = ["runtime-tokio", "sqlite", "macros", "derive", "chrono"] }
 backtrace = "0.3.74"
 libc = "0.2.175"
+enum-bitset = "0.2.1"
 
 [features]
 default = ["all"]

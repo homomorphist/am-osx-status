@@ -86,7 +86,7 @@ impl ArtworkManager {
         let mut images = TrackArtworkData::none();
 
         #[cfg(feature = "musicdb")]
-        if solicitation.list.contains(&Component::ArtistImage) && let Some(db) = musicdb {
+        if solicitation.contains(Component::ArtistImage) && let Some(db) = musicdb {
             let id = musicdb::PersistentId::from(track.persistent_id);
             images.artist = db.tracks().get(&id)
                 .and_then(|track| db.get(track.artist_id))
@@ -95,7 +95,7 @@ impl ArtworkManager {
                 .map(LocatedResource::from);
         }
 
-        if solicitation.list.contains(&Component::AlbumImage) {
+        if solicitation.contains(Component::AlbumImage) {
              if let Some(itunes) = track_itunes.as_ref() {
                 images.track = itunes.artwork_mzstatic().map(|mut mzstatic|{
                     use mzstatic::image::quality::Quality;

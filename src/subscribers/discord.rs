@@ -540,9 +540,9 @@ impl Drop for DiscordPresence {
 super::subscribe!(DiscordPresence, TrackStarted, {
     async fn get_solicitation(&self) -> ComponentSolicitation {
         let mut solicitation: ComponentSolicitation = ComponentSolicitation::default();
-        solicitation.list.insert(Component::ITunesData);
-        solicitation.list.insert(Component::AlbumImage);
-        solicitation.list.insert(Component::ArtistImage);
+        solicitation.insert(Component::ITunesData);
+        solicitation.insert(Component::AlbumImage);
+        solicitation.insert(Component::ArtistImage);
         solicitation
     }
 

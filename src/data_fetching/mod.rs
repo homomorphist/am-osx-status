@@ -19,7 +19,7 @@ impl AdditionalTrackData {
     ) -> Self {
         let mut itunes: Option<itunes_api::Track> = None;
 
-        if solicitation.list.contains(&Component::ITunesData) {
+        if solicitation.contains(Component::ITunesData) {
             itunes = match services::itunes::find_track(&services::itunes::Query {
                 title: track.name.as_ref(),
                 artist: track.artist.as_deref(),

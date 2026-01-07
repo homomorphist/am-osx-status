@@ -58,6 +58,7 @@ dependencies = [
  "clap-verbosity-flag",
  "console-subscriber",
  "discord-presence",
+ "enum-bitset",
  "futures-util",
  "include_dir",
  "itunes_api",
@@ -782,6 +783,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "enum-bitset"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6dd2b342d06d77746fb960663e6c2a8e2ddb3ada4d4257556b3c5e95b0dbeff"
+dependencies = [
+ "enum-bitset-derive",
+]
+
+[[package]]
+name = "enum-bitset-derive"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03fae91c48e2f1859125007b1f4e4b67a3ceb83d1627801455fa580fe1b14d3d"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

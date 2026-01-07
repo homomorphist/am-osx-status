@@ -1016,7 +1016,7 @@ impl Backends {
         }
         for (i, job) in jobs.into_iter().enumerate() {
             match job.await {
-                Ok(Some(got)) => solicitation += got,
+                Ok(Some(got)) => solicitation |= got,
                 Ok(None) => (),
                 Err(err) => {
                     let backend = self.all()[i].lock().await.get_identity().get_name();
