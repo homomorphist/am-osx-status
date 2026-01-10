@@ -87,6 +87,13 @@ impl<'a, T: ReadableChunk<'a>> IntoIterator for List<'a, T> {
         self.0.into_iter()
     }
 }
+impl<'a, T: ReadableChunk<'a>> IntoIterator for &List<'a, T> where Self: 'a {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
 
 use std::collections::HashMap;
 
