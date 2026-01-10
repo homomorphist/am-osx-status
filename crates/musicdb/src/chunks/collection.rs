@@ -167,4 +167,4 @@ impl CollectionMember<'_> {
     }
 }
 
-derive_list!(pub CollectionMap, Collection<'a>, *b"lPma");
+derive_list!(pub CollectionList, Collection<'a>, *b"lPma");

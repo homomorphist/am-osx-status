@@ -53,7 +53,8 @@ pub struct MusicDbView<'a> {
     // accounts, one of whom is a rapper and DJ from the UK? So, uh, needs more research.
     pub accounts: Option<AccountInfoList<'a>>,
     pub tracks: TrackMap<'a>,
-    pub collections: CollectionMap<'a>
+    /// Playlists and other collections of tracks.
+    pub collections: CollectionList<'a>
 }
 impl<'a> MusicDbView<'a> {
     pub(crate) fn with_cursor(mut cursor: Cursor<&'a [u8]>) -> Self {
@@ -83,7 +84,7 @@ impl<'a> MusicDbView<'a> {
         let tracks = TrackMap::read(&mut cursor).expect("can't read track list");
 
         expect_boundary!(cursor);
-        let collections = CollectionMap::read(&mut cursor).expect("can't read collection list");
+        let collections = CollectionList::read(&mut cursor).expect("can't read collection list");
 
         Self {
             library,
@@ -150,7 +151,7 @@ macro_rules! impl_db_collection_coercion {
 impl_db_collection_coercion!(AlbumMap, albums);
 impl_db_collection_coercion!(ArtistMap, artists);
 impl_db_collection_coercion!(TrackMap, tracks);
-impl_db_collection_coercion!(CollectionMap, collections);
+impl_db_collection_coercion!(CollectionList, collections);
 
 pub struct MusicDB {
     _owned_data: Pin<Vec<u8>>,
@@ -239,8 +240,8 @@ impl MusicDB {
     pub fn tracks(&self) -> &TrackMap<'_> {
         &self.get_view().tracks
     }
-    /// Returns a map of every collection (playlist) in the library.
-    pub fn collections(&self) -> &CollectionMap<'_> {
+    /// Returns a map of every collection of tracks in the library, such as playlists or (potentially internal) groupings.
+    pub fn collections(&self) -> &CollectionList<'_> {
         &self.get_view().collections
     }
     /// Returns a map of every account associated with the library.
