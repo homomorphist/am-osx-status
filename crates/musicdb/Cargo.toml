@@ -17,6 +17,7 @@ serde = { version = "1.0.210", features = ["derive"] }
 strum = "0.26.3"
 thiserror = "2.0.10"
 tracing = { version = "0.1.40", optional = true }
+tracing-subscriber = { version = "0.3.22", optional = true }
 maybe_owned_string = { path = "../maybe_owned_string/", features = ["serde"] }
 mzstatic = { path = "../mzstatic/" }
 strum_macros = "0.26.4"
@@ -26,6 +27,7 @@ unaligned_u16 = { path = "../unaligned_u16/", features = ["utf16"] }
 [features]
 tracing = ["dep:tracing"]
 cli = ["dep:clap"]
+cli-standalone = ["cli", "tracing", "dep:tracing-subscriber"]
 
 [[bin]]
 name = "musicdb"
