@@ -31,7 +31,8 @@ pub fn parse_ambiguous_id(id: &str) -> Result<u64, core::num::ParseIntError> {
         return id.parse::<u64>()
     }
 
-    panic!("Base of ID {id} is unknown; please specify explicitly with `0x` (hex) or `0d` (dec) prefix.");
+    eprintln!("Base of ID {id} is unknown; please specify explicitly with `0x` (hex) or `0d` (dec) prefix.");
+    std::process::exit(1)
 }
 
 pub fn parse_ambiguous_ids(passed: Vec<String>) -> Vec<u64> {
@@ -91,6 +92,7 @@ pub enum Command {
     },
 
     /// Export a decoded `.musicdb` file.
+    #[clap(alias = "decode")]
     Export {
         /// The path to the `Library.musicdb` file to export. Defaults to the one of the current user.
         #[arg(short, long, value_name = "PATH")]
@@ -102,7 +104,7 @@ pub enum Command {
         output: Option<Destination>,
 
         /// Entity persistent-IDs to filter the output with. Base-10 or base-16 (case-insensitive),
-        /// coma-separated or passed over multiple arguments.
+        /// comma-separated or passed over multiple arguments.
         #[arg(short, long, value_name = "ID", alias = "ids")]
         ids: Option<Vec<String>>,
     },
