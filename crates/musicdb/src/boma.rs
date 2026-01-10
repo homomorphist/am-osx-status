@@ -408,20 +408,15 @@ pub enum BookValue<'a> {
 pub struct BomaBook<'a>(Vec<BookValue<'a>>, BookVariant);
 impl<'a> BomaBook<'a> {
     pub(crate) fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, length: u32, variant: BookVariant) -> Result<Self, std::io::Error> {
-        const V5: AppleMusicVersion = AppleMusicVersion {
-            major: 1,
-            minor: 5,
-            patch: 0,
-            revision: 0,
-        };
+        assert_eq!(cursor.read_slice_exact::<4>()?, b"\0\0\0\0", "expected null padding");
 
-        // if cursor.version.unwrap() >= V5 && variant != BookVariant::Variant0 {
-        //     // not a book, some other boma. TODO: fix
-        //     cursor.advance(length as i64 - 16)?;
-        //     return Ok(Self(vec![], variant))
-        // }
+        if variant == BookVariant::Variant2 && matches!(cursor.peek_slice_exact::<6>()?, [/* DRIVE LETTER */ _, 0, b':', 0, b'\\', 0]) {
+            // In some cases (on windows?), this boma actually just jumps into a UTF16 path string.
+            // Eventually we should pass context (apple music version, etc) to the reading function to conditionally handle that.
+            cursor.advance(length as i64 - 16)?;
+            return Ok(Self(vec![], variant))
+        }
 
-        cursor.advance(4)?;
         assert_eq!(&cursor.read_signature()?, b"book");
         let mut values = vec![];
         let destination = cursor.position() - 24 + length as u64;
