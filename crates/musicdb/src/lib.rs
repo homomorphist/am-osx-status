@@ -159,10 +159,10 @@ pub struct MusicDB {
 }
 
 impl MusicDB {
-    pub fn read_path(path: impl AsRef<Path>) -> MusicDB {
+    pub fn read_path(path: impl AsRef<Path>) -> Result<MusicDB, encoded::DecodeError> {
         let path = path.as_ref().to_path_buf();
-        let data = &mut std::fs::read(&path).unwrap()[..];
-        let (decoded, _) = encoded::decode_in_place(data).unwrap();
+        let data = &mut std::fs::read(&path)?[..];
+        let (decoded, _) = encoded::decode_in_place(data)?;
         let data = Pin::new(decoded);
 
         // Obtain a slice of the data with a lifetime promoted to that of the returned instance (not actually 'static, but 'self).
@@ -178,11 +178,12 @@ impl MusicDB {
         let cursor = Cursor::new(slice);
         let view = MusicDbView::with_cursor(cursor);
 
-        Self { view, _owned_data: data, path }
+        Ok(Self { view, _owned_data: data, path })
     }
-    pub fn extract_raw(path: impl AsRef<Path>) -> Result<Vec<u8>, std::io::Error> {
+    /// Decrypts and decompresses the `.musicdb` file at the given path, returning the internal contents.
+    pub fn decode(path: impl AsRef<Path>) -> Result<Vec<u8>, encoded::DecodeError> {
         let data = &mut std::fs::read(&path)?;
-        let (decoded, _) = encoded::decode_in_place(data).unwrap();
+        let (decoded, _) = encoded::decode_in_place(data)?;
         Ok(decoded)
     }
     pub fn get_raw(&self) -> &[u8] {
@@ -196,9 +197,9 @@ impl MusicDB {
         // 'static => 'self
         unsafe { core::mem::transmute(&mut self.view) }
     }
-    pub fn update_view(&mut self)  {
-        // TODO: Persistent handle? I dunno.
-        *self = Self::read_path(self.path.as_path())
+    pub fn update_view(&mut self) -> Result<(), encoded::DecodeError> {
+        *self = Self::read_path(self.path.as_path())?;
+        Ok(())
     }
     pub fn default_path() -> std::path::PathBuf {
         std::env::home_dir().expect("no user home directory detected").as_path()
@@ -207,7 +208,7 @@ impl MusicDB {
 }
 impl core::default::Default for MusicDB {
     fn default() -> Self {
-        MusicDB::read_path(MusicDB::default_path())
+        MusicDB::read_path(MusicDB::default_path()).expect("failed to read current user's musicdb")
     }
 }
 impl core::fmt::Debug for MusicDB {

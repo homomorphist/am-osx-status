@@ -355,7 +355,7 @@ impl PollingContext {
             let path = config.musicdb.path.clone();
             if config.musicdb.enabled { Box::pin(tokio::task::spawn_blocking(|| {
                 let musicdb = tracing::trace_span!("musicdb read").in_scope(|| {
-                    musicdb::MusicDB::read_path(path)
+                    musicdb::MusicDB::read_path(path).expect("failed to read musicdb")
                 });
                 
                 if let Some(installed) = util::get_installed_physical_memory() {

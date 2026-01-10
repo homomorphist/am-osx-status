@@ -79,7 +79,7 @@ impl Destination {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Export a decrypted (but not decoded) `.musicdb` file.
+    /// Export a decrypted (but not yet parsed) `.musicdb` file.
     Decrypt {
         /// The path to the `Library.musicdb` file to export. Defaults to the one of the current user.
         #[arg(short, long, value_name = "PATH")]
@@ -91,8 +91,7 @@ pub enum Command {
         output: Option<Destination>,
     },
 
-    /// Export a decoded `.musicdb` file.
-    #[clap(alias = "decode")]
+    /// Export a fully parsed `.musicdb` file.
     Export {
         /// The path to the `Library.musicdb` file to export. Defaults to the one of the current user.
         #[arg(short, long, value_name = "PATH")]
@@ -117,11 +116,11 @@ impl Command {
 
         match self {
             Command::Decrypt { path, output } => {
-                let raw = MusicDB::extract_raw(path.unwrap_or_else(MusicDB::default_path)).expect("failed to extract raw data");
+                let decoded = MusicDB::decode(path.unwrap_or_else(MusicDB::default_path)).expect("failed to extract raw data");
                 let is_stdout = output.as_ref() == Some(&Destination::Stdout);
                 let mut writer = std::io::BufWriter::new(output.unwrap_or_default().into_writer());
 
-                if let Err(error) = writer.write_all(&raw) {
+                if let Err(error) = writer.write_all(&decoded) {
                     eprintln!("Write error: {error:?}");
                 } else if !is_stdout {
                     println!("Done!");
@@ -129,7 +128,7 @@ impl Command {
             }
 
             Command::Export { path, output , ids } => {
-                let mut musicdb = path.map(MusicDB::read_path).unwrap_or_default();
+                let mut musicdb = MusicDB::read_path(path.unwrap_or_else(MusicDB::default_path)).expect("failed to read musicdb");
                 let musicdb = musicdb.get_view_mut();
 
                 if let Some(filter) = ids {

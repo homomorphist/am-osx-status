@@ -34,7 +34,7 @@ const KEY: &[u8] = b"BHUILuilfghuila3";
 #[derive(thiserror::Error, Debug)]
 pub enum DecodeError {
     #[error("io error: {0}")]
-    Io(std::io::Error),
+    Io(#[from] std::io::Error),
     #[error("decryption failure: {0}")]
     Decryption(aes::cipher::block_padding::UnpadError),
     #[error("decompression failure: {0}")]
