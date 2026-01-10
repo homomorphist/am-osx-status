@@ -430,9 +430,13 @@ struct Collection {
     u32 length;
     u32 length_w_boma;
     u32 boma_count;
-    //u32 track_count;
-    //padding[2];
-    //MacTime creation_date;
+    u32 track_count;
+    padding[2];
+    MacTime creation_date;
+    padding[4];
+    PersistentID id;
+    padding[100];
+    MacTime modification_date;
     
     padding[length - rel];
     if (process_collection_boma) {

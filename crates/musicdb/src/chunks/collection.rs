@@ -87,17 +87,14 @@ impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
         skip!(4)?; // appendage byte length
         let boma_count = u32!()?;
         let track_count = u32!()?;
-        skip!(26 - (12 + 4))?;
+        skip!(18 - (12 + 4))?;
+        let creation_date = convert_timestamp(u32!()?);
+        skip!(26 - (18 + 4))?;
         let persistent_id = id!(Collection)?;
         skip!(40 - (26 + 8))?;
         let _is_master = u8!()? == 1;
         skip!(134 - (40 + 1))?;
         let modification_date = convert_timestamp(u32!()?);
-        skip!(186 - (134 + 4))?;
-        // let v = reader.cursor.read_u16::<LittleEndian>()? == 257;
-        skip!(300 - (186 + 2))?;
-        let creation_date = convert_timestamp(u32!()?);
-
 
         skip_to_end!()?;
         let mut tracks = Vec::with_capacity(track_count as usize);
