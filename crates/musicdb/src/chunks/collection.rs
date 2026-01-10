@@ -28,28 +28,27 @@ impl<'a> TryFrom<&'a str> for CollectionInfo<'a> {
         // there is literally not one single property that is there 100% of the time
         // jesus christ this shit is a mess
         #[derive(serde::Deserialize, Debug)]
-        #[serde(rename_all = "kebab-case", bound = "'a: 'de, 'de: 'a")]
         #[allow(unused)]
         struct Raw<'a> {
-            external_container_tag: Option<MaybeOwnedString<'a>>,
-            external_vendor_display_name: Option<MaybeOwnedString<'a>>,
-            generated_artwork_uuids: Option<Vec<MaybeOwnedString<'a>>>,
-            cloud_artwork_token: Option<MaybeOwnedString<'a>>,
-            cloud_artwork_url: Option<MaybeOwnedString<'a>>,
-            cover_artwork_recipe: Option<MaybeOwnedString<'a>>,
-            description: Option<MaybeOwnedString<'a>>,
-            #[serde(rename = "ownerID")]
+            #[serde(borrow)] external_container_tag: Option<MaybeOwnedString<'a>>,
+            #[serde(borrow)] external_vendor_display_name: Option<MaybeOwnedString<'a>>,
+            #[serde(borrow)] generated_artwork_uuids: Option<Vec<MaybeOwnedString<'a>>>,
+            #[serde(borrow)] cloud_artwork_token: Option<MaybeOwnedString<'a>>,
+            #[serde(borrow)] cloud_artwork_url: Option<MaybeOwnedString<'a>>,
+            #[serde(borrow)] cover_artwork_recipe: Option<MaybeOwnedString<'a>>,
+            #[serde(borrow)] description: Option<MaybeOwnedString<'a>>,
+            #[serde(rename = "ownerID", borrow)]
             owner_id: Option<MaybeOwnedString<'a>>,
-            #[serde(rename = "ownerName")]
+            #[serde(rename = "ownerName", borrow)]
             owner_name: Option<MaybeOwnedString<'a>>,
-            subscribed_container_url: Option<MaybeOwnedString<'a>>,
-            universal_library_id: Option<MaybeOwnedString<'a>>,
-            version_hash: Option<MaybeOwnedString<'a>>, // 256 bit (32 hex)
+            #[serde(borrow)] subscribed_container_url: Option<MaybeOwnedString<'a>>,
+            #[serde(borrow)] universal_library_id: Option<MaybeOwnedString<'a>>,
+            #[serde(borrow)] version_hash: Option<MaybeOwnedString<'a>>, // 256 bit (32 hex)
             /// sometimes /pl\.[0-9a-f]{32}/ (uuid no dashes)
             /// sometimes /pl\.u-\w{15}/  ( what)
             /// sometimes literally fucking nonsense
             /// last part of `subscribed-container-url`'s path (if present? idk if uuid always implies that exists; todo: check)
-            uuid: Option<MaybeOwnedString<'a>>,
+            #[serde(borrow)] uuid: Option<MaybeOwnedString<'a>>,
         }
 
 

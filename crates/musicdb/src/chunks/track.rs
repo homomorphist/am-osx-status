@@ -141,15 +141,15 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
                         use serde::Deserialize as _;
 
                         #[derive(serde::Deserialize, Debug)]
-                        #[serde(rename_all = "kebab-case", bound = "'a: 'de, 'de: 'a")] //
+                        #[serde(rename_all = "kebab-case")]
                         #[allow(unused)]
                         struct Raw<'a> {
-                            cloud_album_id: Option<MaybeOwnedString<'a>>,
-                            cloud_artwork_token: Option<MaybeOwnedString<'a>>,
-                            cloud_artist_id: Option<MaybeOwnedString<'a>>,
-                            cloud_artwork_url: Option<MaybeOwnedString<'a>>,
-                            cloud_lyrics: Option<MaybeOwnedString<'a>>,
-                            cloud_lyrics_tokens: Option<MaybeOwnedString<'a>>
+                            #[serde(borrow)] cloud_album_id: Option<MaybeOwnedString<'a>>,
+                            #[serde(borrow)] cloud_artwork_token: Option<MaybeOwnedString<'a>>,
+                            #[serde(borrow)] cloud_artist_id: Option<MaybeOwnedString<'a>>,
+                            #[serde(borrow)] cloud_artwork_url: Option<MaybeOwnedString<'a>>,
+                            #[serde(borrow)] cloud_lyrics: Option<MaybeOwnedString<'a>>,
+                            #[serde(borrow)] cloud_lyrics_tokens: Option<MaybeOwnedString<'a>>
                         }
 
 
@@ -162,11 +162,11 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
                         use serde::Deserialize as _;
 
                         #[derive(serde::Deserialize, Debug)]
-                        #[serde(rename_all = "kebab-case", bound = "'a: 'de, 'de: 'a")] //
+                        #[serde(rename_all = "kebab-case")]
                         #[allow(unused)]
                         struct Raw<'a> {
-                            redownload_params: Option<MaybeOwnedString<'a>>,
-                            cloud_universal_library_id: Option<MaybeOwnedString<'a>>,
+                            #[serde(borrow)] redownload_params: Option<MaybeOwnedString<'a>>,
+                            #[serde(borrow)] cloud_universal_library_id: Option<MaybeOwnedString<'a>>,
                         }
 
 
