@@ -104,7 +104,7 @@ pub enum Boma<'a> {
     Utf16(BomaUtf16<'a>),
     Utf8Xml(BomaUtf8<'a>),
     Book(BomaBook<'a>),
-    Unknown(UnknownBoma)
+    Unknown(UnknownBoma<'a>)
 }
 impl Chunk for Boma<'_> {
     const SIGNATURE: crate::chunk::Signature = crate::chunk::Signature::new(*b"boma");
@@ -236,17 +236,16 @@ impl TrackPlayStatistics {
 }
 
 #[derive(Debug)]
-pub struct UnknownBoma {
+pub struct UnknownBoma<'a> {
     // r0x0..3 ; b"boma"
     // r0x4..7 ; ??
     // r0x8..11 ; len
     subtype: u32, // r0x12..15,
-    bytes: Vec<u8>,
+    bytes: &'a [u8],
 }
-impl UnknownBoma {
-    pub fn read_variant_content(cursor: &mut Cursor<&[u8]>, length: u32, subtype: u32) -> Result<Self, std::io::Error> {
-        let mut bytes = vec![0; (length as usize) - 16];
-        cursor.read_exact(&mut bytes[..])?;
+impl<'a> UnknownBoma<'a> {
+    pub fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, length: u32, subtype: u32) -> Result<Self, std::io::Error> {
+        let bytes = cursor.read_slice((length as usize) - 16)?;
         Ok(Self { subtype, bytes })
     }
 }
