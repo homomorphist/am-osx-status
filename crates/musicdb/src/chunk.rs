@@ -31,12 +31,12 @@ pub(crate) trait CursorReadingExtensions<'a>: Seek + Read + 'a {
         Ok(signature)
     }
 
-    fn peek(&'a self, amount: usize) -> &'a [u8] {
+    fn peek_slice(&'a self, amount: usize) -> &'a [u8] {
         let slice = self.get_slice_ahead();
         &slice[..amount.min(slice.len())]
     }
 
-    fn peek_exact<const N: usize>(&self) -> Result<&'a [u8; N], std::io::Error> {
+    fn peek_slice_exact<const N: usize>(&self) -> Result<&'a [u8; N], std::io::Error> {
         let ahead = self.get_slice_ahead();
         match ahead.get(..N) {
             Some(slice) => Ok(unsafe {
@@ -53,6 +53,12 @@ pub(crate) trait CursorReadingExtensions<'a>: Seek + Read + 'a {
         }
     }
 
+    fn read_slice_exact<const N: usize>(&mut self) -> Result<&'a [u8; N], std::io::Error> {
+        let read = self.peek_slice_exact::<N>()?;
+        self.advance(N as i64)?;
+        Ok(read)
+    }
+
     fn read_slice(&mut self, amount: usize) -> Result<&'a [u8], std::io::Error> {
         let slice = self.get_slice_ahead();
         let read = slice.get(..amount).ok_or_else(|| {
@@ -65,8 +71,8 @@ pub(crate) trait CursorReadingExtensions<'a>: Seek + Read + 'a {
         Ok(read)
     }
 
-    fn read_cstr_block<const N: usize>(&mut self) -> Result<&'a core::ffi::CStr, std::io::Error> {
-        if !self.peek_exact::<{ N }>()?.contains(&0) {
+    fn read_slice_cstr_exact<const N: usize>(&mut self) -> Result<&'a core::ffi::CStr, std::io::Error> {
+        if !self.peek_slice_exact::<{ N }>()?.contains(&0) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "string did not terminate in allocated block",
@@ -79,7 +85,7 @@ pub(crate) trait CursorReadingExtensions<'a>: Seek + Read + 'a {
     }
 
     fn peek_signature(&mut self) -> Result<Signature, std::io::Error> where Self: Read {
-        self.peek_exact::<{ Signature::LENGTH }>()
+        self.peek_slice_exact::<{ Signature::LENGTH }>()
             .map(|bytes| Signature::new(*bytes))
     }
 
@@ -153,7 +159,7 @@ macro_rules! setup_eaters {
         #[allow(unused)] macro_rules! u32 { () => { $cursor.read_u32::<byteorder::LittleEndian>() } }
         #[allow(unused)] macro_rules! u16 { () => { $cursor.read_u16::<byteorder::LittleEndian>() } }
         #[allow(unused)] macro_rules!  u8 { () => { $cursor.read_u8() } }
-        #[allow(unused)] macro_rules! cstr_block { ($size: literal) => {{ $cursor.read_cstr_block::<{ $size }>() }}}
+        #[allow(unused)] macro_rules! cstr_exact { ($size: literal) => {{ $cursor.read_slice_cstr_exact::<{ $size }>() }}}
         #[allow(unused)] macro_rules! id { ($type: ty) => {{ 
             $cursor.read_u64::<byteorder::LittleEndian>()
                 .map($crate::id::persistent::Id::<$type>::new)

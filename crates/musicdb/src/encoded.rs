@@ -143,7 +143,7 @@ impl<'a> SizedFirstReadableChunk<'a> for PackedFileInfo<'a> {
         let encoded_content_size = u32!()?;
         let _format_major = u16!()?;
         let _format_minor = u16!()?;
-        let app_version = cstr_block!(0x20)?;
+        let app_version = cstr_exact!(0x20)?;
         let _persistent_id = u64!()?;
         let _file_variant = u32!()?;
         skip!(4)?; // ?
