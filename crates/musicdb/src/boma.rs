@@ -240,13 +240,17 @@ pub struct UnknownBoma<'a> {
     // r0x0..3 ; b"boma"
     // r0x4..7 ; ??
     // r0x8..11 ; len
-    subtype: u32, // r0x12..15,
-    bytes: &'a [u8],
+    pub subtype: u32, // r0x12..15,
+    pub bytes: &'a [u8],
 }
 impl<'a> UnknownBoma<'a> {
     pub fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, length: u32, subtype: u32) -> Result<Self, std::io::Error> {
         let bytes = cursor.read_slice((length as usize) - 16)?;
         Ok(Self { subtype, bytes })
+    }
+
+    pub fn as_utf16le(&self) -> Result<&Utf16Str, unaligned_u16::utf16::InvalidUtf16Error> {
+        Utf16Str::new(self.bytes)
     }
 }
 
@@ -258,6 +262,7 @@ pub enum BomaUtf16Variant {
     Artist = 0x4,
     Genre = 0x5,
     Kind = 0x6,
+    Equalizer = 0x7, // TODO: Map to enum from weird storage form of "#!#123#!#"
     Comment = 0x8,
     Composer = 0xC,
     Grouping = 14,

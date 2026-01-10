@@ -179,7 +179,8 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
                         let subtype = boma.get_subtype();
                         // IDK what 23 or 22 is yet
                         // 22 appeared on a library with many local tracks
-                        if !matches!(subtype, Err(UnknownBomaError(22 | 23))) {
+                        // TODO: decode equalizer
+                        if !matches!(subtype, Ok(BomaSubtype::Utf16(BomaUtf16Variant::Equalizer)) | Err(UnknownBomaError(22 | 23))) {
                             #[cfg(feature = "tracing")]
                             tracing::warn!("unexpected unknown boma {:?} on {persistent_id:?}", boma.get_subtype());
                         }
