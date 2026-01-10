@@ -107,6 +107,14 @@ pub enum Command {
         #[arg(short, long, value_name = "ID", alias = "ids")]
         ids: Option<Vec<String>>,
     },
+
+    /// Print the compression ratio(s) of the `.musicdb` file(s), recursively searching directories.
+    #[cfg(debug_assertions)]
+    #[clap(alias = "ratio")]
+    Ratios {
+        #[arg(value_name = "PATH")]
+        paths: Option<Vec<std::path::PathBuf>>,
+    }
 }
 
 impl Command {
@@ -168,6 +176,45 @@ impl Command {
                     eprintln!("Write error: {error:?}");
                 } else if !is_stdout {
                     println!("Done!");
+                }
+            }
+        
+            #[cfg(debug_assertions)]
+            Command::Ratios { paths } => {
+                use crate::MusicDB;
+                use std::fs;
+
+                let paths = paths.unwrap_or_else(|| vec![MusicDB::default_path()]);
+                let mut paths = std::collections::VecDeque::from(paths);
+                let mut ratios = Vec::with_capacity(paths.len());
+                while let Some(path) = paths.pop_front() {
+                    if path.is_dir() {
+                        for entry in fs::read_dir(&path).expect("failed to read dir") {
+                            let entry = entry.expect("failed to read dir entry");
+                            paths.push_back(entry.path());
+                        }
+                    } else if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("musicdb") {
+                        let decoded = match MusicDB::decode(&path) {
+                            Ok(decoded) => decoded,
+                            Err(error) => {
+                                eprintln!("Failed to decode {}: {}", path.display(), error);
+                                continue;
+                            }
+                        };
+
+                        let size = fs::metadata(&path).expect("failed to get metadata").len();
+                        let ratio = decoded.len() as f64 / size as f64;
+                        println!("{}: {:.2} ({} -> {})", path.display(), ratio, size, decoded.len());
+                        ratios.push(ratio);
+                    }
+                }
+
+                if ratios.len() > 1 {
+                    println!("---");
+                    let avg = ratios.iter().sum::<f64>() / ratios.len() as f64;
+                    let (min, max) = ratios.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), &r| { (min.min(r), max.max(r)) });
+                    let stddev = (ratios.iter().map(|r| (r - avg).powi(2)).sum::<f64>() / ratios.len() as f64).sqrt();
+                    println!("Average: {:.2}, Min: {:.2}, Max: {:.2}, StdDev: {:.2}", avg, min, max, stddev);
                 }
             }
         }
