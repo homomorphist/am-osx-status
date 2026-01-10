@@ -14,7 +14,7 @@ if [ $# -eq 0 ]; then
   exit 0
 fi
 
-COMMIT_MSG=$(cat "$1")
+COMMIT_MSG=$(cat "$1" | sed '/^#/d' | sed '/^$/d') # strip git comments
 
 ALLOWED_TYPES="build,chore,ci,docs,feat,fix,perf,refactor,revert,style,test" # from @commitlint/config-conventional
 ALLOWED_SCOPES="db,dev,log,ipc,osa,service,dispatch,discord,lastfm,brainz,musicdb,mzstatic,utf16,xml"
