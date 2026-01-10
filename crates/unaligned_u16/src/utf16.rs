@@ -82,8 +82,15 @@ impl<'a, T: Endian> Utf16Str<T> {
     }
 
     /// Whether this string starts with the given prefix.
-    pub fn starts_with(&self, prefix: &impl traits::starts_with::PrefixChecker) -> bool {
+    #[expect(clippy::needless_pass_by_value, reason = "this trait can be implemented for borrows")]
+    pub fn starts_with(&self, prefix: impl traits::starts_with::PrefixChecker) -> bool {
         prefix.is_prefix_of(self)
+    }
+
+    /// Whether this string contains the given substring.
+    #[expect(clippy::needless_pass_by_value, reason = "this trait can be implemented for borrows")]
+    pub fn contains(&self, substring: impl traits::contains::SubstringChecker) -> bool {
+        substring.is_substring_of(self)
     }
     
     /// How many bytes this string would take up if encoded as UTF-8.
@@ -310,6 +317,7 @@ pub mod iter {
     /// In release mode, assumes all characters are valid.
     /// 
     /// Does not implement [`core::iter::ExactSizeIterator`] because UTF-16 characters are not fixed-width, and this iterator is intentionally lazy.
+    #[derive(Clone)]
     pub struct UnalignedUtf16StrCharacterIterator<'a> {
         inner: core::char::DecodeUtf16<crate::iter::UnalignedU16SliceIterator<'a>>
     }
@@ -353,6 +361,12 @@ pub mod traits {
             /// Doesn't do any character normalization.
             fn is_prefix_of<T: Endian>(&self, against: &Utf16Str<T>) -> bool;
         }
+
+        impl PrefixChecker for char {
+            fn is_prefix_of<T: Endian>(&self, against: &Utf16Str<T>) -> bool {
+                against.chars().next() == Some(*self)
+            }
+        }
     
         impl PrefixChecker for str {
             fn is_prefix_of<T: Endian>(&self, against: &Utf16Str<T>) -> bool {
@@ -385,6 +399,66 @@ pub mod traits {
         impl<T: Endian> PrefixChecker for Utf16Str<T> {
             fn is_prefix_of<U: Endian>(&self, against: &Utf16Str<U>) -> bool {
                 self.bytes().starts_with(against.bytes())
+            }
+        }
+    }
+
+    pub mod contains {
+        use super::{Endian, Utf16Str};
+
+        pub trait SubstringChecker {
+            /// Returns true if `T` contains `self`.
+            /// Doesn't do any character normalization.
+            fn is_substring_of<T: Endian>(&self, against: &Utf16Str<T>) -> bool;
+        }
+
+        impl SubstringChecker for char {
+            fn is_substring_of<T: Endian>(&self, against: &Utf16Str<T>) -> bool {
+                against.chars().any(|c| c == *self)
+            }
+        }
+
+        impl SubstringChecker for str {
+            fn is_substring_of<T: Endian>(&self, against: &Utf16Str<T>) -> bool {
+                <dyn AsRef<Self> as SubstringChecker>::is_substring_of(&self, against)
+            }
+        }
+
+        impl SubstringChecker for &str {
+            fn is_substring_of<T: Endian>(&self, against: &Utf16Str<T>) -> bool {
+                <dyn AsRef<str> as SubstringChecker>::is_substring_of(&self, against)
+            }
+        }
+
+        impl SubstringChecker for dyn AsRef<str> + '_ {
+            fn is_substring_of<T: Endian>(&self, against: &Utf16Str<T>) -> bool {
+                let needle = self.as_ref();
+                if needle.is_empty() { return true; }
+
+                let first_char = needle.chars().next().unwrap();
+                let mut haystack = against.chars();
+                'main: loop {
+                    let mut after = haystack.clone();
+                    let mut next_first_match = None;
+                    let expecting = needle.chars();
+
+                    for (i, expected) in expecting.enumerate() {
+                        let actual = after.next();
+                        if actual.is_none_or(|char| char != expected) {
+                            if let Some(idx) = next_first_match {
+                                haystack.nth(idx);
+                            } else if haystack.next().is_none() {
+                                return false;
+                            }
+                            continue 'main;
+                        }
+                        if next_first_match.is_none() && actual == Some(first_char) {
+                            next_first_match = Some(i);
+                        }
+                    }
+
+                    break true
+                }
             }
         }
     }
@@ -639,5 +713,15 @@ mod tests {
             ("👨‍👩‍👧‍👦", "🙃"),
             ("📻", "3"),
         );
+    }
+
+    #[test]
+    fn contains() {
+        let utf16_str = utf16!(sys, "hello, 👨‍👩‍👧‍👦!");
+
+        assert!(utf16_str.contains(""));
+        assert!(utf16_str.contains(','));
+        assert!(utf16_str.contains("👨‍👩‍👧‍👦"));
+        assert!(!utf16_str.contains("world"));
     }
 }

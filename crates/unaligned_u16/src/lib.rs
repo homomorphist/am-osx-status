@@ -38,6 +38,7 @@ pub mod iter {
 
     type EndianMarkedU16SliceAddress<'a> = ointers::NotNull<u8, 0, true, 0>; 
 
+    #[derive(Debug, Clone)]
     pub struct UnalignedU16SliceIterator<'a> {
         ptr: EndianMarkedU16SliceAddress<'a>,
         len: usize,
