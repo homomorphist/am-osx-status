@@ -135,6 +135,7 @@ pub struct TrackPurchaser {
     name: String,
 }
 
+// FIXME: can't run tests cuz no sqlx backend defined so no type to derive for
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
@@ -164,15 +165,15 @@ pub struct EpisodeDetails {
 pub struct PlayedInfo {
     /// Number of times this track has been played.
     #[serde(rename = "playedCount")]
-    times: u32,
+    pub times: u32,
 
     /// The date and time this track was last played.
     #[serde(rename = "playedDate")]
-    last: Option<Time>,
+    pub last: Option<Time>,
 
     /// Whether this track has never been played before.
     #[serde(rename = "unplayed")]
-    never: bool
+    pub never: bool
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -615,7 +616,21 @@ impl Track {
             .map_err(crate::error::SingleEvaluationError::IoFailure)
             .and_then(|output| { Ok(serde_json::from_str(&output.stdout())?) })
     }
+
+    /// Fetches and returns the track with the given persistent ID, which must be passed as a 16-character uppercase hexadecimal string.
+    /// This is not a performant method; likely O(N) in addition to the cost of starting up the `osascript` instance.
+    /// 
+    /// # Safety
+    /// The passed ID is directly interpolated into the AppleScript code, so ensure that it is a valid persistent ID string, or code injection is possible.
+    pub async unsafe fn get_by_persistent_id(id: &str) -> Result<Option<Self>, crate::error::SingleEvaluationError> {
+        let query = format!("JSON.stringify(Application(\"Music\").tracks.whose({{ persistentID: \"{id}\" }})[0].properties())");
+        osascript::run::<[&str; 0], _>(&query, osascript::Language::JavaScript, [])
+            .await
+            .map_err(crate::error::SingleEvaluationError::IoFailure)
+            .and_then(|output| { Ok(serde_json::from_str(&output.stdout())?) })
+    }
 }
+
 
 #[serde_as]
 #[derive(Debug, Deserialize, Serialize ,PartialEq)]
