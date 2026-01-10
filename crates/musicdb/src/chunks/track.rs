@@ -68,7 +68,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
         let boma_count = u32!()?;
         let persistent_id = id!(Track)?;
         skip!(148)?;
-        // hey why aren't the below Optional ???? is it a bunch of zeros if not existing?
+        // These will always be valid and point to a "real" album/artist, but those albums/artists may be full of no info.
         let album_id = id!(Album)?;
         let artist_id = id!(Artist)?;
         skip_to_end!()?;
