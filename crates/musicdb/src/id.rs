@@ -109,8 +109,8 @@ pub mod cloud {
         >(S, PhantomData<T>);
         impl<T, S> Id<T, S> where S: AsRef<str> {
             pub fn new(value: S) -> Result<Self, BadNamespaceError> where T: Possessor {
-                // uhh this doesn't check for the full stop but it's ok i guess
-                if value.as_ref().starts_with(T::IDENTITY.into_namespace()) {
+                let namespace: &str = const { T::IDENTITY.into_namespace() };
+                if value.as_ref().starts_with(namespace) && value.as_ref().as_bytes().get(namespace.len()) == Some(&b'.') {
                     Ok(Self(value, PhantomData))
                 } else {
                     Err(BadNamespaceError)
