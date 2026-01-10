@@ -26,6 +26,7 @@ impl core::fmt::Display for UnknownBomaError {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BomaSubtype {
     TrackNumerics,
+    TrackPlayStatistics,
     CollectionItemMember,
     Book(BookVariant),
     Utf16(BomaUtf16Variant),
@@ -35,6 +36,7 @@ impl BomaSubtype {
     pub fn get_raw(&self) -> u32 {
         match self {
             Self::TrackNumerics => TrackNumerics::BOMA_SUBTYPE,
+            Self::TrackPlayStatistics => TrackPlayStatistics::BOMA_SUBTYPE,
             Self::CollectionItemMember => CollectionMember::BOMA_SUBTYPE,
             Self::Utf16(variant) => *variant as u32,
             Self::Utf8Xml(variant) => *variant as u32,
@@ -47,6 +49,10 @@ impl TryFrom<u32> for BomaSubtype {
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         if value == TrackNumerics::BOMA_SUBTYPE {
             return Ok(Self::TrackNumerics)
+        }
+
+        if value == TrackPlayStatistics::BOMA_SUBTYPE {
+            return Ok(Self::TrackPlayStatistics)
         }
 
         if value == CollectionMember::BOMA_SUBTYPE {
@@ -93,6 +99,7 @@ impl From<BomaUtf8Variant> for BomaSubtype {
 #[derive(Debug)]
 pub enum Boma<'a> {
     TrackNumerics(TrackNumerics<'a>),
+    TrackPlayStatistics(TrackPlayStatistics),
     CollectionMember(CollectionMember<'a>),
     Utf16(BomaUtf16<'a>),
     Utf8Xml(BomaUtf8<'a>),
@@ -114,6 +121,7 @@ impl<'a> ReadableChunk<'a> for Boma<'a> {
         Ok(match subtype {
             Ok(subtype) => match subtype {
                 BomaSubtype::TrackNumerics => Self::TrackNumerics(TrackNumerics::read_content(cursor, length)?),
+                BomaSubtype::TrackPlayStatistics => Self::TrackPlayStatistics(TrackPlayStatistics::read_content(cursor, length)?),
                 BomaSubtype::CollectionItemMember => Self::CollectionMember(CollectionMember::read_content(cursor)?),
                 BomaSubtype::Utf16(variant) => Self::Utf16(BomaUtf16::read_variant_content(cursor, variant).expect("please handle error")),
                 BomaSubtype::Utf8Xml(variant) => Self::Utf8Xml(BomaUtf8::read_variant_content(cursor, length, variant)?),
@@ -127,6 +135,7 @@ impl Boma<'_> {
     pub fn get_subtype(&self) -> Result<BomaSubtype, UnknownBomaError> {
         match self {
             Self::TrackNumerics(_) => Ok(BomaSubtype::TrackNumerics),
+            Self::TrackPlayStatistics(_) => Ok(BomaSubtype::TrackPlayStatistics),
             Self::CollectionMember(_) => Ok(BomaSubtype::CollectionItemMember),
             Self::Utf16(BomaUtf16(_, variant)) => Ok(BomaSubtype::Utf16(*variant)),
             Self::Utf8Xml(BomaUtf8(_, variant)) => Ok(BomaSubtype::Utf8Xml(*variant)),
@@ -152,7 +161,6 @@ pub struct TrackNumerics<'a> {
     /// File size, in bytes.
     pub bytes: u32,
 }
-
 impl TrackNumerics<'_> {
     pub const BOMA_SUBTYPE: u32 = 0x1;
 
@@ -199,6 +207,31 @@ impl TrackNumerics<'_> {
     /// Return the duration of the track in a [`core::time::Duration`].
     pub fn duration(&self) -> core::time::Duration {
         core::time::Duration::from_millis(self.duration_ms as u64)
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct TrackPlayStatistics {
+    pub last: Option<chrono::DateTime<chrono::Utc>>,
+    pub times: u32,
+}
+impl TrackPlayStatistics {
+    pub const BOMA_SUBTYPE: u32 = 0x17;
+
+    pub const fn never() -> Self {
+        Self {
+            last: None,
+            times: 0
+        }
+    }
+
+    pub fn read_content(cursor: &mut Cursor<&[u8]>, length: u32) -> Result<Self, std::io::Error> {
+        cursor.seek(SeekFrom::Current(4))?; // padding
+        cursor.seek(SeekFrom::Current(8))?; // skip repeat of track ID
+        let last = convert_timestamp(cursor.read_u32::<LittleEndian>()?);
+        let times = cursor.read_u32::<LittleEndian>()?;
+        cursor.seek(SeekFrom::Current(length as i64 - 36))?;
+        Ok(Self { last, times })
     }
 }
 

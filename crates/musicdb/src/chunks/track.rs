@@ -40,6 +40,7 @@ pub struct Track<'a> {
 
 
     pub numerics: TrackNumerics<'a>,
+    pub played: TrackPlayStatistics,
     pub composer: Option<&'a Utf16Str>,
     pub kind: Option<&'a Utf16Str>,
     pub copyright: Option<&'a Utf16Str>,
@@ -84,6 +85,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
         let mut sort_order_artist_name = None;
         let mut sort_order_composer = None;
         let mut numerics = None;
+        let mut played = None;
         let mut composer = None;
         let mut kind = None;
         let mut copyright = None;
@@ -133,6 +135,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
             ], |boma| {
                 match boma {
                     Boma::TrackNumerics(value) => numerics = Some(value),
+                    Boma::TrackPlayStatistics(value) => played = Some(value),
                     Boma::Book(_) => (),
                     Boma::Utf8Xml(BomaUtf8(value, BomaUtf8Variant::PlistTrackCloudInformation)) => {
                         use serde::Deserialize as _;
@@ -203,6 +206,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
             sort_order_artist_name,
             sort_order_composer,
             numerics: numerics.ok_or(TrackReadError::LackingBoma(BomaSubtype::TrackNumerics))?,
+            played: played.ok_or(TrackReadError::LackingBoma(BomaSubtype::TrackPlayStatistics))?,
             composer,
             kind,
             copyright,

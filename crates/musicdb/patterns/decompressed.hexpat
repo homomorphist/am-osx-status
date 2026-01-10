@@ -95,6 +95,7 @@ SectionBoundary bound1 @ $;
 enum BomaSubtype: u32 {
     CollectionMember = 206,
     TrackNumerics = 0x1,
+    TrackPlayStatistics = 0x17,
     
     // begin utf16
     TrackTitle = 0x2,
@@ -200,6 +201,13 @@ struct TrackNumerics {
     u32 cloud_catalog_track_id_again_again_again;
 };
 
+struct TrackPlayStatistics {
+    padding[4]; // pad
+    padding[8]; // persistent id
+    MacTime last_played_at;
+    u32 times_played;
+};
+
 struct CollectionMember {
     type::Magic<"ipfa"> signature;
     u32 length;
@@ -293,6 +301,10 @@ struct Boma {
         }
         (BomaSubtype::TrackNumerics): {
             TrackNumerics numerics;
+            padding[length - rel];
+        }
+        (BomaSubtype::TrackPlayStatistics): {
+            TrackPlayStatistics played;
             padding[length - rel];
         }
         (BomaSubtype::CollectionMember): {
