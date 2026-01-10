@@ -435,7 +435,9 @@ struct Collection {
     MacTime creation_date;
     padding[4];
     PersistentID id;
-    padding[100];
+    padding[41];
+    u8 preset_kind;
+    padding[100 - 42];
     MacTime modification_date;
     
     padding[length - rel];

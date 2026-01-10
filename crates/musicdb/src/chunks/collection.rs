@@ -65,12 +65,48 @@ impl<'a> TryFrom<&'a str> for CollectionInfo<'a> {
     }
 }
 
+macro_rules! define_preset_collection_kinds {
+    ( $( $name:ident = $value:expr ),* $(,)? ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[repr(u8)]
+        pub enum PresetCollectionKind {
+            $( $name = $value ),*
+        }
+        impl PresetCollectionKind {
+            pub fn from_u8(value: u8) -> Option<Self> {
+                match value {
+                    0 => None,
+                    $(
+                        $value => Some(PresetCollectionKind::$name),
+                    )*
+                    value => {
+                        tracing::warn!(%value, "unrecognized preset collection kind");
+                        None
+                    },
+                }
+            }
+        }
+    };
+}
+
+define_preset_collection_kinds! {
+    Music = 4,
+    Purchased = 19,
+    Genius = 26,
+    MusicVideos = 47,
+    FavoriteSongs = 61,
+    HiddenCloudPlaylistOnlyTracks = 63,
+    TvAndMovies = 64,
+    Downloaded = 65,
+}
+
 #[derive(Debug)]
 pub struct Collection<'a> {
     pub name: &'a Utf16Str,
     pub info: Option<CollectionInfo<'a>>, // not present on collection w/ name "Hidden Cloud PlaylistOnly Tracks"
     pub tracks: Vec<CollectionMember<'a>>,
     pub persistent_id: <Self as id::persistent::Possessor>::Id,
+    pub preset_kind: Option<PresetCollectionKind>,
     pub creation_date: Option<chrono::DateTime<chrono::Utc>>,
     pub modification_date: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -90,9 +126,9 @@ impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
         let creation_date = convert_timestamp(u32!()?);
         skip!(26 - (18 + 4))?;
         let persistent_id = id!(Collection)?;
-        skip!(40 - (26 + 8))?;
-        let _is_master = u8!()? == 1;
-        skip!(134 - (40 + 1))?;
+        skip!(75 - (26 + 8))?;
+        let preset_kind = PresetCollectionKind::from_u8(u8!()?);
+        skip!(134 - (75 + 1))?;
         let modification_date = convert_timestamp(u32!()?);
 
         skip_to_end!()?;
@@ -119,16 +155,14 @@ impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
         }
         let name = name.ok_or(CollectionReadError::LackingBoma(BomaUtf16Variant::PlaylistName.into()))?;
 
-        Ok(Self { name, info, tracks, persistent_id, creation_date, modification_date })
+        Ok(Self { name, info, tracks, persistent_id, preset_kind, creation_date, modification_date })
     }
 }
-// impl<'a> Collection<'a> {
-//     pub fn get_tracks_on<'b: 'a>(&self, tracks: &'a TrackMap<'a>) -> Vec<Option<&'a Track>> {
-//         self.tracks.iter()
-//             .map(|member| tracks.get(&member.track_persistent_id))
-//             .collect::<Vec<_>>()
-//     }
-// }
+impl<'a> Collection<'a> {
+    pub fn get_tracks_on<'b: 'a>(&'b self, tracks: &'a crate::TrackMap<'a>) -> impl Iterator<Item = Option<&'a Track<'a>>> + 'b {
+        self.tracks.iter().map(move |member| tracks.get(&member.track_persistent_id))
+    }
+}
 impl<'a> id::persistent::Possessor for Collection<'a> {
     type Id = PersistentId<Collection<'a>>;
     #[allow(private_interfaces)]
