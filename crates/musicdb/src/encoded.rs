@@ -51,8 +51,9 @@ pub fn decode_in_place<'a>(data: &'a mut [u8]) -> Result<(Vec<u8>, PackedFileInf
 
     let info = PackedFileInfo::read(&mut cursor).map_err(DecodeError::Io)?;
     let data = &mut data.get_mut()[info.header_size as usize..];
+    let split_at = (info.max_encrypted_byte_count as usize).min(data.len() & !0x0F);
 
-    Ok((decode_split_encryption(data, info.max_encrypted_byte_count as usize)?, info))
+    Ok((decode_split_encryption(data, split_at)?, info))
 }
 
 fn decode_split_encryption(data: &mut [u8], at: usize) -> Result<Vec<u8>, DecodeError> {
