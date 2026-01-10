@@ -133,26 +133,24 @@ impl<'a> MusicDbView<'a> {
         }
     }
 }
-impl<'a> From<&'a MusicDbView<'a>> for &'a AlbumMap<'a> {
-    fn from(value: &'a MusicDbView<'a>) -> Self {
-        &value.albums
-    }
+macro_rules! impl_db_collection_coercion {
+    ($coerce_to: ident, $field: ident) => {
+        impl<'a> From<&'a MusicDbView<'a>> for &'a $coerce_to<'a> {
+            fn from(value: &'a MusicDbView<'a>) -> Self {
+                &value.$field
+            }
+        }
+        impl<'a> From<&'a MusicDB> for &'a $coerce_to<'a> {
+            fn from(value: &'a MusicDB) -> Self {
+                &value.get_view().$field
+            }
+        }
+    };
 }
-impl<'a> From<&'a MusicDbView<'a>> for &'a ArtistMap<'a> {
-    fn from(value: &'a MusicDbView<'a>) -> Self {
-        &value.artists
-    }
-}
-impl<'a> From<&'a MusicDbView<'a>> for &'a TrackMap<'a> {
-    fn from(value: &'a MusicDbView<'a>) -> Self {
-        &value.tracks
-    }
-}
-impl<'a> From<&'a MusicDbView<'a>> for &'a CollectionMap<'a> {
-    fn from(value: &'a MusicDbView<'a>) -> Self {
-        &value.collections
-    }
-}
+impl_db_collection_coercion!(AlbumMap, albums);
+impl_db_collection_coercion!(ArtistMap, artists);
+impl_db_collection_coercion!(TrackMap, tracks);
+impl_db_collection_coercion!(CollectionMap, collections);
 
 pub struct MusicDB {
     _owned_data: Pin<Vec<u8>>,
