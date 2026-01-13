@@ -599,9 +599,14 @@ pub struct DispatchableTrack {
     pub duration: Option<core::time::Duration>,
     pub media_kind: osa_apple_music::track::MediaKind,
     pub track_number: Option<core::num::NonZero<u16>>,
+    pub apple_music_url: Option<String>,
 }
 impl DispatchableTrack {
-    pub async fn from_track(track: osa_apple_music::track::Track) -> Self {
+    pub async fn from_track(
+        track: osa_apple_music::track::Track,
+        #[cfg(feature = "musicdb")]
+        musicdb: Option<&musicdb::MusicDB>,
+    ) -> Self {
         let track = osa_apple_music::track::BasicTrack::from(track);
         let pool = crate::store::DB_POOL.get().await.inspect_err(|error| {
             tracing::error!(?error, "failed to get database connection to get cached uncensored track title");
@@ -612,15 +617,30 @@ impl DispatchableTrack {
             None => track.name,
         };
 
+        let persistent_id = StoredPersistentId::from_hex(&track.persistent_id).expect("bad track persistent ID");
+
+        let apple_music_url = {
+            #[cfg(feature = "musicdb")]
+            {
+                musicdb.and_then(|db| {
+                    let id = musicdb::PersistentId::new(persistent_id.get());
+                    db.tracks().get(&id).and_then(|t| t.numerics.apple_music_url())
+                })
+            }
+            #[cfg(not(feature = "musicdb"))]
+            { None }
+        };
+
         Self {
             name,
             album: track.album.name,
             album_artist: track.album.artist,
             artist: track.artist,
-            persistent_id: StoredPersistentId::from_hex(&track.persistent_id).expect("bad track persistent ID"),
+            persistent_id,
             media_kind: track.media_kind,
             duration: track.duration,
             track_number: track.track_number,
+            apple_music_url
         }
     }
 }
@@ -636,6 +656,7 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for DispatchableTrack {
             media_kind: row.try_get("media_kind")?,
             duration: row.try_get::<Option<f32>, _>("duration")?.map(core::time::Duration::from_secs_f32),
             track_number: row.try_get("track_number")?,
+            apple_music_url: None,
         })
     }
 }

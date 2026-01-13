@@ -95,6 +95,7 @@ impl ListenBrainz {
             duration: track.duration,
             track_number: track.track_number.map(|n| n.get().into()),
             submission_client: Some(program),
+            origin_url: track.apple_music_url.as_deref(),
             music_service: Some(MusicService::Domain("music.apple.com")),
             media_player: Some(MediaPlayer {
                 name: "Apple Music", // TODO: #30 (iTunes)

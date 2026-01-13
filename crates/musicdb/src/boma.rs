@@ -204,9 +204,20 @@ impl TrackNumerics<'_> {
         })
     }
 
-    /// Return the duration of the track in a [`core::time::Duration`].
+    /// The duration of the track as a [`core::time::Duration`].
     pub fn duration(&self) -> core::time::Duration {
         core::time::Duration::from_millis(self.duration_ms as u64)
+    }
+
+    /// A link to the track through Apple Music, if it can be made.
+    // TODO: Store regions? Names in the URL?
+    pub fn apple_music_url(&self) -> Option<String> {
+        if let Some(album_id) = self.cloud_catalog_album_id {
+            if let Some(track_id) = self.cloud_catalog_track_id {
+                return Some(format!("https://music.apple.com/album/{album_id}?i={track_id}"))
+            }
+        }
+        None
     }
 }
 
