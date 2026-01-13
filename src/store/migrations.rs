@@ -151,7 +151,7 @@ mod tests {
             sqlx::query(migration.sql_up)
                 .execute(&pool)
                 .await
-                .expect("failed to run migration");
+                .unwrap_or_else(|error| panic!("failed to run upwards migration on #{} \"{}\":\n{error}", migration.id, migration.name));
         }
 
         assert!(&dump_database(&pool).await != dumps.last().expect("no dumps"), "last migration changed the database");
@@ -160,7 +160,8 @@ mod tests {
             sqlx::query(migration.sql_down)
                 .execute(&pool)
                 .await
-                .expect("failed to run migration");
+                .unwrap_or_else(|error| panic!("failed to run downwards migration on #{} \"{}\":\n{error}", migration.id, migration.name));
+
             assert_eq_diff!(
                 &dump_database(&pool).await,
                 &dumps.pop().expect("no more dumps"),
@@ -171,7 +172,7 @@ mod tests {
         sqlx::query(init.sql_down)
             .execute(&pool)
             .await
-            .expect("failed to run migration");
+            .unwrap_or_else(|error| panic!("failed to run downwards migration for db initialization: {error:?}"));
 
         assert_eq_diff!(
             dump_database(&pool).await,
