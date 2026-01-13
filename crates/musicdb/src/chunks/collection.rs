@@ -79,7 +79,9 @@ macro_rules! define_preset_collection_kinds {
                     $(
                         $value => Some(PresetCollectionKind::$name),
                     )*
+                    #[allow(unused, reason = "used in tracing branch")]
                     value => {
+                        #[cfg(feature = "tracing")]
                         tracing::warn!(%value, "unrecognized preset collection kind");
                         None
                     },
