@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-ointers = "4.0.1"
+ointers = "5.0.0"
 thiserror = { version = "2.0.11", default-features = false }
 
 [features]

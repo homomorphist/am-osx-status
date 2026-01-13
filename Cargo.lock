@@ -1993,9 +1993,9 @@ dependencies = [
 
 [[package]]
 name = "ointers"
-version = "4.0.2"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "669f91a4f4754537768e2017deb44c3e46e687c5e04f802edb5ae672ef663c95"
+checksum = "58377c8b91ecad3cd859d64636e019f4cbac0c60a5b3d72c19845224bc43f962"
 
 [[package]]
 name = "once_cell"
