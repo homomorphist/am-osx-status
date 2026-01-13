@@ -18,7 +18,7 @@ COMMIT_MSG=$(cat "$1" | sed '/^#/d' | sed '/^$/d') # strip git comments
 
 ALLOWED_TYPES="build,chore,ci,docs,feat,fix,perf,refactor,revert,style,test" # from @commitlint/config-conventional
 ALLOWED_SCOPES="db,dev,log,ipc,osa,service,dispatch,discord,lastfm,brainz,musicdb,mzstatic,utf16,xml"
-PREFIX_REGEX="^([^)]+)(\(([^)]+)\))?!?: ." # type(scope)!:
+PREFIX_REGEX="^([^)]+)(\(([^)]+)\))?!?:\s+" # type(scope)!:
 
 if ! [[ $COMMIT_MSG =~ $PREFIX_REGEX ]]; then
   echo "Please use the Conventional Commits format for commit messages; see: https://www.conventionalcommits.org/en/v1.0.0/"
