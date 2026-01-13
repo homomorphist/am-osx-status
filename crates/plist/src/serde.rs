@@ -145,10 +145,6 @@ impl<'de> serde::de::Deserializer<'de> for &mut Deserializer<'de> {
                     "real" |
                     "date" |
                     "data" => {
-                        if tag == "data" {
-                            unimplemented!()
-                        }
-
                         match self.take_singular_child_as_text()? {
                             XmlCharacterData::Plain(plain) => visitor.visit_borrowed_str(plain),
                             XmlCharacterData::WithEntities(data) => visitor.visit_string(data.into_string()?)
