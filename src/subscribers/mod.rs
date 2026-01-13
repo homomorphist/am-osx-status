@@ -681,7 +681,7 @@ pub mod uncensor {
     #[expect(unused_imports, reason = "may be used in the future with nice verb form `uncensor::heuristically`")]
     pub use heuristically_uncensor_name as heuristically;
 
-    pub async fn uncensor_name_itunes(track: &osa_apple_music::track::BasicTrack) -> Option<String> {
+    pub async fn uncensor_track_name_itunes(track: &osa_apple_music::track::BasicTrack) -> Option<String> {
         use crate::data_fetching::services::itunes;
         itunes::find_track(&itunes::Query {
             title: track.name.as_ref(),
@@ -695,7 +695,7 @@ pub mod uncensor {
     }
 
     #[expect(unused_imports, reason = "may be used in the future with nice verb form `uncensor::with_itunes`")]
-    pub use uncensor_name_itunes as with_itunes;
+    pub use uncensor_track_name_itunes as track_with_itunes;
 
     pub async fn uncensor_track(track: &osa_apple_music::track::BasicTrack, pool: Option<sqlx::SqlitePool>) -> Option<MaybeOwnedString<'_>> {
         use crate::store::entities::CachedUncensoredTitle;
@@ -718,21 +718,16 @@ pub mod uncensor {
 
         if let Some(pool) = &pool {
             match CachedUncensoredTitle::get_by_persistent_id(pool, id).await {
-                Ok(Some(entry)) => return Some(MaybeOwnedString::Owned(entry.uncensored)),
-                Ok(None) => {}
-                Err(error) => { tracing::error!(?error, "failed to fetch cached uncensored title"); }
+                Ok(Some(entry)) => return entry.uncensored.map(MaybeOwnedString::Owned),
+                Err(error) => { tracing::error!(?error, "failed to fetch cached uncensored title"); },
+                _ => {}
             }
         }
 
-        let uncensored = uncensor_name_itunes(track).await;
+        let uncensored = uncensor_track_name_itunes(track).await;
         
-        #[expect(clippy::collapsible_if, reason = "collapsing this one looks ugly")]
-        if let Some(uncensored) = &uncensored {
-            if let Some(pool) = pool {
-                if let Err(error) = CachedUncensoredTitle::new(&pool, id, uncensored).await {
-                    tracing::error!(?error, "failed to cache uncensored title");
-                }
-            }
+        if let Some(pool) = pool && let Err(error) = CachedUncensoredTitle::new(&pool, id, uncensored.as_deref()).await {
+            tracing::error!(?error, "failed to cache uncensored title");
         }
 
         uncensored.map(MaybeOwnedString::Owned)

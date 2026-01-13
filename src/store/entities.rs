@@ -436,7 +436,8 @@ impl CachedFirstArtist {
 pub struct CachedUncensoredTitle {
     id: Key<Self>,
     pub persistent_id: StoredPersistentId,
-    pub uncensored: String,
+    pub uncensored: Option<String>,
+    pub timestamp: MillisecondTimestamp,
 }
 impl FromKey for CachedUncensoredTitle {
     const TABLE_NAME: &'static str = "uncensored_titles";
@@ -445,7 +446,7 @@ impl CachedUncensoredTitle {
     pub async fn new(
         pool: &sqlx::SqlitePool,
         persistent_id: StoredPersistentId,
-        uncensored: &str,
+        uncensored: Option<&str>,
     ) -> sqlx::Result<Self> {
         sqlx::query_as::<_, Self>(r"
             INSERT INTO uncensored_titles (
