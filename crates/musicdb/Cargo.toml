@@ -26,10 +26,11 @@ unaligned_u16 = { path = "../unaligned_u16/", features = ["utf16"] }
 
 [features]
 tracing = ["dep:tracing"]
+tracing-subscriber = ["dep:tracing-subscriber"]
 cli = ["dep:clap"]
-cli-standalone = ["cli", "tracing", "dep:tracing-subscriber"]
+cli-standalone = ["cli", "tracing", "tracing-subscriber"]
 
 [[bin]]
 name = "musicdb"
 path = "src/main.rs"
-required-features = ["cli"]
+required-features = ["cli-standalone"]

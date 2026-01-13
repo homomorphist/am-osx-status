@@ -3,7 +3,7 @@ pub use musicdb::*;
 
 fn main() {
     #[cfg(feature = "cli-standalone")]
-    tracing_subscriber::fmt::init();
+    musicdb::setup_tracing_subscriber();
     use clap::Parser;
     use cli::Arguments;
     Arguments::parse().command.handle();

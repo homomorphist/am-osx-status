@@ -2,6 +2,11 @@
 use std::{fmt::Debug, io::Cursor, path::Path, pin::Pin};
 pub(crate) type Utf16Str = unaligned_u16::utf16::Utf16Str<unaligned_u16::endian::LittleEndian>;
 
+#[cfg(any(test, feature = "tracing-subscriber"))]
+pub fn setup_tracing_subscriber() {
+    tracing_subscriber::fmt::init();
+}
+
 #[cfg(feature = "cli")]
 pub mod cli;
 
