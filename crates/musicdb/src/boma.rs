@@ -23,7 +23,7 @@ impl core::fmt::Display for UnknownBomaError {
 }
 
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BomaSubtype {
     TrackNumerics,
     TrackPlayStatistics,
@@ -33,14 +33,22 @@ pub enum BomaSubtype {
     Utf8Xml(BomaUtf8Variant),
 }
 impl BomaSubtype {
-    pub fn get_raw(&self) -> u32 {
+    pub fn get_raw(self) -> u32 {
         match self {
             Self::TrackNumerics => TrackNumerics::BOMA_SUBTYPE,
             Self::TrackPlayStatistics => TrackPlayStatistics::BOMA_SUBTYPE,
             Self::CollectionItemMember => CollectionMember::BOMA_SUBTYPE,
-            Self::Utf16(variant) => *variant as u32,
-            Self::Utf8Xml(variant) => *variant as u32,
-            Self::Book(variant) => *variant as u32,
+            Self::Utf16(variant) => variant as u32,
+            Self::Utf8Xml(variant) => variant as u32,
+            Self::Book(variant) => variant as u32,
+        }
+    }
+
+    pub const fn is_recognized_unknown(self) -> bool {
+        match self {
+            Self::Utf16(variant) => variant.is_recognized_unknown(),
+            Self::Utf8Xml(variant) => variant.is_recognized_unknown(),
+            _ => false
         }
     }
 }
@@ -123,7 +131,7 @@ impl<'a> ReadableChunk<'a> for Boma<'a> {
                 BomaSubtype::TrackNumerics => Self::TrackNumerics(TrackNumerics::read_content(cursor, length)?),
                 BomaSubtype::TrackPlayStatistics => Self::TrackPlayStatistics(TrackPlayStatistics::read_content(cursor, length)?),
                 BomaSubtype::CollectionItemMember => Self::CollectionMember(CollectionMember::read_content(cursor)?),
-                BomaSubtype::Utf16(variant) => Self::Utf16(BomaUtf16::read_variant_content(cursor, variant).expect("please handle error")),
+                BomaSubtype::Utf16(variant) => Self::Utf16(BomaUtf16::read_variant_content(cursor, variant).unwrap_or_else(|error| panic!("bad boma content on {variant:?}: {error:?}"))),
                 BomaSubtype::Utf8Xml(variant) => Self::Utf8Xml(BomaUtf8::read_variant_content(cursor, length, variant)?),
                 BomaSubtype::Book(variant) => Self::Book(BomaBook::read_variant_content(cursor, length, variant)?)
             },
@@ -144,6 +152,7 @@ impl Boma<'_> {
         }
     }
 }
+
 
 
 #[derive(Debug)]
@@ -275,8 +284,14 @@ pub enum BomaUtf16Variant {
     Kind = 0x6,
     Equalizer = 0x7, // TODO: Map to enum from weird storage form of "#!#123#!#"
     Comment = 0x8,
+    // Observed on a track with a bunch of spammy metadata pointing to a site.
+    // I don't have access to the actual track file, so I can't mess around to see what it's supposed to be.
+    TrackFieldUnknown0 = 0x9,
     Composer = 0xC,
-    Grouping = 14,
+    Grouping = 0xE,
+    TrackFieldUnknown1 = 0x12, // String of numbers with leading \0\0\0\0; https://promoonly.com/
+    TrackFieldUnknown2 = 0x16, // Appeared alongside TrackFieldUnknown0
+    TrackFieldUnknown3 = 0x34, // Right after Fairplay, "2:256"
     AlbumArtist = 0x1B,
     
     ClassicalWorkName = 63,
@@ -321,7 +336,19 @@ pub enum BomaUtf16Variant {
 
     UnknownHex1 = 0x1F4,
     ManagedMediaFolder = 0x1F8,
-    UnknownHex2 = 0x1FE
+    UnknownHex2 = 0x1FE,
+}
+impl BomaUtf16Variant {
+    pub const fn is_recognized_unknown(self) -> bool {
+        matches!(self,
+              Self::TrackFieldUnknown0
+            | Self::TrackFieldUnknown1
+            | Self::TrackFieldUnknown2
+            | Self::TrackFieldUnknown3
+            | Self::UnknownHex1
+            | Self::UnknownHex2
+        )
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -355,7 +382,22 @@ pub enum BomaUtf8Variant {
     PlistCloudDownloadInformation = 0x38,
     PlistArtworkURL = 0x192,
     PlistPlaylistInfo = 0xCD,
-    TrackLocalFilePathUrl = 11,
+    PlistAssetInfo = 0x1D,
+    TrackLocalFilePathUrl = 0xB,
+    // Observed on a track with a bunch of spammy metadata pointing to a site.
+    // I don't have access to the actual track file, so I can't mess around to see what it's supposed to be.
+    TrackFieldUnknown0 = 0x13,
+    // Observed on a track spamming in all the metadata about how it's for promotional use only.
+    // I don't have access to the actual track file, so I can't mess around to see
+    TrackFieldUnknown1 = 0x25,
+}
+impl BomaUtf8Variant {
+    pub const fn is_recognized_unknown(self) -> bool {
+        matches!(self,
+              Self::TrackFieldUnknown0
+            | Self::TrackFieldUnknown1
+        )
+    }
 }
 
 #[derive(Debug)]

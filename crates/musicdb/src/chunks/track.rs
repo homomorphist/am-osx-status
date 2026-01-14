@@ -174,15 +174,14 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
                         let raw = Raw::deserialize(&mut deserializer).unwrap(); // TODO: Handle
                         cloud_id = raw.cloud_universal_library_id.and_then(|v| unsafe { id::cloud::Library::new_unchecked(v) }.into());
                     } 
-                    Boma::Utf8Xml(BomaUtf8(_, BomaUtf8Variant::TrackLocalFilePathUrl)) => {},
+                    Boma::Utf8Xml(BomaUtf8(_, BomaUtf8Variant::TrackLocalFilePathUrl)) => {}, // TODO
+                    Boma::Utf8Xml(BomaUtf8(_, BomaUtf8Variant::PlistAssetInfo)) => {}, // TODO? Or maybe not: doesn't have much useful content, I think.
+                    Boma::Utf16(BomaUtf16(_, BomaUtf16Variant::Equalizer)) => {}, // TODO
                     boma => {
                         let subtype = boma.get_subtype();
-                        // IDK what 23 or 22 is yet
-                        // 22 appeared on a library with many local tracks
-                        // TODO: decode equalizer
-                        if !matches!(subtype, Ok(BomaSubtype::Utf16(BomaUtf16Variant::Equalizer)) | Err(UnknownBomaError(22 | 23))) {
+                        if !subtype.as_ref().is_ok_and(|s| s.is_recognized_unknown()) {
                             #[cfg(feature = "tracing")]
-                            tracing::warn!("unexpected unknown boma {:?} on {persistent_id:?}", boma.get_subtype());
+                            tracing::warn!("unexpected unknown boma {subtype:?} on {persistent_id:?}");
                         }
                     }
                 }
