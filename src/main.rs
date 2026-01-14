@@ -530,8 +530,8 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
 
             context.session.osa_fetches_track += 1;
 
-            // The track is still loading / buffering (e.g. because we're connecting to a station or radio)
-            if track.kind.is_none() {
+            // Don't process temporary tracks that are used to signify the buffering of the next track.
+            if track.album.track_count == 0 && track.playable_range.is_some_and(|d| d.end == 0.) {
                 return;
             }
 
