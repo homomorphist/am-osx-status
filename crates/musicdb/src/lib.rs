@@ -259,6 +259,38 @@ impl MusicDB {
     }
 }
 
+#[test]
+#[ignore = "needs populated samples directory"]
+fn try_all_samples() {
+    crate::setup_tracing_subscriber();
+
+    fn process_dir(path: &std::path::Path) {
+        for entry in std::fs::read_dir(path).expect("fs error") {
+            let entry = entry.expect("fs error");
+            let path = entry.path();
+            if path.is_dir() { process_dir(&path); return; }
+            tracing::info!("processing sample file: {}", path.display());
+            match path.extension().and_then(|s| s.to_str()) {
+                Some("musicdb") => {
+                    if let Err(error) = MusicDB::read_path(&path) {
+                        tracing::error!(?path, ?error, "failed to read / decode sample");
+                    } else {
+                        tracing::info!(?path, "successfully read and decoded sample");
+                    }
+                },
+                Some("decoded") => {
+                    let decoded = std::fs::read(&path).expect("fs error");
+                    let _ = MusicDB::from_decoded(decoded.into_boxed_slice(), &path);
+                    tracing::info!(?path, "successfully read pre-decoded sample");
+                }
+                _ => {}
+            }
+        }
+    }
+
+    process_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("samples"));
+}
+
 #[allow(unused)]
 pub(crate) fn xxd(mut slice: &[u8]) -> String {
     let mut out = String::new();
