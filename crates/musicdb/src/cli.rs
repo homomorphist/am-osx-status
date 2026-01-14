@@ -21,13 +21,21 @@ pub fn parse_ambiguous_id(id: &str) -> Result<u64, core::num::ParseIntError> {
         return u64::from_str_radix(hex, 16)
     }
     if let Some(dec) = stripping_prefix(["0d", "0D"], id) {
+        if let Some(signed) = dec.strip_suffix("i") {
+            let signed = signed.parse::<i64>()?;
+            return Ok(signed.cast_unsigned())
+        }
         return dec.parse::<u64>()
+    }
+    if let Some(dec) = id.strip_suffix("i") {
+        let signed = dec.parse::<i64>()?;
+        return Ok(signed.cast_unsigned())
     }
     if id.chars().any(|c| !c.is_ascii_digit()) {
         return u64::from_str_radix(id, 16)
     }
     if id.len() > 16 {
-        // couldn't be hex
+        // couldn't be hex 
         return id.parse::<u64>()
     }
 
