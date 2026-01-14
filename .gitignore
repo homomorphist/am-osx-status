@@ -1,7 +1,7 @@
 /target
 crates/**/target
+crates/musicdb/samples/**
 .DS_Store
-samples/**
 logs/**
 *.dump
 config.toml
