@@ -420,15 +420,18 @@ pub struct BomaBook<'a>(Vec<BookValue<'a>>, BookVariant);
 impl<'a> BomaBook<'a> {
     pub(crate) fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, length: u32, variant: BookVariant) -> Result<Self, std::io::Error> {
         assert_eq!(cursor.read_slice_exact::<4>()?, b"\0\0\0\0", "expected null padding");
+        let signature = cursor.read_signature()?;
 
-        if variant == BookVariant::Variant2 && matches!(cursor.peek_slice_exact::<6>()?, [/* DRIVE LETTER */ _, 0, b':', 0, b'\\', 0]) {
-            // In some cases (on windows?), this boma actually just jumps into a UTF16 path string.
+        if signature != *b"book" {
+            // In some cases (on windows?), this boma actually just jumps into a UTF16 path string or other junk.
             // Eventually we should pass context (apple music version, etc) to the reading function to conditionally handle that.
-            cursor.advance(length as i64 - 16)?;
+            #[cfg(feature = "tracing")]
+            tracing::warn!(?variant, "did not encounter expected book subtype signature");
+            cursor.advance(length as i64 - 24)?;
             return Ok(Self(vec![], variant))
         }
 
-        assert_eq!(&cursor.read_signature()?, b"book");
+        assert_eq!(&signature, b"book");
         let mut values = vec![];
         let destination = cursor.position() - 24 + length as u64;
         cursor.advance(48)?;
