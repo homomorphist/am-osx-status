@@ -102,6 +102,55 @@ pub enum DetailsParseError<'a> {
     UnknownUrlParameter
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Resolution {
+    // TODO: One-sided
+    Unfilled,
+    Filled(u16, u16),
+}
+impl Resolution {
+    pub fn get(&self, dimension: Dimension) -> Option<u16> {
+        match self {
+            Resolution::Filled(x, y) => Some(match dimension {
+                Dimension::X => *x,
+                Dimension::Y => *y
+            }),
+            _ => None
+        }
+    }
+
+    pub fn parse<'a>(url: &mut &str) -> Result<Self, DetailsParseError<'a>> {
+        if url.starts_with('{') {
+            let end = url.find('}').ok_or(DetailsParseError::MissingResolutionDelimiter)?; *url = &url[(end + 1)..]; // end of {w}
+            let end = url.find('}').ok_or(DetailsParseError::MissingResolutionDelimiter)?; *url = &url[(end + 1)..]; // end of {h}
+            return Ok(Self::Unfilled);
+        }
+
+        let mut url_borrow = *url;
+        let x = read!(url_borrow, delimit: "x").ok_or(DetailsParseError::MissingResolutionDelimiter)?;    
+        let y = read!(url_borrow, while: |char| char.is_ascii_digit());      
+        *url = &url[(url.len() - url_borrow.len())..];
+
+        Ok(Self::Filled(
+            x.parse().map_err(|err| DetailsParseError::BadResolution(err, Dimension::X))?,
+            y.parse().map_err(|err| DetailsParseError::BadResolution(err, Dimension::Y))?
+        ))
+    }
+}
+impl core::fmt::Display for Resolution {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Resolution::Filled(x, y) => write!(f, "{}x{}", x, y),
+            Resolution::Unfilled => write!(f, "{{w}}x{{h}}"),
+        }
+    }
+}
+impl From<(u16, u16)> for Resolution {
+    fn from(value: (u16, u16)) -> Self {
+        Self::Filled(value.0, value.1)
+    }
+}
+
 
 /// The primary part of an mzstatic image URL.
 /// 
@@ -118,7 +167,8 @@ pub struct Details<'a> {
     /// The resolution of the image to return.
     // TODO: Document limitations, figure out if you can provide only one value to get with native aspect ratio.
     // ^ i figured that out :-] its three effects, two for one sid omitted, one for both. idk how to represent in type system
-    pub resolution: (u16, u16),
+    // ^^^^ past me wtf why didn't you mention what those effects were??
+    pub resolution: Resolution,
     /// The language to use for the framing text, if provided.
     /// An optional [IETF language tag](https://en.wikipedia.org/wiki/IETF_language_tag), of varying levels of support.
     // Defaults to (and falls back to) English  for me; but does that differ depending on IP or something?
@@ -133,16 +183,7 @@ impl<'a> Details<'a> {
         Ok(format!("{}{image}", &url[..=last_slash]))
     }
     pub fn new(mut url: &'a str) -> Result<Self, DetailsParseError<'a>> {
-        let resolution = {
-            let x = read!(url, delimit: "x").ok_or(DetailsParseError::MissingResolutionDelimiter)?;    
-            let y = read!(url, while: |char| char.is_ascii_digit());      
-
-            (
-                x.parse().map_err(|err| DetailsParseError::BadResolution(err, Dimension::X))?,
-                y.parse().map_err(|err| DetailsParseError::BadResolution(err, Dimension::Y))?
-            )
-        };
-
+        let resolution = Resolution::parse(&mut url)?;
         let framing_or_file_extension_delimiter = url.find('.').ok_or(DetailsParseError::MissingFileExtensionDelimiter)?;
         let maybe_quality_delimiter = url.find("-");
 
@@ -189,10 +230,7 @@ impl<'a> Details<'a> {
 }
 impl core::fmt::Display for Details<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}x{}",
-            self.resolution.0,
-            self.resolution.1
-        )?;
+        write!(f, "{}", self.resolution);
         if let Some(effect) = &self.effect {
             write!(f, "{effect}")?;
         }
@@ -212,7 +250,7 @@ impl Default for Details<'_> {
             image_format: ImageFormat::Png,
             quality: None,
             effect: None,
-            resolution: (300, 300),
+            resolution: (300, 300).into(),
             language: None
         }
     }
@@ -471,7 +509,7 @@ mod tests {
             image_format: ImageFormat::Jpg,
             quality: None,
             effect: Some(Effect::SquareFitCircle),
-            resolution: (600, 600),
+            resolution: (600, 600).into(),
             language: None
         }));
     }
@@ -482,7 +520,7 @@ mod tests {
             image_format: ImageFormat::Jpg,
             quality: quality::Quality::new(159).ok(),
             effect: Some(Effect::Frame(Framing::FeaturedPlaylist(FeaturedPlaylist::Essentials(3)))),
-            resolution: (3, 401),
+            resolution: (3, 401).into(),
             language: Some(MaybeOwnedString::Borrowed("ru-RU"))
         }));
     }
