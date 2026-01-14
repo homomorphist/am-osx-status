@@ -159,17 +159,19 @@ impl_db_collection_coercion!(TrackMap, tracks);
 impl_db_collection_coercion!(CollectionList, collections);
 
 pub struct MusicDB {
-    _owned_data: Pin<Vec<u8>>,
     view: MusicDbView<'static>, // not really static; lifetime is 'self (as long as `_owned_data` exists)
-    path: std::path::PathBuf
+    path: std::path::PathBuf,
+    _owned_data: Pin<Box<[u8]>>,
 }
 
 impl MusicDB {
     pub fn read_path(path: impl AsRef<Path>) -> Result<MusicDB, encoded::DecodeError> {
+        let decoded = Self::decode(&path)?;
+        Ok(Self::from_decoded(decoded.into_boxed_slice(), path))
+    }
+    pub fn from_decoded(data: Box<[u8]>, path: impl AsRef<Path>) -> MusicDB {
         let path = path.as_ref().to_path_buf();
-        let data = &mut std::fs::read(&path)?[..];
-        let (decoded, _) = encoded::decode_in_place(data)?;
-        let data = Pin::new(decoded);
+        let data = Pin::new(data);
 
         // Obtain a slice of the data with a lifetime promoted to that of the returned instance (not actually 'static, but 'self).
         // SAFETY:
@@ -177,14 +179,13 @@ impl MusicDB {
         //  - The data will be owned by the returned struct, so if it's dropped, the view would already be invalidated as the lifetime would've expired.
         //  - The data is contiguous, and can safely be mapped to a slice.
         let slice: &'static [u8] = unsafe {
-            let addr = data.as_ptr();
-            core::slice::from_raw_parts::<'static, u8>(addr, data.len())
+            core::slice::from_raw_parts::<'static, u8>(data.as_ptr(), data.len())
         };
 
         let cursor = Cursor::new(slice);
         let view = MusicDbView::with_cursor(cursor);
 
-        Ok(Self { view, _owned_data: data, path })
+        Self { view, path, _owned_data: data }
     }
     /// Decrypts and decompresses the `.musicdb` file at the given path, returning the internal contents.
     pub fn decode(path: impl AsRef<Path>) -> Result<Vec<u8>, encoded::DecodeError> {
@@ -195,14 +196,16 @@ impl MusicDB {
     pub fn get_raw(&self) -> &[u8] {
         &self._owned_data
     }
-    pub fn get_view(&self) -> &MusicDbView<'_> {
+    pub fn get_view<'a>(&self) -> &MusicDbView<'a> {
         // 'static => 'self
         unsafe { core::mem::transmute(&self.view) }
     }
+    // TODO: Remove this method; I don't like this struct being in any way mutable since it shares the view.
     pub fn get_view_mut(&mut self) -> &mut MusicDbView<'_> {
         // 'static => 'self
         unsafe { core::mem::transmute(&mut self.view) }
     }
+    /// Updates the view by re-reading/decoding the file from disk.
     pub fn update_view(&mut self) -> Result<(), encoded::DecodeError> {
         *self = Self::read_path(self.path.as_path())?;
         Ok(())
