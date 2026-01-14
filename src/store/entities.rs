@@ -423,7 +423,9 @@ impl CachedFirstArtist {
             .fetch_optional(pool).await;
 
         if let Ok(Some(got)) = &got && got.artists != artists {
-            // data mismatch, will need to be recomputed
+            let stored = &got.artists;
+            let actual = artists;
+            tracing::debug!(%persistent_id, %stored, %actual, "stale artists for cache of first; recomputing");
             Self::remove_by_id(pool, got.id).await?;
             return Ok(None);
         }
