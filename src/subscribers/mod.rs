@@ -643,6 +643,11 @@ impl DispatchableTrack {
             apple_music_url
         }
     }
+
+    #[cfg(feature = "musicdb")]
+    pub fn on_musicdb<'a>(&self, musicdb: &musicdb::MusicDbView<'a>) -> Option<&'a musicdb::Track<'a>> {
+        musicdb.get(musicdb::PersistentId::new(self.persistent_id.get()))
+    }
 }
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for DispatchableTrack {
     fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {

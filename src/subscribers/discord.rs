@@ -104,6 +104,7 @@ impl Default for Config {
     }
 }
 
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[derive(Default)]
@@ -491,6 +492,7 @@ impl DiscordPresence {
         string
     }
 
+    #[expect(clippy::useless_let_if_seq, reason = "bad with #[cfg]")]
     fn build_activity(config: &Config, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) -> discord_presence::models::Activity {
         use osa_apple_music::track::MediaKind;
         let super::BackendContext { track, listened: _, data: additional_info, .. } = context;
@@ -516,12 +518,21 @@ impl DiscordPresence {
                 small_text: track.artist.clone().map(Self::pad_field),
             });
 
-        if let Some(itunes) = &additional_info.itunes {
-            activity = activity
-                .append_buttons(|button| button
-                    .label("Check it out!")
-                    .url(format!("https://song.link/{}&app=music", itunes.apple_music_url))
-                );
+        let mut songlink = None;
+        
+        #[cfg(feature = "musicdb")]
+        if let Some(musicdb) = context.musicdb.as_ref()
+        && let Some(track) = track.on_musicdb(musicdb.get_view()) 
+        && let Some(id) = track.numerics.cloud_catalog_track_id {
+            songlink = Some(format!("https://song.link/i/{id}"));
+        }
+
+        if songlink.is_none() && let Some(itunes) = &additional_info.itunes {
+            songlink = Some(format!("https://song.link/{url}&app=music", url = itunes.apple_music_url));
+        }
+
+        if let Some(songlink) = songlink {
+            activity = activity.append_buttons(|button| button.label("Take a listen!").url(songlink));
         }
 
         activity
