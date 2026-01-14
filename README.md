@@ -1,25 +1,70 @@
 # am-osx-status
 
-Horribly unstable macOS Apple Music state observer and recorder.
+> [!WARNING]
+> Unstable; subject to breaking changes and buggy behavior.
+
+macOS Apple Music state observer and dispatcher.
 
 ## Features
 
-- last.fm Scrobbler
-- ListenBrainz Client
-- Discord Rich Presence (w/ support for custom album art)
+### Supported Backends
+- Discord Rich Presence
+- ListenBrainz
+- Last.fm
 
-Configurable and relatively lightweight.
+## Installation
 
-## Workspace Crates
+No prebuilt binaries are provided [at this time](https://github.com/homomorphist/am-osx-status/issues/52), but instructions for compilation are included below.
 
-- [`brainz`](./crates/brainz): Supercrate for working with [MetaBrainz](https://metabrainz.org/) services; very limited in scope
-- [`itunes_api`](./crates/itunes_api/): iTunes API; very limited in scope
-- [`lastfm`](./crates/lastfm/): [last.fm](https://www.last.fm/) API; very limited in scope
-- [`maybe_owned_string`](./crates/maybe_owned_string): Enum for a value that's either a `&str` or a `String`
-- [`musicdb`](./crates/musicdb/): Apple `musicdb` format reader; currently just limited to `Library.musicdb`
-- [`mzstatic`](./crates/mzstatic/): Abstraction over Apple "mzstatic" URLs, which are used to serve album covers among many other things
-- [`osa_apple_music`](./crates/osa_apple/): Uses a socket server running w/ [`osascript`](./crates/osascript/) to interface with Apple Music
-- [`osascript`](./crates/osascript/): Reusable [osascript](https://ss64.com/mac/osascript.html) process running a REPL so spawning many processes instead isn't needed
-- [`plist`](./crates/plist/): Apple [plist](https://en.wikipedia.org/wiki/Property_list) deserializer which supports deserializing into borrowed strings on [serde](https://https://serde.rs/) structs
-- [`unaligned_u16`](./crates/unaligned_u16): unaligned u16 slices and utf-16 strings
-- [`xml`](./crates/xml): Simple XML parser; limited in functionality
+### Building
+
+To compile the application with all features enabled, you need [the Rust toolchain](https://rust-lang.org/tools/install/), an active network connection to download dependencies, and approximately 1GB of free disk space.
+
+```sh
+cargo build --release
+```
+
+This will place the executable in `./target/release/am-osx-status`.
+
+#### Feature Flags
+
+Undesired components of the application can be removed at compilation to result in a more light-weight application.
+
+```sh
+# Only support Discord Rich Presence and the usage of Catbox to host custom track artwork.
+cargo build --release --no-default-features --features=discord,catbox
+```
+
+<details>
+
+<summary>All feature flags</summary>
+<br/>
+
+- [`catbox`](https://catbox.moe/): Free file hosting service, used for hosting custom album artwork for the Discord Rich Presence
+- `musicdb` Enhanced local metadata extractor (may cause increased memory usage for a large library)
+
+##### Backends
+- `lastfm`: LastFM
+- `discord`: Discord Rich Presence
+- `listenbrainz`: ListenBrainz
+</details>
+
+### Relocation
+
+It's recommended that you move the executable to a directory added to `$PATH`, such as `/usr/local/bin`.
+
+If you plan to run the application in the background as a daemon, ensure you choose a location that won't result in you or the system moving the file elsewhere. The service will silently error if the path to the binary is rendered invalid, meaning the application will no longer function.
+
+## Usage
+
+The application can be run in the foreground with `am-osx-status start`.
+
+The first time this is done, you'll be walked through configuring the application.
+
+### Permission Prompts
+
+To minimize unnecessary network requests and read local track artwork, this application reads on-disk metadata written by the native Apple Music app. The first time these actions are performed, the operating system will display a permission prompt pop-up and the process will suspend itself until it is answered. Rejecting these may result in reduced functionality.
+
+### Daemon
+
+A persistent background service can be installed and managed via `am-osx-status service <action>`.
