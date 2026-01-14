@@ -20,6 +20,7 @@ pub struct Config {
     #[serde(default)]
     pub artwork_hosts: HostConfigurations,
 
+    #[cfg(feature = "musicdb")]
     #[serde(default)]
     pub musicdb: MusicDbConfiguration
 }
@@ -30,6 +31,7 @@ impl Default for Config {
             backends: ConfigurableBackends::default(),
             socket_path: crate::service::ipc::socket_path::clone_default(),
             artwork_hosts: HostConfigurations::default(),
+            #[cfg(feature = "musicdb")]
             musicdb: MusicDbConfiguration::default()
         }
     }
@@ -84,11 +86,13 @@ impl Default for ConfigurableBackends {
     }
 }
 
+#[cfg(feature = "musicdb")]
 #[derive(Serialize, Deserialize)]
 pub struct MusicDbConfiguration {
     pub enabled: bool,
     pub path: std::path::PathBuf
 }
+#[cfg(feature = "musicdb")]
 impl Default for MusicDbConfiguration {
     fn default() -> Self {
         Self {
@@ -97,4 +101,3 @@ impl Default for MusicDbConfiguration {
         }
     }
 }
-

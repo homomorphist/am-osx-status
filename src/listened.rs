@@ -80,6 +80,7 @@ impl Listened {
         }
     }
 
+    #[allow(unused, reason = "used only by certain featured-gated backends")]
     pub fn new_with_current(position: f32) -> Self {
         Self {
             contiguous: vec![],
@@ -87,6 +88,7 @@ impl Listened {
         }
     }
 
+    #[allow(unused, reason = "used only by certain featured-gated backends")]
     pub fn started_at(&self) -> Option<DateTime> {
         self.contiguous
             .iter()
@@ -167,6 +169,7 @@ impl Listened {
         total
     }
 
+    #[allow(unused, reason = "used only by certain featured-gated backends")]
     pub fn total_heard(&self) -> chrono::TimeDelta {
         self.contiguous.iter()
             .map(|d| d.duration)

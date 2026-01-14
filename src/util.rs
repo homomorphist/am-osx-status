@@ -1,3 +1,4 @@
+#[allow(dead_code, reason = "used only by certain featured-gated backends")]
 pub const REPOSITORY_URL: &str = "https://github.com/homomorphist/am-osx-status";
 pub const REVERSE_DNS_IDENTIFIER: &str = get_reverse_dns_identifier!();
 
@@ -9,7 +10,6 @@ use std::sync::LazyLock;
 
 /// User home directory.
 pub static HOME: LazyLock<std::path::PathBuf> = LazyLock::new(|| {
-    #[allow(deprecated)] // This binary is MacOS-exclusive; this function only has unexpected behavior on Windows.
     std::env::home_dir().expect("no home directory env detected")
 });
 
@@ -38,6 +38,7 @@ pub async fn get_macos_version() -> Option<String> {
     }
 }
 
+#[cfg_attr(not(feature = "musicdb"), expect(unused))]
 pub fn get_installed_physical_memory() -> Option<u64> {
     unsafe {
         let mut size: u64 = 0;
@@ -58,6 +59,29 @@ pub fn get_installed_physical_memory() -> Option<u64> {
         }
     }
 }
+
+#[allow(unused_macros, reason = "used when all members of a feature-gated enum are disabled")]
+macro_rules! define_empty_set {
+    ($ident: ident, $contents: ty) => {
+        #[derive(Debug, Clone, Copy, Default)]
+        pub struct $ident;
+        impl $ident {
+            pub const fn empty() -> Self {
+                Self
+            }
+            pub const fn len(self) -> usize {
+                0
+            }
+            pub const fn is_empty(self) -> bool {
+                true
+            }
+            pub fn insert(&mut self, _: $contents) {}
+        }
+    }
+}
+
+#[allow(unused_imports, reason = "used when all members of a feature-gated enum are disabled")]
+pub(crate) use define_empty_set;
 
 macro_rules! ferror {
     ($($t: tt)*) => {

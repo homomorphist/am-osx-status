@@ -5,6 +5,7 @@ use components::{Component, ComponentSolicitation};
 use components::artwork::TrackArtworkData;
 
 #[derive(Debug)]
+#[allow(dead_code, reason = "used only by certain featured-gated backends")]
 pub struct AdditionalTrackData {
     pub itunes: Option<itunes_api::Track>,
     pub images: TrackArtworkData
@@ -17,21 +18,13 @@ impl AdditionalTrackData {
         musicdb: Option<&musicdb::MusicDB>,
         artwork_manager: alloc::sync::Arc<components::artwork::ArtworkManager>
     ) -> Self {
-        let mut itunes: Option<itunes_api::Track> = None;
-
-        if solicitation.contains(Component::ITunesData) {
-            itunes = match services::itunes::find_track(&services::itunes::Query {
+        let itunes = if solicitation.contains(Component::ITunesData) {
+            services::itunes::find_track(&services::itunes::Query {
                 title: track.name.as_ref(),
                 artist: track.artist.as_deref(),
                 album: track.album.as_deref()
-            }).await {
-                Ok(itunes) => itunes,
-                Err(err) => {
-                    tracing::error!(?err, %track.persistent_id, "failed to get iTunes data");
-                    None
-                }
-            }
-        }
+            }).await.inspect_err(|error| tracing::error!(?error, %track.persistent_id, "failed to get iTunes data")).ok().flatten()
+        } else { None };
 
         Self {
             images: artwork_manager.get(&solicitation, track, itunes.as_ref(),

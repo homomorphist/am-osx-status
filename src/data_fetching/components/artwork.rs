@@ -10,6 +10,7 @@ impl LocatedResource {
             Self::Local(path) => host.hosted(&path, track).await.map(|v| v.url),
         }
     }
+    #[allow(dead_code, reason = "used only by certain featured-gated backends")]
     pub const fn as_url(&self) -> Option<&str> {
         match self {
             Self::Remote(url) => Some(url.as_str()),
@@ -141,6 +142,7 @@ impl ArtworkManager {
 
 
 #[derive(Default, Debug)]
+#[allow(dead_code, reason = "used only by certain featured-gated backends")]
 pub struct TrackArtworkData<T = LocatedResource> {
     pub artist: Option<T>,
     pub track: Option<T>
@@ -178,6 +180,7 @@ impl<T> TrackArtworkData<T> {
     }
 }
 impl TrackArtworkData<LocatedResource> {
+    #[allow(dead_code, reason = "used only by certain featured-gated backends")]
     pub fn urls(&self) -> TrackArtworkData<&str> {
         TrackArtworkData {
             artist: self.artist.as_ref().and_then(LocatedResource::as_url),

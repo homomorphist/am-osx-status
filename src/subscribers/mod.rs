@@ -359,8 +359,9 @@ macro_rules! use_backends {
             pub mod $name;
         )*
 
-        #[derive(Debug, PartialEq, Eq, Clone, Copy, enum_bitset::EnumBitset)]
-        #[bitset(name = BackendIdentitySet)]
+        #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+        #[cfg_attr(any($(feature = $feature),*), derive(enum_bitset::EnumBitset))]
+        #[cfg_attr(any($(feature = $feature),*), bitset(name = BackendIdentitySet))]
         pub enum BackendIdentity {
             $(
                 #[cfg(feature = $feature)]
@@ -368,7 +369,7 @@ macro_rules! use_backends {
             )*
         }
         impl BackendIdentity {
-            pub const fn get_name(&self) -> &'static str {
+            pub const fn get_name(self) -> &'static str {
                 match self {
                     $(
                         #[cfg(feature = $feature)]
@@ -376,7 +377,7 @@ macro_rules! use_backends {
                     )*
                 }
             }
-            pub const fn get_holey_index(&self) -> BackendIdentityIndex {
+            pub const fn get_holey_index(self) -> BackendIdentityIndex {
                 match self {
                     $(
                         #[cfg(feature = $feature)]
@@ -395,7 +396,9 @@ macro_rules! use_backends {
             }
         }
 
-        
+        #[cfg(not(any($(feature = $feature),*)))]
+        crate::util::define_empty_set!(BackendIdentitySet, BackendIdentity);
+
         #[derive(Debug)]
         pub struct BackendMap<T> {
             $(
@@ -526,6 +529,7 @@ macro_rules! use_backends {
         }
         impl Backends {
             pub fn all(&self) -> Vec<Arc<Mutex<dyn Subscriber>>> {
+                #[allow(unused_mut, reason = "not mutated when compiled without features")]
                 let mut backends: Vec<Arc<Mutex<dyn Subscriber>>> = Vec::with_capacity(MAX_ENABLED_BACKEND_COUNT as usize);
         
                 $(
@@ -547,6 +551,7 @@ macro_rules! use_backends {
                 }
             }
             pub fn get_many(&self, identities: BackendIdentitySet) -> Vec<Arc<Mutex<dyn Subscriber>>> {
+                #[allow(unused_mut, reason = "not mutated when compiled without features")]
                 let mut backends: Vec<Arc<Mutex<dyn Subscriber>>> = Vec::with_capacity(identities.len());
         
                 $(
@@ -563,6 +568,7 @@ macro_rules! use_backends {
         }
         impl core::fmt::Debug for Backends {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                #[allow(unused_mut, reason = "not mutated when compiled without features")]
                 let mut set = f.debug_set();
                 $(
                     #[cfg(feature = $feature)]
@@ -835,6 +841,7 @@ impl From<tokio::signal::unix::SignalKind> for SubscriberTerminationCause {
 struct TransientSendableUntypedRawBoxPointer(*mut u8); // are we so fr
 unsafe impl Send for TransientSendableUntypedRawBoxPointer {}
 
+#[allow(unused_imports, reason = "subscribe won't be used if compiled without backends")]
 pub use subscription::{Subscriber, subscribe};
 pub mod subscription {
     use crate::data_fetching::components::ComponentSolicitation;
@@ -975,6 +982,7 @@ pub mod subscription {
                 }
             }
 
+            #[allow(unused_imports, reason = "will not be used if all features are disabled")]
             pub use define_subscriber;
         };
         (@trait@ $(#[$meta:meta])* $name:ident<$context: ty>) => {
@@ -988,6 +996,7 @@ pub mod subscription {
         };
         (@trait@ $(#[$meta:meta])* $name:ident<$context: ty, $return: ty>) => {
             $(#[$meta])*
+            #[allow(unused, reason = "subscriber making use of this may be disabled with feature flags")]
             #[async_trait::async_trait]
             pub trait $name: Subscriber {
                 type Identity: $crate::subscribers::subscription::TypeIdentity;
@@ -1066,6 +1075,7 @@ impl Backends {
         self.get_solicitations_from(self.all(), event).await
     }
 
+    #[allow(unused, reason = "none of this is relevant / gets used when compiled without features")]
     #[tracing::instrument(skip(backends), level = "debug")]
     pub async fn get_solicitations_from(&self, backends: Vec<Arc<Mutex<dyn Subscriber>>>, event: subscription::Identity) -> ComponentSolicitation {
         let mut solicitation = ComponentSolicitation::default();
@@ -1079,9 +1089,9 @@ impl Backends {
             match job.await {
                 Ok(Some(got)) => solicitation |= got,
                 Ok(None) => (),
-                Err(err) => {
+                Err(error) => {
                     let backend = self.all()[i].lock().await.get_identity().get_name();
-                    tracing::error!(?err, backend, "error getting solicitation; skipping");
+                    tracing::error!(?error, backend, "error getting solicitation; skipping");
                 },
             }
         }
@@ -1094,6 +1104,7 @@ impl Backends {
         self.dispatch_to::<T>(self.all(), context).await
     }
 
+    #[allow(unused, reason = "none of this is relevant / gets used when compiled without features")]
     #[tracing::instrument(skip(backends, context), level = "debug")]
     pub async fn dispatch_to<T: subscription::TypeIdentity>(&self, backends: Vec<Arc<Mutex<dyn Subscriber>>>, context: T::DispatchContext) -> BackendMap<Result<T::DispatchReturn, DispatchError>> {
         let mut outputs  = BackendMap::<Result<<T as subscription::TypeIdentity>::DispatchReturn, DispatchError>>::new();
@@ -1120,9 +1131,9 @@ impl Backends {
                         *ptr
                     }));
                 },
-                Err(err) => {
+                Err(error) => {
                     let backend = self.all()[i].lock().await.get_identity().get_name();
-                    tracing::error!(?err, backend, "error dispatching track completion");
+                    tracing::error!(?error, backend, "error dispatching track completion");
                 }
             }
         };
@@ -1171,6 +1182,7 @@ impl Backends {
         }
     }
 
+    #[allow(unused, reason = "not utilized when compiled without any backends")]
     pub async fn new(config: &crate::config::Config, redispatch_start_request_tx: tokio::sync::mpsc::Sender<crate::subscribers::BackendIdentity>) -> Self {        
         #[cfg(feature = "lastfm")]
         use crate::subscribers::lastfm::*;

@@ -1,6 +1,4 @@
 use crate::subscribers::DispatchableTrack;
-use tokio::sync::Mutex;
-use alloc::sync::Arc;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OrderedHostList(pub Vec<HostIdentity>);
@@ -44,7 +42,7 @@ macro_rules! define_hosts {
                     )*
                 ]
             }
-            pub const fn aliases(&self) -> &'static [&'static str] {
+            pub const fn aliases(self) -> &'static [&'static str] {
                 match self {
                     $(
                         $(#[cfg(feature = $feature)])?
@@ -101,7 +99,7 @@ macro_rules! define_hosts {
             $(
                 #[serde(default, skip_serializing_if = "Option::is_none")]
                 $(#[cfg(feature = $feature)])?
-                $mod: Option<Arc<<$mod::Host as CustomArtworkHostMetadata>::Config>>
+                $mod: Option<alloc::sync::Arc<<$mod::Host as CustomArtworkHostMetadata>::Config>>
             ),*
         }
 
@@ -109,7 +107,7 @@ macro_rules! define_hosts {
         $instances_vis struct $instances {
             $(
                 $(#[cfg(feature = $feature)])?
-                $mod: Option<Mutex<Box<dyn CustomArtworkHost>>>
+                $mod: Option<tokio::sync::Mutex<Box<dyn CustomArtworkHost>>>
             ),*
         }
         impl $instances {
@@ -121,9 +119,12 @@ macro_rules! define_hosts {
                     )*
                 }
             }
+
+            #[cfg_attr(not(any($($(feature = $feature,)?)*)), expect(unused_mut, unused_variables, reason = "nothing will occur if there's nothing to iterate over"))]
             pub async fn new(configs: &$configs) -> Self {
                 type Entry<'a> = (&'a HostIdentity, tokio::task::JoinHandle<Box<dyn CustomArtworkHost>>);
                 let order = &configs.order.0;
+
                 let mut handles = Vec::<Entry<'_>>::with_capacity(order.len());
 
                 for identity in order { 
@@ -131,7 +132,7 @@ macro_rules! define_hosts {
                         $(
                             $(#[cfg(feature = $feature)])?
                             $enum::$variant => {
-                                let config = configs.$mod.clone().unwrap_or_else(|| Arc::new({
+                                let config = configs.$mod.clone().unwrap_or_else(|| alloc::sync::Arc::new({
                                     <$mod::Host as CustomArtworkHostMetadata>::Config::default()
                                 }));
                                 handles.push((identity, tokio::spawn(async move {
@@ -139,19 +140,24 @@ macro_rules! define_hosts {
                                 })))
                             },
                         )*
+                        #[cfg_attr(any($($(feature = $feature,)?)*), expect(unreachable_patterns))]
+                        _ => unreachable!(),
                     }
                 }
 
                 let mut instances = Self::none();
+
                 for (identity, handle) in handles {
                     match identity {
                         $(
                             $(#[cfg(feature = $feature)])?
                             $enum::$variant => {
                                 let host = handle.await.expect("failed to initialize custom artwork host");
-                                instances.$mod = Some(Mutex::new(host));
+                                instances.$mod = Some(tokio::sync::Mutex::new(host));
                             },
                         )*
+                        #[cfg_attr(any($($(feature = $feature,)?)*), expect(unreachable_patterns))]
+                        _ => unreachable!(),
                     }
                 }
                 instances
@@ -183,6 +189,7 @@ define_hosts!(
     ]
 );
 
+#[allow(dead_code, reason = "won't be made if all artwork hosts are disabled by features")]
 #[derive(thiserror::Error, Debug)]
 pub enum UploadError {
     #[error("an unknown error occurred while uploading the custom track artwork")]
@@ -191,25 +198,9 @@ pub enum UploadError {
     SqlxError(#[from] sqlx::Error),
 }
 
-
-// TODO: Retrieval from web providers.
-
-// #[derive(thiserror::Error, Debug)]
-// pub enum RetrievalError {
-//     #[error("an unknown error occurred while retrieving the custom track artwork url")]
-//     UnknownError,
-// }
-
-// #[derive(thiserror::Error, Debug)]
-// pub enum CustomArtworkHostError {
-//     #[error("{0}")]
-//     UploadError(#[from] UploadError),
-//     #[error("{0}")]
-//     RetrievalError(#[from] RetrievalError)
-// }
-
 #[async_trait::async_trait]
 pub trait CustomArtworkHost: core::fmt::Debug + Send {
+    #[allow(dead_code, reason = "won't be called if all artwork hosts are disabled by features")]
     async fn new(config: &<Self as CustomArtworkHostMetadata>::Config) -> Self where Self: Sized + CustomArtworkHostMetadata;
     async fn upload(&mut self, pool: &sqlx::SqlitePool, track: &DispatchableTrack, path: &str) -> Result<crate::store::entities::CustomArtworkUrl, UploadError>;
 }

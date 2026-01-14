@@ -15,10 +15,9 @@ fn str_to_boolish(str: &str) -> Option<bool>  {
     None
 }
 
+#[allow(dead_code, reason = "used only by certain featured-gated backends")]
 pub mod io {
     use std::io::{Write, BufRead};
-
-    use crate::util::ferror;
 
     use super::*;
     
@@ -208,7 +207,7 @@ pub mod io {
                         session_key: Some(key)
                     }),
                     Err(error) => {
-                        ferror!("couldn't create session key: {error}");
+                        crate::util::ferror!("couldn't create session key: {error}");
                     }
                 }
             } else { None }

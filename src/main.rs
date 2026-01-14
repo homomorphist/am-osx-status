@@ -368,8 +368,9 @@ impl PollingContext {
                 Some(musicdb)
             })) } else { Box::pin(async { Ok(None) }) }
         };
+        
         #[cfg(not(feature = "musicdb"))]
-        let musicdb = Box::pin(async { Ok(None) });
+        let musicdb = Box::pin(async { Ok::<Option<()>, tokio::task::JoinError>(None) });
 
         let (redispatch_start_request_tx, mut redispatch_start_request_rx,) = tokio::sync::mpsc::channel(8);
         let redispatch_start_requesters = Arc::new(Mutex::new(crate::subscribers::BackendIdentitySet::empty()));
@@ -400,6 +401,7 @@ impl PollingContext {
         let session = store::entities::Session::new(&player_version, migration_id)
             .await.unwrap_or_else(|err| ferror!("failed to create session in database: {}", err));
 
+        #[cfg_attr(not(feature = "musicdb"), expect(unused_variables, reason = "unused when disabled"))]
         let musicdb = match musicdb {
             Ok(musicdb) => Arc::new(musicdb),
             Err(error) => {
@@ -503,7 +505,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                 tracing::warn!(?state, "unsupported player state encountered; treating as normal continuous playback. behavior might be funky");
             }
 
-            let track = match context.jxa.now_playing().instrument(tracing::trace_span!("track retrieval")).await {
+            let track = match context.jxa.current_track().instrument(tracing::trace_span!("track retrieval")).await {
                 Ok(Some(track)) => track,
                 Ok(None) => return,
                 Err(err) => {
@@ -528,13 +530,8 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
 
             context.session.osa_fetches_track += 1;
 
-            // buffering / loading intermissions
-            if track.kind.is_none() && (
-                // TODO: What about other locales?
-                //       I can't remember if there's a legit reason `track.kind` would be `None` that isn't loading, but maybe?
-                track.name == "Connecting…" ||
-                track.name.ends_with("Station")
-            ) {
+            // The track is still loading / buffering (e.g. because we're connecting to a station or radio)
+            if track.kind.is_none() {
                 return;
             }
 
