@@ -78,7 +78,7 @@ impl From<i64> for MillisecondTimestamp {
 }
 
 /// SQLite doesn't support 8-bit unsigned integers, so use an i64 as an intermediary representation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct StoredPersistentId(i64);
 impl StoredPersistentId {
     pub const fn new(id: u64) -> Self {
@@ -135,6 +135,11 @@ impl sqlx::Type<sqlx::Sqlite> for StoredPersistentId {
     }
     fn compatible(ty: &<sqlx::Sqlite as sqlx::Database>::TypeInfo) -> bool {
         <i64 as sqlx::Type<sqlx::Sqlite>>::compatible(ty)
+    }
+}
+impl core::fmt::Debug for StoredPersistentId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "StoredPersistentId({})", self.get())
     }
 }
 impl core::fmt::Display for StoredPersistentId {
