@@ -115,13 +115,14 @@ pub async fn get_artwork(persistent_id: i64) -> Result<Option<LocatedResource>, 
             Some(info) => {
                 const CACHE_ID: usize = 1; // it's kinda borked
                 Ok(Some(LocatedResource::Local(
-                    format!("{}/{}_sk_{}_cid_{}.{}",
-                        ARTWORKD_PATH.join("artwork").as_path().display(),
-                        info.hash_string,
-                        info.kind as u8,
-                        CACHE_ID,
-                        get_file_extension(&info)
-                    )
+                    ARTWORKD_PATH
+                        .join("artwork")
+                        .join(format!("{}_sk_{}_cid_{}.{}",
+                            info.hash_string,
+                            info.kind as u8,
+                            CACHE_ID,
+                            get_file_extension(&info)
+                        ))
                 )))
             }
         }

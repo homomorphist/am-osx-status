@@ -193,16 +193,20 @@ define_hosts!(
 #[derive(thiserror::Error, Debug)]
 pub enum UploadError {
     #[error("an unknown error occurred while uploading the custom track artwork")]
-    UnknownError,
+    Unknown,
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("reqwest error: {0}")]
+    Reqwest(#[from] reqwest::Error),
     #[error("sqlx error: {0}")]
-    SqlxError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
 }
 
 #[async_trait::async_trait]
 pub trait CustomArtworkHost: core::fmt::Debug + Send {
     #[allow(dead_code, reason = "won't be called if all artwork hosts are disabled by features")]
     async fn new(config: &<Self as CustomArtworkHostMetadata>::Config) -> Self where Self: Sized + CustomArtworkHostMetadata;
-    async fn upload(&mut self, pool: &sqlx::SqlitePool, track: &DispatchableTrack, path: &str) -> Result<crate::store::entities::CustomArtworkUrl, UploadError>;
+    async fn upload(&mut self, client: &reqwest::Client, pool: &sqlx::SqlitePool, track: &DispatchableTrack, path: &std::path::Path) -> Result<crate::store::entities::CustomArtworkUrl, UploadError>;
 }
 pub trait CustomArtworkHostMetadata {
     #[expect(unused)]

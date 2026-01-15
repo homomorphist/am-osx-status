@@ -319,7 +319,7 @@ impl CustomArtworkUrl {
     pub async fn new(
         pool: &sqlx::SqlitePool,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
-        source_path: &str,
+        source_path: &std::path::Path,
         artwork_url: &str,
     ) -> sqlx::Result<Self> {
         let expires_at = expires_at.map(|dt| dt.timestamp_millis());
@@ -331,19 +331,19 @@ impl CustomArtworkUrl {
             ) VALUES (?, ?, ?) RETURNING *
         ")
             .bind(expires_at)
-            .bind(source_path)
+            .bind(source_path.to_string_lossy().as_ref())
             .bind(artwork_url)
             .fetch_one(pool).await
     }
 
     pub async fn get_by_source_path_in_pool(
         pool: &sqlx::SqlitePool,
-        source_path: &str,
+        source_path: &std::path::Path,
     ) -> sqlx::Result<Option<Self>> {
         sqlx::query_as::<_, Self>(r"
             SELECT * FROM custom_artwork_urls WHERE source_path = ?
         ")
-            .bind(source_path)
+            .bind(source_path.to_string_lossy().as_ref())
             .fetch_optional(pool).await
     }
     

@@ -12,7 +12,6 @@ repository = "https://github.com/homomorphist/am-osx-status"
 [dependencies]
 async-trait = "0.1.83"
 brainz = { path = "./crates/brainz/", optional = true }
-catbox = { version = "0.8.2", optional = true }
 chrono = "0.4.38"
 clap = { version = "4.5.18", features = ["cargo", "derive"] }
 console-subscriber = "0.4.0"
@@ -21,7 +20,7 @@ lastfm = { path = "./crates/lastfm", optional = true }
 maybe_owned_string = { path = "./crates/maybe_owned_string/" }
 musicdb = { path = "./crates/musicdb/", features = ["tracing"], optional = true }
 mzstatic = { path = "./crates/mzstatic/" }
-reqwest = "0.12.7"
+reqwest = { version = "0.12.7", features = ["multipart", "stream"] }
 serde = { version = "1.0.214", features = ["derive"] }
 serde_json = "1.0.128"
 strum = { version = "0.26.3", features = ["derive"] }
@@ -54,7 +53,7 @@ all = ["discord", "listenbrainz", "lastfm", "catbox", "musicdb"]
 discord = ["dep:discord-presence"]
 listenbrainz = ["dep:brainz"]
 lastfm = ["dep:lastfm"]
-catbox = ["dep:catbox"]
+catbox = []
 musicdb = ["dep:musicdb"]
 tokio_console = []
 

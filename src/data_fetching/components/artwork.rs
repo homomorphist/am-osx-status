@@ -1,7 +1,7 @@
 #[derive(Debug, Clone)]
 pub enum LocatedResource {
     Remote(String),
-    Local(String),
+    Local(std::path::PathBuf),
 }
 impl LocatedResource {
     pub async fn into_uploaded(self, host: &ArtworkManager, track: &crate::subscribers::DispatchableTrack) -> Option<String> {
@@ -18,10 +18,10 @@ impl LocatedResource {
         }
     }
     #[expect(dead_code, reason = "might be useful later")]
-    pub const fn as_path(&self) -> Option<&str> {
+    pub fn as_path(&self) -> Option<&std::path::Path> {
         match self {
             Self::Remote(_) => None,
-            Self::Local(path) => Some(path.as_str()),
+            Self::Local(path) => Some(path.as_path()),
         }
     }
 }
@@ -38,16 +38,21 @@ use crate::store::entities::CustomArtworkUrl;
 pub struct ArtworkManager {
     host_order: custom_artwork_host::OrderedHostList,
     hosts: custom_artwork_host::Hosts,
+    network_client: reqwest::Client,
 }
 impl ArtworkManager {
     pub async fn new(host_configurations: &custom_artwork_host::HostConfigurations) -> Self {
         Self {
             hosts: custom_artwork_host::Hosts::new(host_configurations).await,
             host_order: host_configurations.order.clone(),
+            network_client: reqwest::ClientBuilder::new()
+                .user_agent(concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")))
+                .build()
+                .expect("failed to build reqwest client"),
         }
     }
 
-    pub async fn hosted(&self, file_path: &str, track: &crate::subscribers::DispatchableTrack) -> Option<CustomArtworkUrl> {
+    pub async fn hosted(&self, file_path: &std::path::Path, track: &crate::subscribers::DispatchableTrack) -> Option<CustomArtworkUrl> {
         let pool = crate::store::DB_POOL.get().await.expect("failed to get pool");
 
         if let Some(existing) = CustomArtworkUrl::get_by_source_path_in_pool(&pool, file_path).await.ok().flatten() {
@@ -63,7 +68,7 @@ impl ArtworkManager {
         }   
 
         for identity in &self.host_order.0 {
-            match self.hosts.get(*identity).await?.upload(&pool, track, file_path.as_ref()).await {
+            match self.hosts.get(*identity).await?.upload(&self.network_client, &pool, track, file_path).await {
                 Ok(url) => return Some(url),
                 Err(err) => tracing::warn!(?err, "failed to upload custom artwork")
             }
