@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 base64 = "0.22.1"
-thiserror = "1.0.65"
+thiserror = "2.0.17"
 maybe_owned_string = { path = "../maybe_owned_string/" }
 
 [features]

@@ -14,7 +14,7 @@ async-trait = "0.1.83"
 brainz = { path = "./crates/brainz/", optional = true }
 chrono = "0.4.38"
 clap = { version = "4.5.18", features = ["cargo", "derive"] }
-console-subscriber = "0.4.0"
+console-subscriber = "0.5.0"
 discord-presence = { version = "2.1.0",  optional = true }
 lastfm = { path = "./crates/lastfm", optional = true }
 maybe_owned_string = { path = "./crates/maybe_owned_string/" }
@@ -24,7 +24,7 @@ reqwest = { version = "0.12.7", features = ["multipart", "stream"] }
 serde = { version = "1.0.214", features = ["derive"] }
 serde_json = "1.0.128"
 strum = { version = "0.26.3", features = ["derive"] }
-thiserror = "1.0.64"
+thiserror = "2.0.17"
 tokio = { version = "1", features = ["full", "tracing"] }
 toml = "0.8.19"
 tracing = "0.1.40"
