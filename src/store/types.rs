@@ -148,13 +148,13 @@ impl core::fmt::Display for StoredPersistentId {
     }
 }
 #[cfg(feature = "musicdb")]
-impl<T> From<StoredPersistentId> for musicdb::PersistentId<T> {
+impl<T: musicdb::id::persistent::Possessor> From<StoredPersistentId> for musicdb::PersistentId<T> {
     fn from(val: StoredPersistentId) -> Self {
         Self::new(val.get())
     }
 }
 #[cfg(feature = "musicdb")]
-impl<T> From<musicdb::PersistentId<T>> for StoredPersistentId {
+impl<T: musicdb::id::persistent::Possessor> From<musicdb::PersistentId<T>> for StoredPersistentId {
     fn from(value: musicdb::PersistentId<T>) -> Self {
         Self::new(value.get_raw())
     }

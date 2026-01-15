@@ -9,8 +9,8 @@ pub mod persistent {
     /// It is unchanging over time, and is always present for an entity, no matter if it's local or cloud-based.
     /// 
     /// TBD: Is it shared per-machine or per-cloud-sync?
-    pub struct Id<T>(u64, PhantomData<T>);
-    impl<T> Id<T> {
+    pub struct Id<T: Possessor>(u64, PhantomData<T>);
+    impl<T: Possessor> Id<T> {
         // todo: ctor should be unsafe (cuz not positively present or tied to type)
         
         pub fn from_hex(value: &str) -> Result<Self, core::num::ParseIntError> {
@@ -30,32 +30,32 @@ pub mod persistent {
             self.0
         }
     }
-    impl<T> Clone for Id<T> {
+    impl<T: Possessor> Clone for Id<T> {
         fn clone(&self) -> Self { *self }
     }
-    impl<T> Copy for Id<T> {}
-    impl<T> PartialEq for Id<T> {
+    impl<T: Possessor> Copy for Id<T> {}
+    impl<T: Possessor> PartialEq for Id<T> {
         fn eq(&self, other: &Self) -> bool {
             self.0 == other.0
         }
     }
-    impl<T> Eq for Id<T> {}
-    impl<T> Hash for Id<T> {
+    impl<T: Possessor> Eq for Id<T> {}
+    impl<T: Possessor> Hash for Id<T> {
         fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
             state.write_u64(self.0);
         }
     }
-    impl<T> From<u64> for Id<T> {
+    impl<T: Possessor> From<u64> for Id<T> {
         fn from(value: u64) -> Self {
             Self::new(value)
         }
     }
-    impl<T> From<Id<T>> for u64 {
+    impl<T: Possessor> From<Id<T>> for u64 {
         fn from(val: Id<T>) -> Self {
             val.0
         }
     }
-    impl<T> TryFrom<&str> for Id<T> {
+    impl<T: Possessor> TryFrom<&str> for Id<T> {
         type Error = core::num::ParseIntError;
         fn try_from(value: &str) -> Result<Self, Self::Error> {
             Ok(Id::new(u64::from_str_radix(value, 16)?))
