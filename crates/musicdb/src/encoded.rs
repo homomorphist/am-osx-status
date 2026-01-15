@@ -178,6 +178,8 @@ mod tests {
         let mut file = std::fs::File::open(path).expect("failed to open file");
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).expect("failed to read file");
-        let _ = decode_in_place(&mut bytes[..]).expect("failed to decode file");
+        let original_size = bytes.len();
+        let (decoded, _) = decode_in_place(&mut bytes[..]).expect("failed to decode file");
+        assert!(decoded.len() > original_size, "should have grown due to decompression");
     }    
 }
