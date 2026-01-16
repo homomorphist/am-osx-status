@@ -106,7 +106,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
             }
         }
 
-        let mut deserializer = cursor.deserializer.take().unwrap().clear_with_new_lifetime();
+        let mut deserializer = cursor.deserializer.take().unwrap();
 
         for boma in cursor.reading_chunks::<Boma>(appendage_lengths.count as usize) {
             match_boma_utf16_or!(boma?, [
@@ -141,14 +141,13 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
 
                         #[derive(serde::Deserialize, Debug)]
                         #[serde(rename_all = "kebab-case")]
-                        #[allow(unused)]
                         struct Raw<'a> {
-                            #[serde(borrow)] cloud_album_id: Option<MaybeOwnedString<'a>>,
+                            // #[serde(borrow)] cloud_album_id: Option<MaybeOwnedString<'a>>,
+                            // #[serde(borrow)] cloud_artist_id: Option<MaybeOwnedString<'a>>,
+                            // #[serde(borrow)] cloud_artwork_url: Option<MaybeOwnedString<'a>>,
                             #[serde(borrow)] cloud_artwork_token: Option<MaybeOwnedString<'a>>,
-                            #[serde(borrow)] cloud_artist_id: Option<MaybeOwnedString<'a>>,
-                            #[serde(borrow)] cloud_artwork_url: Option<MaybeOwnedString<'a>>,
-                            #[serde(borrow)] cloud_lyrics: Option<MaybeOwnedString<'a>>,
-                            #[serde(borrow)] cloud_lyrics_tokens: Option<MaybeOwnedString<'a>>
+                            // #[serde(borrow)] cloud_lyrics: Option<MaybeOwnedString<'a>>,
+                            // #[serde(borrow)] cloud_lyrics_tokens: Option<MaybeOwnedString<'a>>
                         }
 
                         assert!(deserializer.parse(value).unwrap(), "no value parsed");
@@ -160,9 +159,8 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
 
                         #[derive(serde::Deserialize, Debug)]
                         #[serde(rename_all = "kebab-case")]
-                        #[allow(unused)]
                         struct Raw<'a> {
-                            #[serde(borrow)] redownload_params: Option<MaybeOwnedString<'a>>,
+                            // #[serde(borrow)] redownload_params: Option<MaybeOwnedString<'a>>,
                             #[serde(borrow)] cloud_universal_library_id: Option<MaybeOwnedString<'a>>,
                         }
                         
