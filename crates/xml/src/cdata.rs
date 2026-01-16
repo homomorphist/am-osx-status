@@ -331,6 +331,7 @@ mod escapes_chunks_iterator {
 }
 
 /// Lazily-escaped XML character data.
+// TODO: Arena from these? Maybe even intern them?
 // NOTE: This will still allocate if given data that doesn't need any escaping.
 //       As such, you should check for the presence of escaping prior to constructing this.
 // TODO: Implement PartialEq<

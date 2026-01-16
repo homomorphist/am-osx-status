@@ -51,6 +51,7 @@ pub mod vec {
         }
     }
 
+    // TODO: The `NodeReferenceList` being a Vec is still kinda bad, no? I think we need a root flattened array structure.
     #[derive(PartialEq, Debug)]
     pub struct VecNodeArena<'a>(Vec<RefCell<Option<super::Node<'a, VecNodeArena<'a>>>>>);
     impl<'a> super::NodeArena<'a> for VecNodeArena<'a> {
@@ -79,6 +80,10 @@ pub mod vec {
     
         pub fn with_capacity(capacity: usize) -> Self {
             Self(Vec::with_capacity(capacity))
+        }
+
+        pub fn reset(&mut self) {
+            self.0.clear();
         }
 
         /// # Safety

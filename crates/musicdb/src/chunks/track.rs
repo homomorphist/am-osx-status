@@ -98,13 +98,15 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
         let mut cloud_id = None;
 
         macro_rules! match_boma_utf16_or {
-            ($boma: expr, [$(($variant: ident, $variable: ident)$(,)?)*], $fallback: expr) => {
+            ($boma: expr, [$(($variant: ident, $variable: ident)$(,)?)*], |$fallback_boma: ident| $($t: tt)*) => {
                 match $boma {
                     $(Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::$variant)) => { $variable = Some(value) }),*
-                    boma => $fallback(boma)
+                    $fallback_boma => $($t)*
                 }
             }
         }
+
+        let mut deserializer = cursor.deserializer.take().unwrap().clear_with_new_lifetime();
 
         for boma in cursor.reading_chunks::<Boma>(appendage_lengths.count as usize) {
             match_boma_utf16_or!(boma?, [
@@ -149,10 +151,8 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
                             #[serde(borrow)] cloud_lyrics_tokens: Option<MaybeOwnedString<'a>>
                         }
 
-
-                        let mut deserializer = plist::serde::Deserializer::parse(value).unwrap().expect("a value should be present");
-                        let raw = Raw::deserialize(&mut deserializer).unwrap(); // TODO: Handle
-                    
+                        assert!(deserializer.parse(value).unwrap(), "no value parsed");
+                        let raw = Raw::deserialize(&mut deserializer).unwrap();
                         artwork = raw.cloud_artwork_token.and_then(|v| MzStaticImage::with_pool_and_token(v).ok())
                     }
                     Boma::Utf8Xml(BomaUtf8(value, BomaUtf8Variant::PlistCloudDownloadInformation)) => {
@@ -165,10 +165,9 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
                             #[serde(borrow)] redownload_params: Option<MaybeOwnedString<'a>>,
                             #[serde(borrow)] cloud_universal_library_id: Option<MaybeOwnedString<'a>>,
                         }
-
-
-                        let mut deserializer = plist::serde::Deserializer::parse(value).unwrap().expect("a value should be present");
-                        let raw = Raw::deserialize(&mut deserializer).unwrap(); // TODO: Handle
+                        
+                        assert!(deserializer.parse(value).unwrap(), "no value parsed");
+                        let raw = Raw::deserialize(&mut deserializer).unwrap();
                         cloud_id = raw.cloud_universal_library_id.and_then(|v| unsafe { id::cloud::Library::new_unchecked(v) }.into());
                     } 
                     Boma::Utf8Xml(BomaUtf8(_, BomaUtf8Variant::TrackLocalFilePathUrl)) => {}, // TODO
@@ -185,6 +184,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
             });
         }
 
+        cursor.deserializer = Some(deserializer);
 
         Ok(Self {
             artwork,

@@ -52,7 +52,8 @@ impl<'a> TryFrom<&'a str> for CollectionInfo<'a> {
         }
 
 
-        let mut deserializer = plist::serde::Deserializer::parse(value)?.expect("a value should be present");
+        let mut deserializer = plist::serde::Deserializer::with_capacity(20);
+        assert!(deserializer.parse(value).unwrap(), "a value should be present");
         let raw = Raw::deserialize(&mut deserializer)?;
 
         Ok(CollectionInfo {

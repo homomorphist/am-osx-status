@@ -18,10 +18,11 @@ pub trait Chunk {
 pub struct ChunkCursor<'a> {
     data: &'a [u8],
     position: usize,
+    pub deserializer: Option<plist::serde::Deserializer<'a>>,
 }
 impl<'a> ChunkCursor<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        Self { data, position: 0 }
+        Self { data, position: 0, deserializer: Some(plist::serde::Deserializer::with_capacity(32)) }
     }
 
     pub fn position(&self) -> usize {

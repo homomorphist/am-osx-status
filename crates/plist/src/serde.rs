@@ -3,27 +3,43 @@ use xml::{arena::{vec::{NodeIndex, VecNodeArena}, NodeArena}, cdata::XmlCharacte
 
 type NA<'a> = xml::arena::vec::VecNodeArena<'a>;
 
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Deserializer<'de> {
     arena: VecNodeArena<'de>,
     stack: Vec<NodeIndex>, // [0] = highest, [n] = deepest,
 }
 
-
 impl<'de> Deserializer<'de> {
-    pub fn parse(input: &'de str) -> Result<Option<Self>, Error<'de>> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            arena: VecNodeArena::with_capacity(capacity),
+            stack: Vec::new(),
+        }
+    }
+
+    pub fn parse(&mut self, input: &'de str) -> Result<bool, Error<'de>> {
+        self.clear();
+        // FIXME: Make below robust!
         let input = &input["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n".len()..];
-        // ^^ fixme so robust
-        // dbg!(input);
-        let mut arena = VecNodeArena::new();
         let input = Span::new_root(input);
-        let index = xml::Node::parse(&input, &mut arena).map_err(Error::ParseError)?;
-        let index = if let Some(xml::Read { value: index, .. }) = index { index } else { return Ok(None) };
-        Ok(Some(Self { 
-            arena,
-            stack: vec![index]
-        }))
+        let index = xml::Node::parse(&input, &mut self.arena).map_err(Error::ParseError)?;
+        if let Some(index) = &index {
+            self.stack.push(index.value);
+        }
+        Ok(index.is_some())
+    }
+
+    pub fn clear(&mut self) {
+        self.arena.reset();
+        self.stack.clear();
+    }
+
+    pub fn clear_with_new_lifetime<'a>(mut self) -> Deserializer<'a> {
+        self.clear();
+        unsafe { core::mem::transmute(self) }
     }
 
     pub fn reconstruct(self) -> String {
@@ -51,7 +67,6 @@ impl<'de> Deserializer<'de> {
         out
     }
 }
-
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error<'a> {
@@ -352,9 +367,8 @@ mod tests {
     #[test]
     fn basic() {
         let input = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict><key>value</key><string>jor</string></dict>\n</plist>\n";
-        let mut deserializer = super::Deserializer::parse(input)
-            .expect("failed to parse")
-            .expect("failed to parse");
+        let mut deserializer = super::Deserializer::new();
+        assert!(deserializer.parse(input).unwrap(), "a value should be present");
         #[allow(unused)]
         #[derive(serde::Deserialize)]
         struct Test { value: Option<String> }
