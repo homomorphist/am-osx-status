@@ -18,11 +18,9 @@ impl<'a> Chunk for Album<'a> {
 }
 impl<'a> SizedFirstReadableChunk<'a> for Album<'a> {
     type ReadError = std::io::Error;
-
-    fn read_sized_content(cursor: &mut std::io::Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, Self::ReadError> {
+    type AppendageLengths = crate::chunk::appendage::lengths::LengthWithAppendagesAndQuantity;
+    fn read_sized_content(cursor: &mut super::ChunkCursor<'a>, offset: usize, length: u32, appendage_lengths: &Self::AppendageLengths) -> Result<Self, Self::ReadError> {
         setup_eaters!(cursor, offset, length);
-        skip!(4)?; // appendage byte length
-        let boma_count = u32!()?;
         let persistent_id = id!(Album)?;
         skip_to_end!()?;
 
@@ -31,7 +29,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Album<'a> {
         let mut artist_name_cloud = None;
         let mut cloud_library_id = None;
         
-        for boma in cursor.reading_chunks::<Boma>(boma_count as usize) {
+        for boma in cursor.reading_chunks::<Boma>(appendage_lengths.count as usize) {
             match boma? {
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::IamaAlbum)) => album_name = Some(value),
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::IamaAlbumArtist)) => artist_name = Some(value),

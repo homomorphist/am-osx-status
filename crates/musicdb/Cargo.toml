@@ -26,7 +26,7 @@ unaligned_u16 = { path = "../unaligned_u16/", features = ["utf16"] }
 
 [features]
 tracing = ["dep:tracing"]
-tracing-subscriber = ["dep:tracing-subscriber"]
+tracing-subscriber = ["dep:tracing-subscriber", "tracing"]
 cli = ["dep:clap"]
 cli-standalone = ["cli", "tracing", "tracing-subscriber"]
 

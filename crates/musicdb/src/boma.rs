@@ -9,7 +9,7 @@ use crate::Utf16Str;
 use crate::chunk::{Chunk, ReadableChunk, SizedFirstReadableChunk};
 use crate::chunks::CollectionMember;
 use crate::version::AppleMusicVersion;
-use crate::{cloud, setup_eaters, CursorReadingExtensions};
+use crate::{cloud, setup_eaters};
 
 use super::{convert_timestamp};
 
@@ -120,9 +120,19 @@ impl Chunk for Boma<'_> {
 impl<'a> ReadableChunk<'a> for Boma<'a> {
     type ReadError = std::io::Error;
 
-    fn read(cursor: &mut Cursor<&'a [u8]>) -> Result<Self, Self::ReadError> where Self: Sized {
+    fn skip(cursor: &mut super::chunk::ChunkCursor<'a>) -> Result<bool, std::io::Error> {
+        let signature = cursor.peek_signature()?;
+        if signature != Self::SIGNATURE { return Ok(false); }
+        cursor.advance(4); // signature / unknown
+        cursor.advance(4); // padding
+        let length = cursor.read_u32::<LittleEndian>()?;
+        cursor.advance(length as i64)?;
+        Ok(true)
+    }
+
+    fn read(cursor: &mut super::chunk::ChunkCursor<'a>) -> Result<Self, Self::ReadError> where Self: Sized {
         <Self as ReadableChunk>::read_signature(cursor);
-        cursor.advance(4)?;
+        cursor.advance(4)?; // padding / unknown
         let length = cursor.read_u32::<LittleEndian>()?;
         let subtype = cursor.read_u32::<LittleEndian>()?;
         let subtype =  BomaSubtype::try_from(subtype);
@@ -173,7 +183,7 @@ pub struct TrackNumerics<'a> {
 impl TrackNumerics<'_> {
     pub const BOMA_SUBTYPE: u32 = 0x1;
 
-    pub fn read_content(cursor: &mut Cursor<&[u8]>, length: u32) -> Result<Self, std::io::Error> {
+    pub fn read_content(cursor: &mut super::ChunkCursor<'_>, length: u32) -> Result<Self, std::io::Error> {
         cursor.seek(SeekFrom::Current(108 - (12 + 4)))?;
         let bitrate = cursor.read_u32::<LittleEndian>()?;
         let bitrate = if bitrate == 0 { None } else { Some(crate::units::KilobitsPerSecond(bitrate)) };
@@ -245,7 +255,7 @@ impl TrackPlayStatistics {
         }
     }
 
-    pub fn read_content(cursor: &mut Cursor<&[u8]>, length: u32) -> Result<Self, std::io::Error> {
+    pub fn read_content(cursor: &mut super::chunk::ChunkCursor<'_>, length: u32) -> Result<Self, std::io::Error> {
         cursor.seek(SeekFrom::Current(4))?; // padding
         cursor.seek(SeekFrom::Current(8))?; // skip repeat of track ID
         let last = convert_timestamp(cursor.read_u32::<LittleEndian>()?);
@@ -264,9 +274,8 @@ pub struct UnknownBoma<'a> {
     pub bytes: &'a [u8],
 }
 impl<'a> UnknownBoma<'a> {
-    pub fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, length: u32, subtype: u32) -> Result<Self, std::io::Error> {
-        let bytes = cursor.read_slice((length as usize) - 16)?;
-        Ok(Self { subtype, bytes })
+    pub fn read_variant_content(cursor: &mut super::chunk::ChunkCursor<'a>, length: u32, subtype: u32) -> Result<Self, std::io::Error> {
+        Ok(Self { subtype, bytes: cursor.read_slice_exact((length as usize) - 16)? })
     }
 
     pub fn as_utf16le(&self) -> Result<&Utf16Str, unaligned_u16::utf16::InvalidUtf16Error> {
@@ -363,13 +372,13 @@ pub enum BomaUtf16Error<'a> {
 #[derive(Debug)]
 pub struct BomaUtf16<'a>(pub &'a Utf16Str, pub BomaUtf16Variant);
 impl<'a> BomaUtf16<'a> {
-    fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, variant: BomaUtf16Variant) -> Result<Self, BomaUtf16Error<'a>> {
+    fn read_variant_content(cursor: &mut super::chunk::ChunkCursor<'a>, variant: BomaUtf16Variant) -> Result<Self, BomaUtf16Error<'a>> {
         // r = 0x12 ; have read shared header
         // but we also skip unknown in struct which is also 12 bytes
         cursor.advance(8)?;
         let byte_length = cursor.read_u32::<LittleEndian>()? as usize;
         cursor.advance(8)?;
-        let slice: &[u8] = cursor.read_slice(byte_length)?;
+        let slice: &[u8] = cursor.read_slice_exact(byte_length)?;
         let str = Utf16Str::new(slice).map_err(|err| BomaUtf16Error::InvalidUtf16(err, slice))?;
         Ok(Self(str, variant))
     }
@@ -403,7 +412,7 @@ impl BomaUtf8Variant {
 #[derive(Debug)]
 pub struct BomaUtf8<'a>(pub &'a str, pub BomaUtf8Variant);
 impl<'a> BomaUtf8<'a> {
-    pub(crate) fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, mut length: u32, variant: BomaUtf8Variant) -> Result<Self, std::io::Error> {
+    pub(crate) fn read_variant_content(cursor: &mut super::chunk::ChunkCursor<'a>, mut length: u32, variant: BomaUtf8Variant) -> Result<Self, std::io::Error> {
         cursor.advance(4)?;
 
         // awesome.
@@ -412,7 +421,7 @@ impl<'a> BomaUtf8<'a> {
             length -= 16;
         }
 
-        let slice = cursor.read_slice((length as usize) - 20)?;
+        let slice = cursor.read_slice((length as usize) - 20);
         Ok(Self(unsafe { str::from_utf8_unchecked(slice) }, variant))
     }
 }
@@ -460,8 +469,8 @@ pub enum BookValue<'a> {
 #[derive(Debug)]
 pub struct BomaBook<'a>(Vec<BookValue<'a>>, BookVariant);
 impl<'a> BomaBook<'a> {
-    pub(crate) fn read_variant_content(cursor: &mut Cursor<&'a [u8]>, length: u32, variant: BookVariant) -> Result<Self, std::io::Error> {
-        assert_eq!(cursor.read_slice_exact::<4>()?, b"\0\0\0\0", "expected null padding");
+    pub(crate) fn read_variant_content(cursor: &mut super::chunk::ChunkCursor<'a>, length: u32, variant: BookVariant) -> Result<Self, std::io::Error> {
+        assert_eq!(cursor.read_slice_exact(4)?, b"\0\0\0\0", "expected null padding");
         let signature = cursor.read_signature()?;
 
         if signature != *b"book" {
@@ -475,12 +484,12 @@ impl<'a> BomaBook<'a> {
 
         assert_eq!(&signature, b"book");
         let mut values = vec![];
-        let destination = cursor.position() - 24 + length as u64;
+        let destination = cursor.position() - 24 + length as usize;
         cursor.advance(48)?;
         while cursor.position() != destination {
             let length = cursor.read_u32::<LittleEndian>()? as usize;
             let indicator = cursor.read_u32::<LittleEndian>()?; // ?
-            let slice = cursor.read_slice(length)?;
+            let slice = cursor.read_slice_exact(length)?;
             let padding = -((length % 4) as i64) & 3; // align to 4 bytes, moving 0-3
             cursor.advance(padding);
 

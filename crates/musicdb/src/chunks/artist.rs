@@ -23,25 +23,22 @@ impl Chunk for Artist<'_> {
 }
 impl<'a> SizedFirstReadableChunk<'a> for Artist<'a> {
     type ReadError = std::io::Error;
-
-    fn read_sized_content(cursor: &mut std::io::Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, Self::ReadError> {
+    type AppendageLengths = crate::chunk::appendage::lengths::LengthWithAppendagesAndQuantity;
+    fn read_sized_content(cursor: &mut super::ChunkCursor<'a>, offset: usize, length: u32, appendage_lengths: &Self::AppendageLengths) -> Result<Self, Self::ReadError> {
         setup_eaters!(cursor, offset, length);
-        skip!(4)?; // appendage byte length
-        let boma_count = u32!()?;
         let persistent_id = id!(Artist)?;
         skip!(28)?;
         let cloud_catalog_id = u32!()?;
         let cloud_catalog_id: Option<std::num::NonZero<u32>> = core::num::NonZeroU32::new(cloud_catalog_id);
         let cloud_catalog_id = cloud_catalog_id.map(|c| unsafe { id::cloud::Catalog::new_unchecked(c) });
         skip_to_end!()?;
-
         
         let mut cloud_library_id = None;
         let mut name = None;
         let mut name_sorted = None;
         let mut artwork_url = None;
         
-        for boma in cursor.reading_chunks::<Boma>(boma_count as usize) {
+        for boma in cursor.reading_chunks::<Boma>(appendage_lengths.count as usize) {
             match boma? {
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::ArtistsArtistName)) => name = Some(value),
                 Boma::Utf16(BomaUtf16(value, BomaUtf16Variant::ArtistsArtistNameSorted)) => name_sorted = Some(value),

@@ -13,14 +13,15 @@ derive_list!(pub LibraryMaster, crate::Boma<'a>, *b"plma");
 
 use std::marker::PhantomData;
 
-use crate::{id, setup_eaters, chunk::*};
+use crate::{id, chunk::*};
 
 #[derive(Debug)]
 pub struct SectionBoundary<T>  {
     // r0x0..3 ; b"hsma"
     // boundary_length: u32, // r0x4..7
     // section_length: u32, // r0x8..12
-    _subtype: T, // r0x12..15
+    #[expect(unused)]
+    subtype: T, // r0x12..15
     // ; ...zeros, len-12
 }
 impl<T> Chunk for SectionBoundary<T> {
@@ -28,13 +29,12 @@ impl<T> Chunk for SectionBoundary<T> {
 }
 impl<T: From<u32>> SizedFirstReadableChunk<'_> for SectionBoundary<T> {
     type ReadError = std::io::Error;
-
-    fn read_sized_content(cursor: &mut std::io::Cursor<&'_ [u8]>, offset: u64, length: u32) -> Result<Self, Self::ReadError> {
-        setup_eaters!(cursor, offset, length);
-        skip!(4)?; // len of section
-        let subtype = T::from(u32!()?);
-        skip_to_end!()?;
-        Ok(Self { _subtype: subtype })
+    type AppendageLengths = crate::chunk::appendage::lengths::NoAppendage;
+    const LENGTH_ENFORCED: LengthEnforcement = LengthEnforcement::ToDefinedLength;
+    fn read_sized_content(cursor: &mut super::chunk::ChunkCursor<'_>, offset: usize, length: u32, _: &Self::AppendageLengths) -> Result<Self, Self::ReadError> {
+        let subtype = T::from(byteorder::ReadBytesExt::read_u32::<byteorder::LittleEndian>(cursor)?);
+        cursor.set_position(offset + length as usize)?;
+        Ok(Self { subtype })
     }
 }
 
@@ -55,15 +55,10 @@ impl<T: core::fmt::Debug> From<std::io::Error> for ListReadError<T> {
 pub struct List<'a, T>(pub Vec<T>, PhantomData<&'a ()>);
 #[allow(private_bounds)]
 impl<'a, T: ReadableChunk<'a>> List<'a, T> {
-    pub(crate) fn read_contents(cursor: &mut std::io::Cursor<&'a [u8]>, _: u64, length: u32) -> Result<Self, ListReadError<<T as ReadableChunk<'a>>::ReadError>> {
-        setup_eaters!(cursor, offset, length);
-        let item_count = u32!().map_err(ListReadError::BadListHeader)? as usize;
-        // dbg!(offset, length, item_count);
-        cursor.advance(length as i64 - 12).map_err(ListReadError::BadListHeader)?;
-
-        
-        let mut items = Vec::with_capacity(item_count);
-        for item in cursor.reading_chunks::<T>(item_count) {
+    pub(crate) fn read_contents(cursor: &mut super::ChunkCursor<'a>, offset: usize, length: u32, count: usize) -> Result<Self, ListReadError<<T as ReadableChunk<'a>>::ReadError>> {
+        cursor.set_position(offset + length as usize).map_err(ListReadError::BadListHeader)?;
+        let mut items = Vec::with_capacity(count);
+        for item in cursor.reading_chunks::<T>(count) {
             items.push(item.map_err(ListReadError::BadItem)?);
         }
         Ok(Self(items, PhantomData))
@@ -99,12 +94,10 @@ use std::collections::HashMap;
 
 pub struct Map<'a, T: id::persistent::Possessor>(pub HashMap<T::Id, T>, PhantomData<&'a ()>);
 impl<'a, T: ReadableChunk<'a> + id::persistent::Possessor> Map<'a, T> {
-    pub(crate) fn read_contents(cursor: &mut std::io::Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, ListReadError<<T as ReadableChunk<'a>>::ReadError>> where <T as id::persistent::Possessor>::Id: core::fmt::Debug {
-        setup_eaters!(cursor, offset, length);
-        let item_count = u32!().map_err(ListReadError::BadListHeader)? as usize;
-        skip_to_end!().map_err(ListReadError::BadListHeader)?;
-        let mut items = HashMap::<T::Id, T>::with_capacity(item_count);
-        for item in cursor.reading_chunks::<T>(item_count) {
+    pub(crate) fn read_contents(cursor: &mut super::ChunkCursor<'a>, offset: usize, length: u32, count: usize) -> Result<Self, ListReadError<<T as ReadableChunk<'a>>::ReadError>> where <T as id::persistent::Possessor>::Id: core::fmt::Debug {
+        cursor.set_position(offset + length as usize).map_err(ListReadError::BadListHeader)?;
+        let mut items = HashMap::<T::Id, T>::with_capacity(count);
+        for item in cursor.reading_chunks::<T>(count) {
             let item = item.map_err(ListReadError::BadItem)?;
             items.insert(item.get_persistent_id(), item);
         }
@@ -148,9 +141,10 @@ macro_rules! derive_list {
         }
         impl<'a> $crate::chunk::SizedFirstReadableChunk<'a> for $identifier<'a> {
             type ReadError = $crate::chunks::ListReadError<<$content as $crate::chunk::ReadableChunk<'a>>::ReadError>;
-
-            fn read_sized_content(cursor: &mut std::io::Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, Self::ReadError> {
-                Ok(Self($crate::chunks::List::read_contents(cursor, offset, length)?.0, ::core::marker::PhantomData))
+            type AppendageLengths = $crate::chunk::appendage::lengths::AppendageQuantity;
+            const LENGTH_ENFORCED: $crate::chunk::LengthEnforcement = $crate::chunk::LengthEnforcement::AtLeastDefinedLength;
+            fn read_sized_content(cursor: &mut $crate::chunk::ChunkCursor<'a>, offset: usize, length: u32, appendage_lengths: &Self::AppendageLengths) -> Result<Self, Self::ReadError> {
+                Ok(Self($crate::chunks::List::read_contents(cursor, offset, length, appendage_lengths.count as usize)?.0, ::core::marker::PhantomData))
             }
         }
     }
@@ -168,13 +162,13 @@ macro_rules! derive_map {
         }
         impl<'a> $crate::chunk::SizedFirstReadableChunk<'a> for $identifier<'a> {
             type ReadError = $crate::chunks::ListReadError<<$content as $crate::chunk::ReadableChunk<'a>>::ReadError>;
-
-            fn read_sized_content(cursor: &mut std::io::Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, Self::ReadError> {
-                Ok(Self($crate::chunks::Map::read_contents(cursor, offset, length)?.0, ::core::marker::PhantomData))
+            type AppendageLengths = $crate::chunk::appendage::lengths::AppendageQuantity;
+            const LENGTH_ENFORCED: $crate::chunk::LengthEnforcement = $crate::chunk::LengthEnforcement::AtLeastDefinedLength;
+            fn read_sized_content(cursor: &mut $crate::chunk::ChunkCursor<'a>, offset: usize, length: u32, appendage_lengths: &Self::AppendageLengths) -> Result<Self, Self::ReadError> {
+                Ok(Self($crate::chunks::Map::read_contents(cursor, offset, length, appendage_lengths.count as usize)?.0, ::core::marker::PhantomData))
             }
         }
     }
 }
 
 pub use derive_map;
-

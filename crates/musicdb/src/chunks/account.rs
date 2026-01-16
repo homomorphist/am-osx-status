@@ -12,15 +12,12 @@ impl<'a> Chunk for Account<'a> {
 }
 impl<'a> SizedFirstReadableChunk<'a> for Account<'a> {
     type ReadError = std::io::Error;
-
-    fn read_sized_content(cursor: &mut std::io::Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, Self::ReadError> {
-        // TODO
+    type AppendageLengths = crate::chunk::appendage::lengths::LengthWithAppendagesAndQuantity;
+    fn read_sized_content(cursor: &mut ChunkCursor<'a>, offset: usize, length: u32, appendage_lengths: &Self::AppendageLengths) -> Result<Self, Self::ReadError> {
         setup_eaters!(cursor, offset, length);
-        skip!(4)?; // appendage byte length
-        let boma_count = u32!()?;
         let persistent_id = id!(Account)?;
         skip_to_end!()?;
-        let bomas = cursor.reading_chunks::<Boma>(boma_count as usize).collect::<Result<_, _>>()?;
+        let bomas = cursor.reading_chunks::<Boma>(appendage_lengths.count as usize).collect::<Result<_, _>>()?;
         Ok(Self { bomas, persistent_id })
     }
 }

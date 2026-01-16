@@ -43,7 +43,7 @@ pub enum DecodeError {
 
 pub fn decode_in_place<'a>(data: &'a mut [u8]) -> Result<(Vec<u8>, PackedFileInfo<'a>), DecodeError> {
     let mut data = core::cell::UnsafeCell::new(data);
-    let mut cursor = std::io::Cursor::new({
+    let mut cursor = super::chunk::ChunkCursor::new({
         // SAFETY: This data won't get mutated; the header is preserved and we only apply the decryption in-place on the encrypted data.
         // We would've used `core::slice::split_at_mut` but we don't know the size of the header ahead of time.
         unsafe { &**data.get() }
@@ -120,7 +120,6 @@ impl Read for ReadableDualJoined<'_> {
 #[derive(Debug)]
 pub struct PackedFileInfo<'a> {
     header_size: u32,
-    encoded_data_size: u32,
     max_encrypted_byte_count: u32,
 
     pub app_version: &'a core::ffi::CStr,
@@ -135,14 +134,13 @@ impl crate::chunk::Chunk for PackedFileInfo<'_> {
 }
 impl<'a> SizedFirstReadableChunk<'a> for PackedFileInfo<'a> {
     type ReadError = std::io::Error;
-
-    fn read_sized_content(cursor: &mut std::io::Cursor<&'a [u8]>, start_position: u64, header_size: u32) -> Result<Self, Self::ReadError> where Self: Sized {
-        crate::chunk::setup_eaters!(cursor, start_position, header_size);
-
-        let encoded_content_size = u32!()?;
+    type AppendageLengths = crate::chunk::appendage::lengths::LengthWithAppendages;
+    const LENGTH_ENFORCED: crate::chunk::LengthEnforcement = crate::chunk::LengthEnforcement::ToDefinedLength;
+    fn read_sized_content(cursor: &mut crate::chunk::ChunkCursor<'a>, offset: usize, header_size: u32, _: &Self::AppendageLengths) -> Result<Self, Self::ReadError> where Self: Sized {
+        crate::chunk::setup_eaters!(cursor, offset, header_size);
         let _format_major = u16!()?;
         let _format_minor = u16!()?;
-        let app_version = cstr_exact!(0x20)?;
+        let app_version = cstr!(0x20)?;
         let _persistent_id = u64!()?;
         let _file_variant = u32!()?;
         skip!(4)?; // ?
@@ -153,10 +151,10 @@ impl<'a> SizedFirstReadableChunk<'a> for PackedFileInfo<'a> {
         let artist_count = u32!()?;
         let max_encrypted_byte_count = u32!()?;
         skip_to_end!()?;
+        dbg!(cursor.position());
 
         Ok(Self {
             header_size,
-            encoded_data_size: encoded_content_size,
             app_version,
             max_encrypted_byte_count,
             track_count,

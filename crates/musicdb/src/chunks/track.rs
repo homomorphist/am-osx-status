@@ -61,18 +61,15 @@ impl Chunk for Track<'_> {
 }
 impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
     type ReadError = TrackReadError;
-
-    fn read_sized_content(cursor: &mut std::io::Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, Self::ReadError> {
+    type AppendageLengths = crate::chunk::appendage::lengths::LengthWithAppendagesAndQuantity;
+    fn read_sized_content(cursor: &mut super::ChunkCursor<'a>, offset: usize, length: u32, appendage_lengths: &Self::AppendageLengths) -> Result<Self, Self::ReadError> {
         setup_eaters!(cursor, offset, length);
-        skip!(4)?; // appendage byte length
-        let boma_count = u32!()?;
         let persistent_id = id!(Track)?;
         skip!(148)?;
         // These will always be valid and point to a "real" album/artist, but those albums/artists may be full of no info.
         let album_id = id!(Album)?;
         let artist_id = id!(Artist)?;
         skip_to_end!()?;
-
 
         let mut album_name = None;
         let mut name = None;
@@ -109,7 +106,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Track<'a> {
             }
         }
 
-        for boma in cursor.reading_chunks::<Boma>(boma_count as usize) {
+        for boma in cursor.reading_chunks::<Boma>(appendage_lengths.count as usize) {
             match_boma_utf16_or!(boma?, [
                 (Album, album_name),
                 (AlbumArtist, album_artist_name),

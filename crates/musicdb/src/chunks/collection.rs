@@ -118,11 +118,9 @@ impl<'a> Chunk for Collection<'a> {
 
 impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
     type ReadError = CollectionReadError<'a>;
-
-    fn read_sized_content(cursor: &mut std::io::Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, Self::ReadError> {
+    type AppendageLengths = crate::chunk::appendage::lengths::LengthWithAppendagesAndQuantity;
+    fn read_sized_content(cursor: &mut ChunkCursor<'a>, offset: usize, length: u32, appendage_lengths: &Self::AppendageLengths) -> Result<Self, Self::ReadError> {
         setup_eaters!(cursor, offset, length);
-        skip!(4)?; // appendage byte length
-        let boma_count = u32!()?;
         let track_count = u32!()?;
         skip!(18 - (12 + 4))?;
         let creation_date = convert_timestamp(u32!()?);
@@ -132,13 +130,13 @@ impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
         let preset_kind = PresetCollectionKind::from_u8(u8!()?);
         skip!(134 - (75 + 1))?;
         let modification_date = convert_timestamp(u32!()?);
-
         skip_to_end!()?;
+
         let mut tracks = Vec::with_capacity(track_count as usize);
         let mut name = None;
         let mut info = None::<CollectionInfo<'a>>;
 
-        for boma in cursor.reading_chunks::<Boma>(boma_count as usize) {
+        for boma in cursor.reading_chunks::<Boma>(appendage_lengths.count as usize) {
             match boma? {
                 Boma::Utf16(BomaUtf16(new_name, BomaUtf16Variant::PlaylistName)) => name = Some(new_name),
                 Boma::Utf8Xml(BomaUtf8(read_info, BomaUtf8Variant::PlistPlaylistInfo)) => info = Some(CollectionInfo::try_from(read_info).map_err(CollectionReadError::Deserialization)?),
@@ -155,6 +153,7 @@ impl<'a> SizedFirstReadableChunk<'a> for Collection<'a> {
                 }
             }
         }
+
         let name = name.ok_or(CollectionReadError::LackingBoma(BomaUtf16Variant::PlaylistName.into()))?;
 
         Ok(Self { name, info, tracks, persistent_id, preset_kind, creation_date, modification_date })
@@ -189,7 +188,7 @@ pub struct CollectionMember<'a> {
 impl CollectionMember<'_> {
     pub const BOMA_SUBTYPE: u32 = 206;
 
-    pub(crate) fn read_content(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self, std::io::Error> {
+    pub(crate) fn read_content(cursor: &mut ChunkCursor) -> Result<Self, std::io::Error> {
         use byteorder::ReadBytesExt as _;
         use byteorder::LittleEndian as LE;
         use std::io::Seek as _;

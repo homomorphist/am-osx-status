@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-use std::{fmt::Debug, io::Cursor, path::Path, pin::Pin};
 pub(crate) type Utf16Str = unaligned_u16::utf16::Utf16Str<unaligned_u16::endian::LittleEndian>;
 
 #[cfg(any(test, feature = "tracing-subscriber"))]
@@ -38,11 +37,25 @@ struct HeaderRepeat {}
 impl Chunk for HeaderRepeat {
     const SIGNATURE: Signature = Signature::new(*b"hfma");
 }
-impl<'a> SizedFirstReadableChunk<'a> for HeaderRepeat {
+impl<'a> ReadableChunk<'a> for HeaderRepeat {
     type ReadError = std::io::Error;
-    fn read_sized_content(cursor: &mut Cursor<&'a [u8]>, offset: u64, length: u32) -> Result<Self, Self::ReadError> where Self: Sized {
-        setup_eaters!(cursor, offset, length);
-        skip_to_end!()?; // skip the rest of the section
+
+    fn skip(cursor: &mut ChunkCursor<'a>) -> Result<bool, std::io::Error> {
+        use byteorder::ReadBytesExt;
+        let offset = cursor.position();
+        let signature = cursor.peek_signature()?;
+        if signature != Self::SIGNATURE { return Ok(false); }
+        let length = cursor.read_u32::<byteorder::LittleEndian>()?;
+        cursor.set_position(offset + length as usize)?;
+        Ok(true)
+    }
+
+    fn read(cursor: &mut ChunkCursor<'a>) -> Result<Self, Self::ReadError> where Self: Sized {
+        use byteorder::ReadBytesExt;
+        let offset = cursor.position();
+        Self::read_signature(cursor)?;
+        let length = cursor.read_u32::<byteorder::LittleEndian>()?;
+        cursor.set_position(offset + length as usize)?;
         Ok(Self {})
     }
 }
@@ -62,14 +75,13 @@ pub struct MusicDbView<'a> {
     pub collections: CollectionList<'a>
 }
 impl<'a> MusicDbView<'a> {
-    pub(crate) fn with_cursor(mut cursor: Cursor<&'a [u8]>) -> Self {
+    pub(crate) fn with_cursor(mut cursor: chunk::ChunkCursor<'a>) -> Self {
         macro_rules! expect_boundary {
             ($cursor: ident) => {
                 chunks::SectionBoundary::<u32>::read(&mut $cursor).expect("can't read section boundary");        
             }
         }
 
-        
         expect_boundary!(cursor);
         HeaderRepeat::read(&mut cursor).expect("can't read header duplicate");
 
@@ -161,17 +173,17 @@ impl_db_collection_coercion!(CollectionList, collections);
 pub struct MusicDB {
     view: MusicDbView<'static>, // not really static; lifetime is 'self (as long as `_owned_data` exists)
     path: std::path::PathBuf,
-    _owned_data: Pin<Box<[u8]>>,
+    _owned_data: core::pin::Pin<Box<[u8]>>,
 }
 
 impl MusicDB {
-    pub fn read_path(path: impl AsRef<Path>) -> Result<MusicDB, encoded::DecodeError> {
+    pub fn read_path(path: impl AsRef<std::path::Path>) -> Result<MusicDB, encoded::DecodeError> {
         let decoded = Self::decode(&path)?;
         Ok(Self::from_decoded(decoded.into_boxed_slice(), path))
     }
-    pub fn from_decoded(data: Box<[u8]>, path: impl AsRef<Path>) -> MusicDB {
+    pub fn from_decoded(data: Box<[u8]>, path: impl AsRef<std::path::Path>) -> MusicDB {
         let path = path.as_ref().to_path_buf();
-        let data = Pin::new(data);
+        let data = core::pin::Pin::new(data);
 
         // Obtain a slice of the data with a lifetime promoted to that of the returned instance (not actually 'static, but 'self).
         // SAFETY:
@@ -182,13 +194,13 @@ impl MusicDB {
             core::slice::from_raw_parts::<'static, u8>(data.as_ptr(), data.len())
         };
 
-        let cursor = Cursor::new(slice);
+        let cursor = chunk::ChunkCursor::new(slice);
         let view = MusicDbView::with_cursor(cursor);
 
         Self { view, path, _owned_data: data }
     }
     /// Decrypts and decompresses the `.musicdb` file at the given path, returning the internal contents.
-    pub fn decode(path: impl AsRef<Path>) -> Result<Vec<u8>, encoded::DecodeError> {
+    pub fn decode(path: impl AsRef<std::path::Path>) -> Result<Vec<u8>, encoded::DecodeError> {
         let data = &mut std::fs::read(&path)?;
         let (decoded, _) = encoded::decode_in_place(data)?;
         Ok(decoded)
@@ -260,7 +272,7 @@ impl MusicDB {
 }
 
 #[test]
-#[ignore = "needs populated samples directory"]
+// #[ignore = "needs populated samples directory"]
 fn try_all_samples() {
     crate::setup_tracing_subscriber();
 
@@ -269,9 +281,9 @@ fn try_all_samples() {
             let entry = entry.expect("fs error");
             let path = entry.path();
             if path.is_dir() { process_dir(&path); return; }
-            tracing::info!("processing sample file: {}", path.display());
             match path.extension().and_then(|s| s.to_str()) {
                 Some("musicdb") => {
+                    tracing::info!("processing sample file: {}", path.display());
                     if let Err(error) = MusicDB::read_path(&path) {
                         tracing::error!(?path, ?error, "failed to read / decode sample");
                     } else {
@@ -279,6 +291,7 @@ fn try_all_samples() {
                     }
                 },
                 Some("decoded") => {
+                    tracing::info!("processing sample file: {}", path.display());
                     let decoded = std::fs::read(&path).expect("fs error");
                     let _ = MusicDB::from_decoded(decoded.into_boxed_slice(), &path);
                     tracing::info!(?path, "successfully read pre-decoded sample");
