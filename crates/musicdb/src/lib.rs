@@ -11,7 +11,7 @@ pub mod cli;
 
 pub mod chunk;
 mod chunks;
-pub mod encoded;
+pub mod packed;
 
 pub mod id;
 pub mod boma;
@@ -177,11 +177,12 @@ pub struct MusicDB {
 }
 
 impl MusicDB {
-    pub fn read_path(path: impl AsRef<std::path::Path>) -> Result<MusicDB, encoded::DecodeError> {
-        let decoded = Self::decode(&path)?;
-        Ok(Self::from_decoded(decoded.into_boxed_slice(), path))
+    pub fn read_path(path: impl AsRef<std::path::Path>) -> Result<MusicDB, packed::UnpackError> {
+        let decoded = Self::unpack(&path)?;
+        Ok(Self::from_unpacked(decoded.into_boxed_slice(), path))
     }
-    pub fn from_decoded(data: Box<[u8]>, path: impl AsRef<std::path::Path>) -> MusicDB {
+    /// Construct a MusicDB from already-unpacked data. This still expects that the data at `path` is packed.
+    pub fn from_unpacked(data: Box<[u8]>, path: impl AsRef<std::path::Path>) -> MusicDB {
         let path = path.as_ref().to_path_buf();
         let data = core::pin::Pin::new(data);
 
@@ -199,11 +200,9 @@ impl MusicDB {
 
         Self { view, path, _owned_data: data }
     }
-    /// Decrypts and decompresses the `.musicdb` file at the given path, returning the internal contents.
-    pub fn decode(path: impl AsRef<std::path::Path>) -> Result<Vec<u8>, encoded::DecodeError> {
-        let data = &mut std::fs::read(&path)?;
-        let (decoded, _) = encoded::decode_in_place(data)?;
-        Ok(decoded)
+    /// Unpacks the `.musicdb` file at the given path, returning the raw contents.
+    pub fn unpack(path: impl AsRef<std::path::Path>) -> Result<Vec<u8>, packed::UnpackError> {
+        Ok(packed::unpack_in_place(&mut std::fs::read(&path)?)?.0)
     }
     pub fn get_raw(&self) -> &[u8] {
         &self._owned_data
@@ -218,7 +217,7 @@ impl MusicDB {
         unsafe { core::mem::transmute(&mut self.view) }
     }
     /// Updates the view by re-reading/decoding the file from disk.
-    pub fn update_view(&mut self) -> Result<(), encoded::DecodeError> {
+    pub fn update_view(&mut self) -> Result<(), packed::UnpackError> {
         *self = Self::read_path(self.path.as_path())?;
         Ok(())
     }
@@ -293,7 +292,7 @@ fn try_all_samples() {
                 Some("decoded") => {
                     tracing::info!("processing sample file: {}", path.display());
                     let decoded = std::fs::read(&path).expect("fs error");
-                    let _ = MusicDB::from_decoded(decoded.into_boxed_slice(), &path);
+                    let _ = MusicDB::from_unpacked(decoded.into_boxed_slice(), &path);
                     tracing::info!(?path, "successfully read pre-decoded sample");
                 }
                 _ => {}

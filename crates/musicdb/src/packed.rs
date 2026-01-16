@@ -1,4 +1,4 @@
-//! Encoded form: decryption & decompression
+//! Packed form: encrypted & compressed
 //! <hr>
 //! 
 //! A `.musicdb` file holds only one [`Chunk`](crate::chunk::Chunk), that being the ["hfma" chunk](`Container`), which serves as a container for the actual data being stored.
@@ -6,7 +6,7 @@
 //! It must undergo decryption and decompression before being usable.
 //! The resulting size of this operation is not stored within the file, so an initial allocation is done with a heuristic multiplier of 8 times the size of the compressed data.
 //! 
-//! ## Encoded Format
+//! ## Format
 //! 
 //! The data undergoes two transformations before being stored in the file:
 //!  1. It is compressed following the DEFLATE algorithm.
@@ -22,6 +22,10 @@ use std::io::Read;
 
 use crate::chunk::{ReadableChunk, Signature, SizedFirstReadableChunk};
 
+/// A moderately-upper-end guess on how much larger the unpacked data will be compared to the packed form.
+// A value can be computed on local files with [`crate::cli::Ratios`].
+pub const EXPANDED_SIZE_MULTIPLIER_HEURISTIC: usize = 8;
+
 /// A key used to decrypt the iTunes and Apple Music library files, [known publicly since at least 2010][kafsemo].
 /// 
 /// This key does not have any known usage in decrypting copyrighted or DRM-protected media,
@@ -29,10 +33,10 @@ use crate::chunk::{ReadableChunk, Signature, SizedFirstReadableChunk};
 /// accessible to the user through the iTunes or Apple Music applications themselves.
 /// 
 /// [kafsemo]: <https://kafsemo.org/2010/12/10_itunes-10-database.html>
-const KEY: &[u8] = b"BHUILuilfghuila3";
+pub const KEY: &[u8] = b"BHUILuilfghuila3";
 
 #[derive(thiserror::Error, Debug)]
-pub enum DecodeError {
+pub enum UnpackError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("decryption failure: {0}")]
@@ -41,7 +45,7 @@ pub enum DecodeError {
     Decompression(std::io::Error)
 }
 
-pub fn decode_in_place<'a>(data: &'a mut [u8]) -> Result<(Vec<u8>, PackedFileInfo<'a>), DecodeError> {
+pub fn unpack_in_place<'a>(data: &'a mut [u8]) -> Result<(Vec<u8>, PackedFileInfo<'a>), UnpackError> {
     let mut data = core::cell::UnsafeCell::new(data);
     let mut cursor = super::chunk::ChunkCursor::new({
         // SAFETY: This data won't get mutated; the header is preserved and we only apply the decryption in-place on the encrypted data.
@@ -49,19 +53,19 @@ pub fn decode_in_place<'a>(data: &'a mut [u8]) -> Result<(Vec<u8>, PackedFileInf
         unsafe { &**data.get() }
     });
 
-    let info = PackedFileInfo::read(&mut cursor).map_err(DecodeError::Io)?;
+    let info = PackedFileInfo::read(&mut cursor).map_err(UnpackError::Io)?;
     let data = &mut data.get_mut()[info.header_size as usize..];
     let split_at = (info.max_encrypted_byte_count as usize).min(data.len() & !0x0F);
 
     Ok((decode_split_encryption(data, split_at)?, info))
 }
 
-fn decode_split_encryption(data: &mut [u8], at: usize) -> Result<Vec<u8>, DecodeError> {
+fn decode_split_encryption(data: &mut [u8], at: usize) -> Result<Vec<u8>, UnpackError> {
     let (encrypted, unencrypted) = data.split_at_mut(at);
-    let decrypted = decrypt_in_place(encrypted).map_err(DecodeError::Decryption)?;
+    let decrypted = decrypt_in_place(encrypted).map_err(UnpackError::Decryption)?;
     let compressed = ReadableDualJoined::new(decrypted, unencrypted);
     let compressed_length = compressed.len();
-    decompress(compressed, compressed_length).map_err(DecodeError::Decompression)
+    decompress(compressed, compressed_length).map_err(UnpackError::Decompression)
 }
 
 #[cfg_attr(feature = "tracing", tracing::instrument(level = "debug", skip(bytes)))]
@@ -76,7 +80,6 @@ fn decrypt_in_place(bytes: &mut [u8]) -> Result<&mut [u8], aes::cipher::block_pa
 #[cfg_attr(feature = "tracing", tracing::instrument(level = "debug", skip(source)))]
 fn decompress(source: impl Read, compressed_size: usize) -> Result<Vec<u8>, std::io::Error> {
     use flate2::read::ZlibDecoder;
-    const EXPANDED_SIZE_MULTIPLIER_HEURISTIC: usize = 8;
     let mut decompressed = Vec::with_capacity(compressed_size * EXPANDED_SIZE_MULTIPLIER_HEURISTIC);
     ZlibDecoder::new(source).read_to_end(&mut decompressed)?;
     Ok(decompressed)
@@ -177,7 +180,7 @@ mod tests {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).expect("failed to read file");
         let original_size = bytes.len();
-        let (decoded, _) = decode_in_place(&mut bytes[..]).expect("failed to decode file");
+        let (decoded, _) = unpack_in_place(&mut bytes[..]).expect("failed to decode file");
         assert!(decoded.len() > original_size, "should have grown due to decompression");
     }    
 }

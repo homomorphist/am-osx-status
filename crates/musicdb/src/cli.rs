@@ -87,8 +87,8 @@ impl Destination {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Export a decrypted (but not yet parsed) `.musicdb` file.
-    Decrypt {
+    /// Unpack the raw data from a `.musicdb` file.
+    Unpack {
         /// The path to the `Library.musicdb` file to export. Defaults to the one of the current user.
         #[arg(short, long, value_name = "PATH")]
         path: Option<PathBuf>,
@@ -131,12 +131,12 @@ impl Command {
         use crate::MusicDB;
 
         match self {
-            Command::Decrypt { path, output } => {
-                let decoded = MusicDB::decode(path.unwrap_or_else(MusicDB::default_path)).expect("failed to extract raw data");
+            Command::Unpack { path, output } => {
+                let unpacked = MusicDB::unpack(path.unwrap_or_else(MusicDB::default_path)).expect("failed to extract raw data");
                 let is_stdout = output.as_ref() == Some(&Destination::Stdout);
                 let mut writer = std::io::BufWriter::new(output.unwrap_or_default().into_writer());
 
-                if let Err(error) = writer.write_all(&decoded) {
+                if let Err(error) = writer.write_all(&unpacked) {
                     eprintln!("Write error: {error:?}");
                 } else if !is_stdout {
                     println!("Done!");
@@ -202,8 +202,8 @@ impl Command {
                             paths.push_back(entry.path());
                         }
                     } else if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("musicdb") {
-                        let decoded = match MusicDB::decode(&path) {
-                            Ok(decoded) => decoded,
+                        let unpacked = match MusicDB::unpack(&path) {
+                            Ok(unpacked) => unpacked,
                             Err(error) => {
                                 eprintln!("Failed to decode {}: {}", path.display(), error);
                                 continue;
@@ -211,8 +211,8 @@ impl Command {
                         };
 
                         let size = fs::metadata(&path).expect("failed to get metadata").len();
-                        let ratio = decoded.len() as f64 / size as f64;
-                        println!("{}: {:.2} ({} -> {})", path.display(), ratio, size, decoded.len());
+                        let ratio = unpacked.len() as f64 / size as f64;
+                        println!("{}: {:.2} ({} -> {})", path.display(), ratio, size, unpacked.len());
                         ratios.push(ratio);
                     }
                 }
