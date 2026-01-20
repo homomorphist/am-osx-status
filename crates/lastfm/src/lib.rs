@@ -65,9 +65,8 @@ impl<'a> Client<auth::state::Authorized> {
         request.parameters.add("api_sig".to_string(), MaybeOwnedString::Owned(request.parameters.sign(self.session_key(), &self.identity).to_string()));
         request.parameters.add("format".to_string(), MaybeOwnedString::Borrowed("json"));
         let request = self.net.request(request.method, crate::API_URL)
-            .header("Content-Length", "0")
             .header("User-Agent", &self.identity.user_agent)
-            .query(&request.parameters)
+            .form(&request.parameters)
             .build()?;
         self.net.execute(request).await
     }
