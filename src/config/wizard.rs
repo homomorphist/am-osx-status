@@ -1,3 +1,4 @@
+use tokio::io::AsyncBufReadExt;
 
 fn loose_matches(str: &str, one_of: &[&str]) -> bool {
     for check in one_of {
@@ -17,38 +18,39 @@ fn str_to_boolish(str: &str) -> Option<bool>  {
 
 #[allow(dead_code, reason = "used only by certain featured-gated backends")]
 pub mod io {
-    use std::io::{Write, BufRead};
-
     use super::*;
-    
-    pub fn prompt(prompt: &str, initial_capacity: usize) -> String {
-        {
-            let mut stdout = std::io::stdout().lock();
-            stdout.write_all(prompt.as_bytes()).unwrap();
-            stdout.write_all(b"\n=> ").unwrap();
-            stdout.flush().unwrap();
-        }
 
-        let mut str_buf = String::with_capacity(initial_capacity);
-        {
-            let mut stdin = std::io::stdin().lock();
-            stdin.read_line(&mut str_buf).expect("could not process user input");
+    fn write_prompt(prompt: &[&str]) {
+        use std::io::Write;
+        let mut stdout = std::io::stdout().lock();
+        for piece in prompt {
+            stdout.write_all(piece.as_bytes()).unwrap();
         }
+        stdout.flush().unwrap();
+    }
 
-        str_buf
+    async fn read_line(initial_capacity: usize) -> String {
+        let mut output  = String::with_capacity(initial_capacity);
+        read_line_into(&mut output).await;
+        output
+    }
+
+    async fn read_line_into(output: &mut String) -> &mut String {
+        let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
+        reader.read_line(output).await.expect("could not process user input");
+        output
     }
     
-    pub fn prompt_bool(prompt: &str) -> bool {
-        let mut answer = String::with_capacity(4);
-        loop {
-            {
-                let mut stdout = std::io::stdout().lock();
-                stdout.write_all(prompt.as_bytes()).unwrap();
-                stdout.write_all(b" (y/n)\n=> ").unwrap();
-                stdout.flush().unwrap();
-            }
+    pub async fn prompt(prompt: &str, initial_capacity: usize) -> String {
+        write_prompt(&[prompt, "\n=> "]);
+        read_line(initial_capacity).await
+    }
     
-            std::io::stdin().lock().read_line(&mut answer).expect("could not process user input");
+    pub async fn prompt_bool(prompt: &str) -> bool {
+        let mut answer = String::with_capacity(b"false\n".len());
+        loop {
+            write_prompt(&[prompt, " (y/n)\n=> "]);
+            read_line_into(&mut answer).await;
             if let Some(bool) = str_to_boolish(&answer) { return bool }
             println!(r#"Invalid input! Enter "yes" or "no"."#);
             println!();
@@ -56,7 +58,7 @@ pub mod io {
         }
     }
 
-    fn prompt_choice_maybe_optional(options: &[&str], prompt: &str, marked_optional: bool) -> Option<usize> {
+    async fn prompt_choice_maybe_optional(options: &[&str], prompt: &str, marked_optional: bool) -> Option<usize> {
         assert!(!options.is_empty(), "no options provided to `prompt_choice`");
 
         let mut string_size = options.len().ilog(10) as usize;
@@ -68,6 +70,7 @@ pub mod io {
 
         loop {
             {
+                use std::io::Write;
                 let mut stdout = std::io::stdout().lock();
                 stdout.write_all(prompt.as_bytes()).unwrap();
 
@@ -83,7 +86,7 @@ pub mod io {
                 stdout.flush().unwrap();
             }
 
-            std::io::stdin().lock().read_line(&mut answer).expect("could not process user input");
+            read_line_into(&mut answer).await;
 
             if let Ok(index) = answer.trim().parse::<usize>()
                 && index < options.len() { return Some(index) }
@@ -99,12 +102,12 @@ pub mod io {
     }
 
     #[expect(dead_code, reason = "may be used in the future")]
-    pub fn prompt_choice(options: &[&str], prompt: &str) -> usize {
-        prompt_choice_maybe_optional(options, prompt, false).expect("prompt returned `None` despite being marked as non-optional")
+    pub async fn prompt_choice(options: &[&str], prompt: &str) -> usize {
+        prompt_choice_maybe_optional(options, prompt, false).await.expect("prompt returned `None` despite being marked as non-optional")
     }
 
-    pub fn prompt_choice_optional(options: &[&str], prompt: &str) -> Option<usize> {
-        prompt_choice_maybe_optional(options, prompt, true)
+    pub async fn prompt_choice_optional(options: &[&str], prompt: &str) -> Option<usize> {
+        prompt_choice_maybe_optional(options, prompt, true).await
     }
 
     #[cfg(feature = "discord")]
@@ -112,8 +115,8 @@ pub mod io {
         use super::*;
         use crate::subscribers::discord::{self, DisplayedField};
 
-        pub fn prompt(config: &mut Option<discord::Config>, force_enable: bool) {
-            if force_enable || prompt_bool("Enable Discord Rich Presence?") {
+        pub async fn prompt(config: &mut Option<discord::Config>, force_enable: bool) {
+            if force_enable || prompt_bool("Enable Discord Rich Presence?").await {
                 if let Some(config) = config.as_mut() {
                     config.enabled = true;
                 } else {
@@ -121,21 +124,20 @@ pub mod io {
                 }
                 let config = config.as_mut().unwrap();
 
-
-                if let Some(ty) = prompt_display_type() { config.displayed_field = ty; }
-                if let Some(id) = prompt_application_id() { config.application_id = id; }
+                if let Some(ty) = prompt_display_type().await { config.displayed_field = ty; }
+                if let Some(id) = prompt_application_id().await { config.application_id = id; }
             } else if let Some(config) = config.as_mut() {
                 config.enabled = false;
             }
         }
 
-        pub fn prompt_display_type() -> Option<DisplayedField> {
+        pub async fn prompt_display_type() -> Option<DisplayedField> {
             let options = &[
                 "Listening to <activity-name> // Typically the application name, e.g. \"Apple Music\"",
                 "Listening to <artist>",
                 "Listening to <album>",
             ];
-            prompt_choice_optional(options, "How should your activity display? (\"Listening to _________\")").map(|choice| match choice {
+            prompt_choice_optional(options, "How should your activity display? (\"Listening to _________\")").await.map(|choice| match choice {
                 0 => DisplayedField::ApplicationName,
                 1 => DisplayedField::State,
                 2 => DisplayedField::Details,
@@ -143,7 +145,7 @@ pub mod io {
             })
         }
 
-        pub fn prompt_application_id() -> Option<u64> {
+        pub async fn prompt_application_id() -> Option<u64> {
             use discord::EnumeratedApplicationIdentifier;
             let mut options = Vec::<&str>::with_capacity(EnumeratedApplicationIdentifier::VARIANT_COUNT + 1);
             options.push("Other (requires a custom application ID)");
@@ -152,11 +154,11 @@ pub mod io {
             }
 
             loop {
-                if let Some(choice) = prompt_choice_optional(&options, "What should the activity name be?") {
+                if let Some(choice) = prompt_choice_optional(&options, "What should the activity name be?").await {
                     match choice {
                         0 => {
-                            const MAX_U64_LENGTH_IN_BASE_TEN: usize = 20;
-                            let id = super::prompt("Enter your custom application ID:", MAX_U64_LENGTH_IN_BASE_TEN + '\n'.len_utf8());
+                            const MAX_ID_LEN: usize = 20; // u64::MAX is 20 digits long
+                            let id = super::prompt("Enter your custom application ID:", MAX_ID_LEN + 1 + '\n'.len_utf8()).await; // +1 to catch bad input
                             if let Ok(id) = id.trim().parse() { return Some(id) }
                             eprintln!("could not parse application id; please try again");
                             continue;
@@ -176,7 +178,7 @@ pub mod io {
         use crate::subscribers::lastfm;
 
         pub async fn prompt(config: &mut Option<lastfm::Config>)  {
-            if prompt_bool("Enable last.fm Scrobbling?") {
+            if prompt_bool("Enable last.fm Scrobbling?").await {
                 if let Some(config) = config.as_mut() {
                     config.enabled = true;
                 } else {
@@ -199,7 +201,7 @@ pub mod io {
             };
             let auth_url = auth.generate_authorization_url(client);
             println!("Continue after authorizing the application: {auth_url}");
-            if prompt_bool("Have you authorized the application?") {
+            if prompt_bool("Have you authorized the application?").await {
                 match auth.generate_session_key(client).await {
                     Ok(key) => Some(crate::subscribers::lastfm::Config {
                         enabled: true,
@@ -220,7 +222,7 @@ pub mod io {
         use crate::subscribers::listenbrainz;
 
         pub async fn prompt(config: &mut Option<listenbrainz::Config>) {
-            if prompt_bool("Enable ListenBrainz synchronization?") {
+            if prompt_bool("Enable ListenBrainz synchronization?").await {
                 if let Some(config) = config.as_mut() {
                     config.enabled = true;
                 } else {
@@ -234,7 +236,7 @@ pub mod io {
         pub async fn authorize() -> Option<listenbrainz::Config> {
             loop {
                 const HYPHENATED_UUID_LENGTH: usize = 36;
-                let token = super::prompt(r#"Paste your access token (from https://listenbrainz.org/settings/) or type "cancel":"#, HYPHENATED_UUID_LENGTH + '\n'.len_utf8());
+                let token = super::prompt(r#"Paste your access token (from https://listenbrainz.org/settings/) or type "cancel":"#, HYPHENATED_UUID_LENGTH + '\n'.len_utf8()).await;
                 let token = &token[..token.len().saturating_sub('\n'.len_utf8())];
                 if token == "cancel" { break None; }
                 match brainz::listen::v1::UserToken::new(token).await {

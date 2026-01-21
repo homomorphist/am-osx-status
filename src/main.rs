@@ -76,7 +76,7 @@ async fn main() -> ExitCode {
     let args = Box::leak(Box::new(<cli::Cli as clap::Parser>::parse()));
     let config = config::Config::get(args).await;
     let debugging = debugging::DebuggingSession::new(args);
-    let (terminating, termination_signal) = watch_for_termination();
+    let (terminating, mut termination_signal) = watch_for_termination();
 
     macro_rules! get_config_or_path {
         () => {
@@ -124,18 +124,35 @@ async fn main() -> ExitCode {
                     config.save_to_disk().await;
                     config
                 },
-                Err(path) => if config::wizard::io::prompt_bool(match path {
-                    ConfigPathChoice::Automatic(..) => "No configuration has been set up! Would you like to use the wizard to build one?",
-                    ConfigPathChoice::Explicit(..) => "No configuration exists at the provided file! Would you like to use the wizard to build it?",
-                    ConfigPathChoice::Environmental(..) => "No configuration exists at the file specified in the environmental variable! Would you like to use the wizard to build it?",
-                }) {
-                    let config = config::Config::create_with_wizard(path).await;
-                    config.save_to_disk().await;
-                    println!("Configuration file has been saved.");
-                    config
-                } else {
-                    println!("Proceeding with a temporary default configuration.");
-                    config::Config::default()
+                Err(path) => {
+                    macro_rules! config_signal_cancellable {
+                        ($expr: expr) => {
+                            tokio::select! {
+                                result = $expr => result,
+                                signal = &mut termination_signal => {
+                                    eprintln!("Exiting; no configuration file will be made.");
+                                    std::process::exit(128 + signal.as_raw_value());
+                                }
+                            }
+                        };
+                    }
+
+                    let make = config_signal_cancellable!(config::wizard::io::prompt_bool(match path {
+                        ConfigPathChoice::Automatic(..) => "No configuration has been set up! Would you like to use the wizard to build one?",
+                        ConfigPathChoice::Explicit(..) => "No configuration exists at the provided file! Would you like to use the wizard to build it?",
+                        ConfigPathChoice::Environmental(..) => "No configuration exists at the file specified in the environmental variable! Would you like to use the wizard to build it?",
+                    }));
+
+                    if make {
+                        let config  = config_signal_cancellable!(config::Config::create_with_wizard(path));
+                        config.save_to_disk().await;
+                        println!("Configuration file has been saved.");
+                        config
+                    } else {
+                        println!("Proceeding with a temporary default configuration.");
+                        config::Config::default()
+                    }
+
                 }
             };
 
@@ -315,7 +332,7 @@ async fn main() -> ExitCode {
                         }
                     } else {
                         match action {
-                            DiscordConfigurationAction::Enable => config::wizard::io::discord::prompt(&mut config.backends.discord, true),
+                            DiscordConfigurationAction::Enable => config::wizard::io::discord::prompt(&mut config.backends.discord, true).await,
                             DiscordConfigurationAction::Disable => {}
                         }
                     }

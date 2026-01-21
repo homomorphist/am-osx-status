@@ -39,7 +39,7 @@ impl Default for Config {
 impl crate::config::LoadableConfig for Config {
     async fn edit_with_wizard(&mut self)  {
         #[cfg(feature = "discord")]
-        wizard::io::discord::prompt(&mut self.backends.discord, false);
+        wizard::io::discord::prompt(&mut self.backends.discord, false).await;
         #[cfg(feature = "lastfm")]
         wizard::io::lastfm::prompt(&mut self.backends.lastfm).await;
         #[cfg(feature = "listenbrainz")]
