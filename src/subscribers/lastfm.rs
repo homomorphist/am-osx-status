@@ -195,10 +195,16 @@ async fn extract_first_artist<'a, 'b: 'a>(
 
     // TODO: Create a `brainz` abstraction.
     async fn using_listenbrainz(track: &FirstArtistQuery<'_>, net: &reqwest::Client, left: &str, pool: Option<sqlx::SqlitePool>) -> Option<String> {
-        use super::listenbrainz::DEFAULT_PROGRAM_INFO;
+        let user_agent = {
+            #[cfg(feature = "listenbrainz")]
+            { super::listenbrainz::DEFAULT_PROGRAM_INFO.to_user_agent() }
+            #[cfg(not(feature = "listenbrainz"))]
+            { concat!(clap::crate_name!(), "/", clap::crate_version!()) }
+        };
+
         let uncredited = title_without_credits(track.name);
         let request = net.get("https://musicbrainz.org/ws/2/recording/?fmt=json")
-            .header("User-Agent", &DEFAULT_PROGRAM_INFO.to_user_agent())
+            .header("User-Agent", &user_agent)
             .query(&[("query", format!("artist:\"{left}\" AND recording:\"{uncredited}\""))]);
 
         let response = request.send().await.inspect_err(|err| {
