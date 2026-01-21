@@ -1068,15 +1068,13 @@ pub mod subscription {
     pub use subscribe;
 }
 
-
 impl Backends {
-    #[tracing::instrument(level = "debug")]
     pub async fn get_solicitations(&self, event: subscription::Identity) -> ComponentSolicitation {
         self.get_solicitations_from(self.all(), event).await
     }
 
     #[allow(unused, reason = "none of this is relevant / gets used when compiled without features")]
-    #[tracing::instrument(skip(backends), level = "debug")]
+    #[tracing::instrument(skip(self, backends), level = "debug")]
     pub async fn get_solicitations_from(&self, backends: Vec<Arc<Mutex<dyn Subscriber>>>, event: subscription::Identity) -> ComponentSolicitation {
         let mut solicitation = ComponentSolicitation::default();
         let mut jobs = Vec::with_capacity(backends.len());
@@ -1099,13 +1097,12 @@ impl Backends {
     }
 
 
-    #[tracing::instrument(skip(context), level = "debug")]
     pub async fn dispatch<T: subscription::TypeIdentity>(&self, context: T::DispatchContext) -> BackendMap<Result<T::DispatchReturn, DispatchError>> {
         self.dispatch_to::<T>(self.all(), context).await
     }
 
     #[allow(unused, reason = "none of this is relevant / gets used when compiled without features")]
-    #[tracing::instrument(skip(backends, context), level = "debug")]
+    #[tracing::instrument(skip(self, backends, context), fields(event = ?T::IDENTITY) level = "debug")]
     pub async fn dispatch_to<T: subscription::TypeIdentity>(&self, backends: Vec<Arc<Mutex<dyn Subscriber>>>, context: T::DispatchContext) -> BackendMap<Result<T::DispatchReturn, DispatchError>> {
         let mut outputs  = BackendMap::<Result<<T as subscription::TypeIdentity>::DispatchReturn, DispatchError>>::new();
         let mut jobs = Vec::with_capacity(backends.len());
@@ -1141,7 +1138,6 @@ impl Backends {
         outputs
     }
 
-    #[tracing::instrument(skip(context), level = "debug", fields(track = ?&context.track.persistent_id))]
     pub async fn dispatch_track_started(&self, context: BackendContext<crate::data_fetching::AdditionalTrackData>) {
         type Variant = subscription::type_identity::TrackStarted;
         for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
@@ -1149,7 +1145,6 @@ impl Backends {
         }
     }
 
-    #[tracing::instrument(skip(context), level = "debug", fields(track = ?&context.track.persistent_id))]
     pub async fn dispatch_track_ended(&self, context: BackendContext<()>) {
         type Variant = subscription::type_identity::TrackEnded;
         for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
@@ -1157,7 +1152,6 @@ impl Backends {
         }
     }
 
-    #[tracing::instrument(skip(context), level = "debug", fields(track = ?&context.track.persistent_id))]
     pub async fn dispatch_current_progress(&self, context: BackendContext<()>) {
         type Variant = subscription::type_identity::ProgressJolt;
         for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
@@ -1165,7 +1159,6 @@ impl Backends {
         }
     }
 
-    #[tracing::instrument(level = "debug")]
     pub async fn dispatch_status(&self, status: DispatchedPlayerStatus) {
         type Variant = subscription::type_identity::PlayerStatusUpdate;
         for (identity, error) in self.dispatch::<Variant>(status).await.into_errors_iter() {
@@ -1173,7 +1166,6 @@ impl Backends {
         }
     }
 
-    #[tracing::instrument(level = "debug")]
     pub async fn dispatch_imminent_program_termination(&self, signal: tokio::signal::unix::SignalKind) {
         type Variant = subscription::type_identity::ImminentSubscriberTermination;
         let cause = SubscriberTerminationCause::from(signal);

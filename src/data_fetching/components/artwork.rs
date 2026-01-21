@@ -62,7 +62,7 @@ impl ArtworkManager {
                     tracing::error!(?err, "failed to clean up expired custom artwork urls");
                 }
             } else {
-                tracing::debug!(?file_path, "custom artwork url already exists, returning existing");
+                tracing::debug!(?file_path, url = ?existing.url, "custom artwork url already exists, returning existing");
                 return Some(existing);
             }
         }   

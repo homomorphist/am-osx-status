@@ -90,6 +90,7 @@ pub trait LoadableConfig where Self: Sized + for <'de> Deserialize<'de> + Serial
         let path = self.get_path_choice().as_path();
         tokio::fs::create_dir_all(path.parent().expect("cannot write to root...?")).await.expect("could not create configuration directory");
         tokio::fs::write(&path, LoadableConfig::serialize(self).as_bytes()).await.expect("could not write configuration");
+        tracing::debug!("saved configuration to {}", path.to_string_lossy());
     }
 
     #[expect(unused, reason = "versioned configurations are not fully implemented")]

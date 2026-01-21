@@ -130,7 +130,7 @@ async fn main() -> ExitCode {
                             tokio::select! {
                                 result = $expr => result,
                                 signal = &mut termination_signal => {
-                                    eprintln!("Exiting; no configuration file will be made.");
+                                    eprintln!("\nExiting; no configuration file will be made."); // '\n' to move past ^C printed by terminal and go to new line
                                     std::process::exit(128 + signal.as_raw_value());
                                 }
                             }
@@ -208,7 +208,7 @@ async fn main() -> ExitCode {
         },
         Command::Service { ref action } => {
             use cli::ServiceAction;
-            use service::{ServiceController, ipc};
+            use service::ServiceController;
 
             match action {
                 ServiceAction::Start => ServiceController::start(get_config_or_error!().path.as_path(), true).await,
@@ -253,7 +253,7 @@ async fn main() -> ExitCode {
                 ServiceAction::Remove => ServiceController::remove().await,
                 #[cfg(debug_assertions)]
                 ServiceAction::Reload => {
-                    use ipc::{Packet, PacketConnection};
+                    use service::ipc::{Packet, PacketConnection};
                     let path = get_config_or_error!().socket_path;
                     let mut connection = PacketConnection::from_path(path).await.unwrap();
                     connection.send(Packet::hello()).await.expect("failed to send hello packet");

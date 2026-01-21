@@ -154,7 +154,6 @@ impl<'a> SizedFirstReadableChunk<'a> for PackedFileInfo<'a> {
         let artist_count = u32!()?;
         let max_encrypted_byte_count = u32!()?;
         skip_to_end!()?;
-        dbg!(cursor.position());
 
         Ok(Self {
             header_size,
