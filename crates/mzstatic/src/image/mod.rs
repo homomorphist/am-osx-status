@@ -466,8 +466,8 @@ impl<'a> MzStaticImage<'a> {
     pub fn with_pool_and_token(pool_and_token: MaybeOwnedString<'a>) -> Result<Self, ParseError<'a>> {
         if let Ok(pool) = Pool::read(&pool_and_token) {
             let token: MaybeOwnedString<'_> = match pool_and_token {
-                MaybeOwnedString::Borrowed(borrowed) => MaybeOwnedString::Borrowed(&borrowed[pool.bytes.get() + '/'.len_utf8()..]),
-                MaybeOwnedString::Owned(owned) => MaybeOwnedString::Owned((owned[pool.bytes.get() + '/'.len_utf8()..]).to_string())
+                MaybeOwnedString::Borrowed(borrowed) => MaybeOwnedString::Borrowed(&borrowed[pool.bytes.get()..]),
+                MaybeOwnedString::Owned(mut owned) => MaybeOwnedString::Owned(owned.split_off(pool.bytes.get())),
             };
             Ok(Self {
                 accelerator_directives: None,
@@ -502,6 +502,24 @@ mod tests {
     use super::*;
     use quality::*;
     use effect::*;
+
+    #[test]
+    fn with_pool_and_token() {
+        let token = "v4/89/97/39/899739d0-a5f4-d8b1-43d5-d5866f12c770/199806066614.jpg";
+        let pool = Pool {
+            variant: crate::pool::Variant::Music,
+            number: Some(core::num::NonZeroU8::new(211).unwrap())
+        };
+
+        let joined = format!("{}/{}", pool, token);
+
+        let borrowing = MzStaticImage::with_pool_and_token(MaybeOwnedString::Borrowed(&joined)).unwrap();
+        assert_eq!(borrowing.asset_token, token.to_string());
+        assert_eq!(borrowing.pool, PoolOrSagaSpecifier::Pool(pool));
+        let owning = MzStaticImage::with_pool_and_token(MaybeOwnedString::Owned(joined.clone())).unwrap();
+        assert_eq!(owning.asset_token, token.to_string());
+        assert_eq!(owning.pool, PoolOrSagaSpecifier::Pool(pool));
+    }
 
     mod thumbnail_parameters {
         use super::*;

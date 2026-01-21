@@ -119,7 +119,6 @@ impl ArtworkManager {
                         if mz.subdomain.starts_with('a') {
                             mz.subdomain = "is1-ssl".into();
                             mz.prefix = Some(mzstatic::image::Prefix::ImageThumbnail);
-                            mz.asset_token = mz.asset_token.replacen("4/", "v4/", 1).into();
                         }
                         LocatedResource::from(&mz)
                     });
