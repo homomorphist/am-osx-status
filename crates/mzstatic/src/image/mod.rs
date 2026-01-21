@@ -152,11 +152,11 @@ impl From<(u16, u16)> for Resolution {
 }
 
 
-/// The primary part of an mzstatic image URL.
+/// Dynamic image thumbnail parameters.
 /// 
 /// This will roughly match the following RegEx: `^\d+x\d+(?:SC\.[A-Z]+[0-9]{2}|[a-z]{2})\.[a-z]+(?:\?l=[A-Za-z-]+)?$`
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Details<'a> {
+pub struct ThumbnailParameters<'a> {
     /// The file format to return.
     pub image_format: ImageFormat,
     /// An effect to apply on the image.
@@ -176,10 +176,10 @@ pub struct Details<'a> {
     // When used by Apple, it's usually in the `en-US` / `ru-RU` format.
     pub language: Option<MaybeOwnedString<'a>>
 }
-impl<'a> Details<'a> {
-    pub fn edit_url(url: &'a str, edit: impl FnOnce(Details) -> Details) -> Result<String, DetailsParseError<'a>> {
+impl<'a> ThumbnailParameters<'a> {
+    pub fn edit_url(url: &'a str, edit: impl FnOnce(ThumbnailParameters) -> ThumbnailParameters) -> Result<String, DetailsParseError<'a>> {
         let last_slash: usize = url.rfind('/').unwrap();
-        let image = edit(Details::new(&url[(last_slash + 1)..])?);
+        let image = edit(ThumbnailParameters::new(&url[(last_slash + 1)..])?);
         Ok(format!("{}{image}", &url[..=last_slash]))
     }
     pub fn new(mut url: &'a str) -> Result<Self, DetailsParseError<'a>> {
@@ -228,7 +228,7 @@ impl<'a> Details<'a> {
         })
     }
 }
-impl core::fmt::Display for Details<'_> {
+impl core::fmt::Display for ThumbnailParameters<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.resolution);
         if let Some(effect) = &self.effect {
@@ -244,7 +244,7 @@ impl core::fmt::Display for Details<'_> {
         Ok(())
     }
 }
-impl Default for Details<'_> {
+impl Default for ThumbnailParameters<'_> {
     fn default() -> Self {
         Self {
             image_format: ImageFormat::Png,
@@ -327,7 +327,7 @@ impl From<crate::pool::ParseError> for ParseError<'_> {
 
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PoolOrSagaSpecifier {
     Pool(crate::pool::Pool),
     /// Oh, lord. I'm gonna just have to try my best with this one.
@@ -395,7 +395,7 @@ pub struct MzStaticImage<'a> {
     /// - `/^apps$/` - Purpose unknown; seen hosting an Android manifest and a (broken?) web build for some sort of Apple web-app.
     /// - `/^itc$/` - Purpose unknown.
     pub subdomain: MaybeOwnedString<'a>,
-    pub parameters: Details<'a>
+    pub parameters: ThumbnailParameters<'a>
 }
 impl<'a> MzStaticImage<'a> {
     // todo: return result
@@ -450,14 +450,14 @@ impl<'a> MzStaticImage<'a> {
     
         let last_slash = url.rfind('/').unwrap(); // FIXME: Don't panic!
         let (path, details) = url.split_at(last_slash);
-        let details = Details::new(&details[1..])?;
+        let parameters = ThumbnailParameters::new(&details[1..])?;
 
         Ok(Self {
             https: tls,
             accelerator_directives: directives,
             asset_token: path.into(),
             subdomain,
-            parameters: details,
+            parameters,
             pool: PoolOrSagaSpecifier::Pool(pool),
             prefix
         })
@@ -476,7 +476,7 @@ impl<'a> MzStaticImage<'a> {
                 https: true,
                 subdomain: MaybeOwnedString::Borrowed("a1"),
                 asset_token: token,
-                parameters: Details::default(),
+                parameters: ThumbnailParameters::default(),
             })
         } else {
             //idfk
@@ -503,37 +503,29 @@ mod tests {
     use quality::*;
     use effect::*;
 
-    #[test]
-    fn general() {
-        assert_eq!(Details::new("600x600ac.jpg"), Ok(Details {
-            image_format: ImageFormat::Jpg,
-            quality: None,
-            effect: Some(Effect::SquareFitCircle),
-            resolution: (600, 600).into(),
-            language: None
-        }));
-    }
+    mod thumbnail_parameters {
+        use super::*;
+        
+        #[test]
+        fn general() {
+            assert_eq!(ThumbnailParameters::new("600x600ac.jpg"), Ok(ThumbnailParameters {
+                image_format: ImageFormat::Jpg,
+                quality: None,
+                effect: Some(Effect::SquareFitCircle),
+                resolution: (600, 600).into(),
+                language: None
+            }));
+        }
 
-    #[test]
-    fn complex() {
-        assert_eq!(Details::new("3x401SC.FPESS03-159.jpg?l=ru-RU"), Ok(Details {
-            image_format: ImageFormat::Jpg,
-            quality: quality::Quality::new(159).ok(),
-            effect: Some(Effect::Frame(Framing::FeaturedPlaylist(FeaturedPlaylist::Essentials(3)))),
-            resolution: (3, 401).into(),
-            language: Some(MaybeOwnedString::Borrowed("ru-RU"))
-        }));
+        #[test]
+        fn complex() {
+            assert_eq!(ThumbnailParameters::new("3x401SC.FPESS03-159.jpg?l=ru-RU"), Ok(ThumbnailParameters {
+                image_format: ImageFormat::Jpg,
+                quality: quality::Quality::new(159).ok(),
+                effect: Some(Effect::Frame(Framing::FeaturedPlaylist(FeaturedPlaylist::Essentials(3)))),
+                resolution: (3, 401).into(),
+                language: Some(MaybeOwnedString::Borrowed("ru-RU"))
+            }));
+        }
     }
-
-    // #[test]
-    // fn edit() {
-    //     const BASE: &str = "https://is1-ssl.mzstatic.com/image/thumb/AMCArtistImages126/v4/94/06/4d/94064d6b-c650-84a8-ae0a-bd3cf427898e/be14d48b-0f96-45d5-b15e-d255e87c48b6_ami-identity-795f9bb1320daa20b961333f6f8c6511-2023-08-17T07-24-42.519Z_cropped.png";
-    //     assert_eq!(&MzStaticImageParameters::edit_url(&format!("{}/600x600.jpg", BASE), |mut jor| {
-    //         jor.effect = Some(Effect::Frame(Framing::EssentialsFP(2)));
-    //         jor.quality = Some(500);
-    //         jor.image_format = ImageFormat::Png;
-    //         jor.language = Some("ru");
-    //         jor
-    //     }).unwrap(), &format!("{}/600x600SC.FPESS02-500.png?l=ru", BASE));
-    // }
 }

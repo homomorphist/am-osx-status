@@ -13,7 +13,7 @@ The format of a URL can vary, but one frequently seen format is as follows:
 - https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/c7/65/ff/c765ff9c-3757-4b96-043b-b9551d96d731/pr_source.png/632x632SC.FPINF03-70.webp?l=en-US
  ┌┴───┘   └──┬──┘ └──┬───┘     └─┬───────┘ └┬─────┘ └───┬──────────────────────────────────────────┘ └┬──────────┘ └────────┬──────────────────────┘
  │           │       │           │          │           │                                             │                     │
- └─ Protocol │       │           │          └─ Pool     └─ Main Token Path (UUID Variant)             └─ Original Filename  └─ Thumbnail Details
+ └─ Protocol │       │           │          └─ Pool     └─ Main Token Path (UUID Variant)             └─ Original Filename  └─ Thumbnail Parameters
              │       │           │          
              │       └─ Domain   └─ Prefix 
              │
@@ -56,7 +56,7 @@ TODO: re-write for accelerator directives, add those to example anatomy
 
 - This section is present only in `/^is[1-5](?:-ssl)$/` subdomains. It seems to specify that a thumbnail is being retrieved.
 - If you remove this part of the URL and swap the subdomain to one satisfying `/^a[1-5]$/` whilst removing the thumbnail payload, it will return a lossless(?) version of the image.
-- It is always accompanied by a relevant ["Thumbnail Details"](#thumbnail-details) payload, except in the case of `/image/thumb/gen/`, which will be discussed later.
+- It is always accompanied by a relevant ["Thumbnail Parameters"](#thumbnail-parameters) payload, except in the case of `/image/thumb/gen/`, which will be discussed later.
 
 #### Unknown Variant
 
@@ -128,6 +128,11 @@ Here are several examples of where this does not apply:
 - https://is1-ssl.mzstatic.com/image/thumb/dGLqT-f-3AHL34XWpgSf-Q/256x256bb.jpg (Apple Music user icon)
 
 
+### Thumbnail Parameters
+
+Not present on `/^a[1-5]$/` servers.
+
+For now, see code for further documentation.
 
 <!-- shit like this `SG-MQ-US-032-Image000001/v4/28/34/25/28342536-9ff3-5a2f-5afa-162612ffb940/image` is a valid token in the DB but no associated URL ?????????? Why man. Why.  wait. us 032, ,,,,, us,,,, that reminds me of the accelerator directive shit >
 
