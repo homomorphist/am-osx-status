@@ -62,7 +62,7 @@ impl ArtworkManager {
                     tracing::error!(?err, "failed to clean up expired custom artwork urls");
                 }
             } else {
-                tracing::debug!(?file_path, url = ?existing.url, "custom artwork url already exists, returning existing");
+                tracing::debug!(url = ?existing.url, ?file_path, "custom artwork url already exists, returning existing");
                 return Some(existing);
             }
         }   
@@ -97,32 +97,32 @@ impl ArtworkManager {
             images.artist = db.tracks().get(&id)
                 .and_then(|track| db.get(track.artist_id))
                 .and_then(|artist| artist.artwork_url.as_ref())
-                .filter(|mz| mz.parameters.effect != Some(mzstatic::image::effect::Effect::SquareFitCircle)) // ugly auto-generated
+                .filter(|mz| mz.parameters.as_ref().is_none_or(|p| p.effect != Some(mzstatic::image::effect::Effect::SquareFitCircle))) // ugly auto-generated
                 .map(LocatedResource::from);
         }
 
         if solicitation.contains(Component::AlbumImage) {
              if let Some(itunes) = track_itunes.as_ref() {
                 images.track = itunes.artwork_mzstatic().map(|mut mzstatic|{
-                    use mzstatic::image::quality::Quality;
-                    mzstatic.parameters.quality = Some(Quality::new(500).unwrap());
+                    if let Some(params) = &mut mzstatic.parameters {
+                        params.resolution = (256, 256).into();
+                        params.quality = Some(mzstatic::image::quality::Quality::new(500).unwrap());
+                    }
                     LocatedResource::from(&mzstatic)
-                }).ok();
+                }).inspect_err(|err| tracing::error!(?err, id = %track.persistent_id, "failed to get parse itunes mzstatic artwork url")).ok();
             }
+
+            dbg!(&images);
 
             #[cfg(feature = "musicdb")]
             if images.track.is_none() && let Some(db) = musicdb {
                 let id = musicdb::PersistentId::from(track.persistent_id);
                 images.track = db.tracks().get(&id)
-                    .and_then(|track| track.artwork.clone())
-                    .map(|mut mz| {
-                        if mz.subdomain.starts_with('a') {
-                            mz.subdomain = "is1-ssl".into();
-                            mz.prefix = Some(mzstatic::image::Prefix::ImageThumbnail);
-                        }
-                        LocatedResource::from(&mz)
-                    });
+                    .and_then(|track| track.artwork.as_ref())
+                    .map(LocatedResource::from);
             }
+
+            dbg!(&images);
 
             if images.track.is_none() {
                 let artwork = match artworkd::get_artwork(track.persistent_id.signed()).await {
@@ -169,7 +169,7 @@ impl<T> TrackArtworkData<T> {
             let start = start + ELEMENT.len();
             let end = text[start..].find('"').expect("element did not close") + start;
             let mut url = mzstatic::image::MzStaticImage::parse(&text[start..end]).expect("bad url");
-            url.parameters.quality = Some(Quality::new(resolution).unwrap());
+            url.parameters.as_mut().expect("no thumbnail parameters").quality = Some(Quality::new(resolution).unwrap());
             url.to_string()
         }))
     }
@@ -178,7 +178,7 @@ impl<T> TrackArtworkData<T> {
     pub fn track_image_from_itunes(song: &itunes_api::Track) -> Option<String> {
         song.artwork_mzstatic().map(|mut mzstatic|{
             use mzstatic::image::quality::Quality;
-            mzstatic.parameters.quality = Some(Quality::new(500).unwrap());
+            mzstatic.parameters.as_mut().expect("no thumbnail parameters").quality = Some(Quality::new(500).unwrap());
             mzstatic.to_string()
         }).ok()
     }

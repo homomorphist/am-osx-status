@@ -79,7 +79,7 @@ impl core::fmt::Display for Dimension {
 
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
-pub enum DetailsParseError<'a> {
+pub enum ThumbnailParametersParseError<'a> {
     #[error("{0}")]
     QualityOutOfBounds(#[from] quality::OutOfRangeError),
     #[error("could not parse quality: {0}")]
@@ -119,21 +119,21 @@ impl Resolution {
         }
     }
 
-    pub fn parse<'a>(url: &mut &str) -> Result<Self, DetailsParseError<'a>> {
+    pub fn parse<'a>(url: &mut &str) -> Result<Self, ThumbnailParametersParseError<'a>> {
         if url.starts_with('{') {
-            let end = url.find('}').ok_or(DetailsParseError::MissingResolutionDelimiter)?; *url = &url[(end + 1)..]; // end of {w}
-            let end = url.find('}').ok_or(DetailsParseError::MissingResolutionDelimiter)?; *url = &url[(end + 1)..]; // end of {h}
+            let end = url.find('}').ok_or(ThumbnailParametersParseError::MissingResolutionDelimiter)?; *url = &url[(end + 1)..]; // end of {w}
+            let end = url.find('}').ok_or(ThumbnailParametersParseError::MissingResolutionDelimiter)?; *url = &url[(end + 1)..]; // end of {h}
             return Ok(Self::Unfilled);
         }
 
         let mut url_borrow = *url;
-        let x = read!(url_borrow, delimit: "x").ok_or(DetailsParseError::MissingResolutionDelimiter)?;    
+        let x = read!(url_borrow, delimit: "x").ok_or(ThumbnailParametersParseError::MissingResolutionDelimiter)?;    
         let y = read!(url_borrow, while: |char| char.is_ascii_digit());      
         *url = &url[(url.len() - url_borrow.len())..];
 
         Ok(Self::Filled(
-            x.parse().map_err(|err| DetailsParseError::BadResolution(err, Dimension::X))?,
-            y.parse().map_err(|err| DetailsParseError::BadResolution(err, Dimension::Y))?
+            x.parse().map_err(|err| ThumbnailParametersParseError::BadResolution(err, Dimension::X))?,
+            y.parse().map_err(|err| ThumbnailParametersParseError::BadResolution(err, Dimension::Y))?
         ))
     }
 }
@@ -177,27 +177,27 @@ pub struct ThumbnailParameters<'a> {
     pub language: Option<MaybeOwnedString<'a>>
 }
 impl<'a> ThumbnailParameters<'a> {
-    pub fn edit_url(url: &'a str, edit: impl FnOnce(ThumbnailParameters) -> ThumbnailParameters) -> Result<String, DetailsParseError<'a>> {
+    pub fn edit_url(url: &'a str, edit: impl FnOnce(ThumbnailParameters) -> ThumbnailParameters) -> Result<String, ThumbnailParametersParseError<'a>> {
         let last_slash: usize = url.rfind('/').unwrap();
         let image = edit(ThumbnailParameters::new(&url[(last_slash + 1)..])?);
         Ok(format!("{}{image}", &url[..=last_slash]))
     }
-    pub fn new(mut url: &'a str) -> Result<Self, DetailsParseError<'a>> {
+    pub fn new(mut url: &'a str) -> Result<Self, ThumbnailParametersParseError<'a>> {
         let resolution = Resolution::parse(&mut url)?;
-        let framing_or_file_extension_delimiter = url.find('.').ok_or(DetailsParseError::MissingFileExtensionDelimiter)?;
+        let framing_or_file_extension_delimiter = url.find('.').ok_or(ThumbnailParametersParseError::MissingFileExtensionDelimiter)?;
         let maybe_quality_delimiter = url.find("-");
 
         // The effect, if present, will directly follow the resolution.
         // (So far, it's always been primarily specified by two characters, aside from a framing specifier)
         let effect = read!(url, delimit_at: maybe_quality_delimiter.unwrap_or(framing_or_file_extension_delimiter));
         let effect = if effect.is_empty() { None } else {
-            Some(effect::Effect::try_from(effect).map_err(|e| DetailsParseError::UnknownEffect(e, effect))?)
+            Some(effect::Effect::try_from(effect).map_err(|e| ThumbnailParametersParseError::UnknownEffect(e, effect))?)
         };
 
         let quality = if maybe_quality_delimiter.is_some() {
             // The modifier doesn't really have a delimiter, it's shoved in right after the Y-resolution.
-            let quality = read!(url, while: |char| char.is_ascii_digit()).parse().map_err(DetailsParseError::QualityNotParsable)?;
-            let quality = quality::Quality::new(quality).map_err(DetailsParseError::QualityOutOfBounds)?;
+            let quality = read!(url, while: |char| char.is_ascii_digit()).parse().map_err(ThumbnailParametersParseError::QualityNotParsable)?;
+            let quality = quality::Quality::new(quality).map_err(ThumbnailParametersParseError::QualityOutOfBounds)?;
             url = &url[1..]; // Pass the file extension delimiter.
             Some(quality)
         } else { None };
@@ -208,7 +208,7 @@ impl<'a> ThumbnailParameters<'a> {
             let file_extension = read!(url, delimit_at: parameters_delimiter);
 
             if &url.as_bytes()[0..=1] != b"l=" || url.find('&').is_some() {
-                return Err(DetailsParseError::UnknownUrlParameter)
+                return Err(ThumbnailParametersParseError::UnknownUrlParameter)
             }
 
             let language = MaybeOwnedString::Borrowed(&url["l=".len()..]);
@@ -217,7 +217,7 @@ impl<'a> ThumbnailParameters<'a> {
         } else { (url, None) };
 
         let image_format = ImageFormat::try_from(file_extension)
-            .map_err(|_| DetailsParseError::UnsupportedImageFormat(file_extension))?;
+            .map_err(|_| ThumbnailParametersParseError::UnsupportedImageFormat(file_extension))?;
 
         Ok(Self {
             language,
@@ -261,7 +261,7 @@ impl Default for ThumbnailParameters<'_> {
 pub enum Prefix {
     /// - This section is present only in `/^is[1-5](?:-ssl)$/` subdomains. It seems to specify that a thumbnail is being retrieved.
     /// - If you remove this part of the URL and swap the subdomain to one satisfying `/^a[1-5]$/` whilst removing the thumbnail payload, it will return a lossless(?) version of the image.
-    /// - It is always accompanied by a relevant thumbnail detail payload, except in the case of `/image/thumb/gen/`, which will be discussed later.
+    /// - It is always accompanied by a relevant thumbnail parameter payload, except in the case of `/image/thumb/gen/`, which will be discussed later.
     ImageThumbnail,
     ImagePf, // ?
 }
@@ -299,10 +299,10 @@ impl core::fmt::Display for Prefix {
 
 #[derive(Debug)]
 pub enum ParseError<'a> {
-    BadImageParameters(Option<DetailsParseError<'a>>),
+    BadImageParameters(Option<ThumbnailParametersParseError<'a>>),
     BadDirectives(crate::accelerator::ReadError<'a>),
     BadPool(crate::pool::ParseError),
-    BadDetails(DetailsParseError<'a>),
+    BadThumbnailParameters(ThumbnailParametersParseError<'a>),
     BadProtocol,
     BadDomain,
     NoPool,
@@ -312,9 +312,9 @@ impl<'a> From<crate::accelerator::ReadError<'a>> for ParseError<'a> {
         Self::BadDirectives(value)
     }
 }
-impl<'a> From<DetailsParseError<'a>> for ParseError<'a> {
-    fn from(value: DetailsParseError<'a>) -> Self {
-        Self::BadDetails(value)
+impl<'a> From<ThumbnailParametersParseError<'a>> for ParseError<'a> {
+    fn from(value: ThumbnailParametersParseError<'a>) -> Self {
+        Self::BadThumbnailParameters(value)
     }
 }
 impl From<crate::pool::ParseError> for ParseError<'_> {
@@ -395,7 +395,7 @@ pub struct MzStaticImage<'a> {
     /// - `/^apps$/` - Purpose unknown; seen hosting an Android manifest and a (broken?) web build for some sort of Apple web-app.
     /// - `/^itc$/` - Purpose unknown.
     pub subdomain: MaybeOwnedString<'a>,
-    pub parameters: ThumbnailParameters<'a>
+    pub parameters: Option<ThumbnailParameters<'a>>
 }
 impl<'a> MzStaticImage<'a> {
     // todo: return result
@@ -449,8 +449,12 @@ impl<'a> MzStaticImage<'a> {
         let pool =  eat!(url, [pass] Some(Pool::read(url)?)).unwrap(); // FIXME: Don't panic!
     
         let last_slash = url.rfind('/').unwrap(); // FIXME: Don't panic!
-        let (path, details) = url.split_at(last_slash);
-        let parameters = ThumbnailParameters::new(&details[1..])?;
+        let (mut path, parameters) = url.split_at(last_slash);
+        let parameters = match ThumbnailParameters::new(&parameters[1..]) {
+            Ok(parsed) => Some(parsed),
+            Err(ThumbnailParametersParseError::MissingResolutionDelimiter) => { path = url; None },
+            Err(error) => return Err(error.into())
+        };
 
         Ok(Self {
             https: tls,
@@ -476,7 +480,7 @@ impl<'a> MzStaticImage<'a> {
                 https: true,
                 subdomain: MaybeOwnedString::Borrowed("a1"),
                 asset_token: token,
-                parameters: ThumbnailParameters::default(),
+                parameters: None
             })
         } else {
             //idfk
@@ -490,7 +494,9 @@ impl core::fmt::Display for MzStaticImage<'_> {
         write!(f, "{}.mzstatic.com/", self.subdomain)?;
         if let Some(prefix) = self.prefix { write!(f, "{prefix}/")?; }
         if let Some(accelerator_directives) = self.accelerator_directives { write!(f, "{accelerator_directives}/")?; }
-        write!(f, "{}/{}/{}", self.pool, self.asset_token, self.parameters)
+        write!(f, "{}/{}", self.pool, self.asset_token)?;
+        if let Some(parameters) = &self.parameters { write!(f, "/{parameters}")?; }
+        Ok(())
     }
 }
 
@@ -519,6 +525,15 @@ mod tests {
         let owning = MzStaticImage::with_pool_and_token(MaybeOwnedString::Owned(joined.clone())).unwrap();
         assert_eq!(owning.asset_token, token.to_string());
         assert_eq!(owning.pool, PoolOrSagaSpecifier::Pool(pool));
+    }
+
+    #[test]
+    fn no_thumbnail_parameters() {
+        let token = "v4/89/97/39/899739d0-a5f4-d8b1-43d5-d5866f12c770/199806066614.jpg";
+        let url = format!("https://a1.mzstatic.com/Music211/{token}");
+        let image = MzStaticImage::parse(&url).unwrap();
+        assert_eq!(image.asset_token, token);
+        assert!(image.parameters.is_none());
     }
 
     mod thumbnail_parameters {
