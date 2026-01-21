@@ -70,7 +70,7 @@ impl<T: Into<Self> + lastfm::error::code::ErrorCode> From<lastfm::Error<T>> for 
         match error {
             Error::Network(err) => err.into(),
             Error::Deserialization(err) => err.into(),
-            Error::ApiError(err) => err.into(),
+            Error::Api(err) => err.into(),
         }
     }
 }

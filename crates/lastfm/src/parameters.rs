@@ -13,6 +13,13 @@ pub enum Value {
 #[serde(transparent)]
 pub struct Map<'a>(pub std::collections::HashMap<String, MaybeOwnedString<'a>>);
 impl<'a> Map<'a> {
+    pub fn new() -> Self {
+        Self::with_capacity(3) // will need at least 3: method, api_key, format
+    }
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(std::collections::HashMap::with_capacity(capacity))
+    }
+    
     pub fn from_collection(collection: std::collections::HashMap<String, MaybeOwnedString<'a>>) -> Self {
         Self(collection)
     }
@@ -45,7 +52,11 @@ impl<'a> Map<'a> {
         crate::auth::ApiSignature(hex)
     }
 }
-
+impl Default for Map<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl<'a> From<&'a scrobble::HeardTrackInfo<'a>> for Map<'a> {
     fn from(track: &'a scrobble::HeardTrackInfo) -> Self {

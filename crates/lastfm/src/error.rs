@@ -2,7 +2,7 @@
 pub enum Error<T: code::ErrorCode = GeneralErrorCode> {
     /// Error codes returned by the Last.fm API.
     #[error("{0}")]
-    ApiError(#[from] T),
+    Api(#[from] T),
     /// An error occurred while sending the request.
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
@@ -15,24 +15,41 @@ impl<T: code::ErrorCode> TryInto<u8> for &Error<T> {
     type Error = ();
     fn try_into(self) -> Result<u8, Self::Error> {
         match self {
-            Error::ApiError(code) => Ok((*code).into()),
+            Error::Api(code) => Ok((*code).into()),
             _ => Err(()),
         }
     }
 }
 impl<T: code::ErrorCode> Error<T> {
     /// Return an error from a general last.fm API error code if it is recognized.
-    fn try_from_code(code: u8) -> Result<Self, code::UnmappedErrorCode> {
-        T::try_from(code).map(Error::ApiError)
+    pub fn try_from_code(code: u8) -> Result<Self, code::UnmappedErrorCode> {
+        T::try_from(code).map(Error::Api)
     }
-    /// Return an error from a general last.fm API error code, or an error representing that the code itself is unrecognized.
-    fn from_code(code: u8) -> Self {
-        Self::try_from_code(code).unwrap_or_else(|err| Error::Deserialization(err.into()))
+    /// Return an error from a general last.fm API error code, or a deserialization error representing that the code itself is unrecognized.
+    pub fn from_code(code: u8) -> Self {
+        Self::try_from_code(code).unwrap_or_else(|err| err.into())
+    }
+    pub fn from_code_result(result: Result<T, code::UnmappedErrorCode>) -> Self {
+        result.map(Error::Api).unwrap_or_else(|err| err.into())
+    }
+    /// Attempts to parse out an error code from the given API response body.
+    pub fn from_response_body(text: &str) -> Option<Self> {
+        Some(Self::from_code_result(T::try_from_api_response_body(text)?))
     }
 }
 impl<T: code::ErrorCode> From<u8> for Error<T> {
     fn from(code: u8) -> Self {
         Self::from_code(code)
+    }
+}
+impl<T: code::ErrorCode> From<code::UnmappedErrorCode> for Error<T> {
+    fn from(code: code::UnmappedErrorCode) -> Self {
+        Self::Deserialization(code.into())
+    }
+}
+impl<T: code::ErrorCode> From<Result<T, code::UnmappedErrorCode>> for Error<T> {
+    fn from(result: Result<T, code::UnmappedErrorCode>) -> Self {
+        Self::from_code_result(result)
     }
 }
 
@@ -51,7 +68,14 @@ pub mod code {
         + Copy
         + Into<u8>
         + TryFrom<u8, Error = UnmappedErrorCode>
-    {}
+    {
+        fn try_from_api_response_body(text: &str) -> Option<Result<Self, UnmappedErrorCode>> where Self: Sized {
+            #[derive(serde::Deserialize)]
+            struct ErrorResponse { error: u8, /* message: String */ }
+            let error_response: ErrorResponse = serde_json::from_str(text).ok()?;
+            Some(Self::try_from(error_response.error))
+        }
+    }
 
 
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -78,11 +102,6 @@ pub mod code {
     impl From<UnmappedErrorCode> for serde_json::Error {
         fn from(val: UnmappedErrorCode) -> Self {
             serde::de::Error::custom(val)
-        }
-    }
-    impl<T: ErrorCode> From<UnmappedErrorCode> for crate::Error<T> {
-        fn from(code: UnmappedErrorCode) -> Self {
-            crate::Error::Deserialization(code.into())
         }
     }
 
@@ -220,12 +239,12 @@ pub mod code {
     pub(crate) use using_destructure;
     pub(crate) use def;
 
-    macro_rules! into_superficial {
+    macro_rules! impl_into_general {
         ($($name:ident),*) => {
             $(
                 impl From<$name> for $crate::Error {
                     fn from(code: $name) -> Self {
-                        $crate::Error::ApiError(super::GeneralErrorCode::$name(code))
+                        $crate::Error::Api(super::GeneralErrorCode::$name(code))
                     }
                 }
             )*
@@ -304,7 +323,7 @@ pub mod code {
             }
         }
 
-        into_superficial! {
+        impl_into_general! {
             ServiceAvailability,
             Authentication,
             InvalidUsage
