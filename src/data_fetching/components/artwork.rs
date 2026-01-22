@@ -112,8 +112,6 @@ impl ArtworkManager {
                 }).inspect_err(|err| tracing::error!(?err, id = %track.persistent_id, "failed to get parse itunes mzstatic artwork url")).ok();
             }
 
-            dbg!(&images);
-
             #[cfg(feature = "musicdb")]
             if images.track.is_none() && let Some(db) = musicdb {
                 let id = musicdb::PersistentId::from(track.persistent_id);
@@ -121,8 +119,6 @@ impl ArtworkManager {
                     .and_then(|track| track.artwork.as_ref())
                     .map(LocatedResource::from);
             }
-
-            dbg!(&images);
 
             if images.track.is_none() {
                 let artwork = match artworkd::get_artwork(track.persistent_id.signed()).await {
