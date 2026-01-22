@@ -375,26 +375,26 @@ subscription::define_subscriber!(pub LastFM, {
     client: ::lastfm::Client<::lastfm::auth::state::Authorized>
 });
 subscribe!(LastFM, TrackStarted, {
-    async fn dispatch(&mut self, context: super::BackendContext<AdditionalTrackData>) -> Result<(), DispatchError> {
+    async fn dispatch(&mut self, context: super::DispatchContext<(super::ActivePlayerContext, AdditionalTrackData)>) -> Result<(), DispatchError> {
+        let track = &context.0.track;
         let db = context.musicdb.as_ref().as_ref();
         let pool = crate::store::DB_POOL.get().await.ok();
-        let track = context.track.as_ref();
-        let artist = extract_first_artist(track, db, pool, &self.client.net).await;
+        let artist = extract_first_artist(track.as_ref(), db, pool, &self.client.net).await;
         let info = Self::track_to_heard(track, &artist);
         self.client.set_now_listening(&info).await?;
         Ok(())
     }
 });
 subscribe!(LastFM, TrackEnded, {
-    async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
-        if !Self::is_eligible(context.track.as_ref(), context.listened).await {
+    async fn dispatch(&mut self, context: super::DispatchContext<super::ActivePlayerContext>) -> Result<(), DispatchError> {
+        let track = &context.track;
+        if !Self::is_eligible(track).await {
             return Ok(())
         }
 
         let db = context.musicdb.as_ref().as_ref();
         let pool = crate::store::DB_POOL.get().await.ok();
-        let track = context.track.as_ref();
-        let artist = extract_first_artist(track, db, pool, &self.client.net).await;
+        let artist = extract_first_artist(track.as_ref(), db, pool, &self.client.net).await;
         let response = self.client.scrobble(&[lastfm::scrobble::Scrobble {
             chosen_by_user: None, // TODO: Detect radio stations and such.
             timestamp: chrono::Utc::now(),
@@ -417,9 +417,9 @@ impl LastFM {
     }
 
     /// - <https://www.last.fm/api/scrobbling#scrobble-requests>
-    async fn is_eligible(track: &DispatchableTrack, listened: alloc::sync::Arc<tokio::sync::Mutex<crate::Listened>>) -> bool {
-        if let Some(duration) = track.duration {
-            let time_listened = listened.lock().await.total_heard();
+    async fn is_eligible(context: &super::ActiveTrackContext) -> bool {
+        if let Some(duration) = context.duration {
+            let time_listened = context.listened.lock().await.total_heard();
             if duration < THIRTY_SECONDS { return false }
             time_listened >= FOUR_MINUTES ||
             time_listened.as_secs_f32() >= (duration.as_secs_f32() / 2.)

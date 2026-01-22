@@ -8,15 +8,10 @@ use crate::listened;
 use super::error::DispatchError;
 
 fn f32_round_to_u64(value: f32) -> u64 {
-    if value < 0.0 {
-        panic!("value must be non-negative");
-    } else {
-        #[expect(clippy::cast_possible_truncation, reason = "permissible loss, larger values are realistically infeasible")]
-        #[expect(clippy::cast_sign_loss, reason = "sign already checked")]
-        {
-            value.round() as u64
-        }
-    }
+    assert!(value >= 0.0, "value must be non-negative");
+    #[expect(clippy::cast_possible_truncation, reason = "permissible loss, larger values are realistically infeasible")]
+    #[expect(clippy::cast_sign_loss, reason = "sign already checked")]
+    { value.round() as u64 }
 }
 
 macro_rules! define_activities {
@@ -472,10 +467,10 @@ impl DiscordPresence {
     /// if the track is about to change, as it'll delay the status update containing the new track.
     /// 
     /// This also updates the duration and position fields based on the new context.
-    async fn should_dispatch_progress_update(&mut self, context: &super::BackendContext<()>) -> bool {
+    async fn should_dispatch_progress_update(&mut self, context: &super::ActiveTrackContext) -> bool {
         use crate::listened::CurrentListened;
         const STATUS_UPDATE_RATELIMIT_SECONDS: f32 = 15.;
-        self.duration = context.track.duration.map(|d| d.as_secs_f32());
+        self.duration = context.data.duration.map(|d| d.as_secs_f32());
         self.position = context.listened.lock().await.current.as_ref().map(CurrentListened::get_expected_song_position);
         let Some(duration) = self.duration else { return true }; // TODO: Unless was *already* `None`?
         let Some(position) = self.position else { return true };
@@ -493,10 +488,10 @@ impl DiscordPresence {
     }
 
     #[expect(clippy::useless_let_if_seq, reason = "bad with #[cfg]")]
-    fn build_activity(config: &Config, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) -> discord_presence::models::Activity {
+    fn build_activity(config: &Config, context: &super::DispatchContext<(super::ActivePlayerContext, crate::data_fetching::AdditionalTrackData)>) -> Activity {
         use osa_apple_music::track::MediaKind;
-        let super::BackendContext { track, listened: _, data: additional_info, .. } = context;
-        let image_urls = additional_info.images.urls();
+        let track = &context.0.track;
+        let image_urls = context.1.images.urls();
 
         let mut activity = Activity::new()
             .activity_type(match track.media_kind {
@@ -527,7 +522,7 @@ impl DiscordPresence {
             songlink = Some(format!("https://song.link/i/{id}"));
         }
 
-        if songlink.is_none() && let Some(itunes) = &additional_info.itunes {
+        if songlink.is_none() && let Some(itunes) = &context.1.itunes {
             songlink = Some(format!("https://song.link/{url}&app=music", url = itunes.apple_music_url));
         }
 
@@ -560,18 +555,18 @@ super::subscribe!(DiscordPresence, TrackStarted, {
         solicitation
     }
 
-    async fn dispatch(&mut self, context: super::BackendContext<crate::data_fetching::AdditionalTrackData>) -> Result<(), DispatchError> {
-        let super::BackendContext { track, listened, .. } = &context;
-        self.position = listened.lock().await.current.as_ref().map(listened::CurrentListened::get_expected_song_position);
+    async fn dispatch(&mut self, context: super::DispatchContext<(super::ActivePlayerContext, crate::data_fetching::AdditionalTrackData)>) -> Result<(), DispatchError> {
+        let track = &context.0.track;
+        self.position = track.listened.lock().await.current.as_ref().map(listened::CurrentListened::get_expected_song_position);
         self.duration = track.duration.map(|d| d.as_secs_f32());
-        let activity = Self::build_activity(&self.config, context);
+        let activity = Self::build_activity(&self.config, &context);
         self.activity = Some(activity);
         self.send_activity().await
     }
 });
 super::subscribe!(DiscordPresence, ProgressJolt, {
-    async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
-        if self.should_dispatch_progress_update(&context).await {
+    async fn dispatch(&mut self, context: super::DispatchContext<super::ActivePlayerContext>) -> Result<(), DispatchError> {
+        if self.should_dispatch_progress_update(&context.data.track).await {
             self.send_activity().await
         } else {
             tracing::debug!("skipping progress dispatch since it'll delay next song dispatch");

@@ -106,8 +106,8 @@ impl ListenBrainz {
     }
 
     /// - <https://listenbrainz.readthedocs.io/en/latest/users/api/core.html#post--1-submit-listens>
-    async fn is_eligible_for_submission<T>(&self, context: &super::BackendContext<T>) -> bool where T: Send + Sync {
-        if let Some(duration) = context.track.duration {
+    async fn is_eligible_for_submission(&self, context: &super::ActiveTrackContext) -> bool {
+        if let Some(duration) = context.data.duration {
             let time_listened = context.listened.lock().await.total_heard();
             time_listened >= FOUR_MINUTES ||
             time_listened.as_secs_f32() >= (duration.as_secs_f32() / 2.)
@@ -115,18 +115,20 @@ impl ListenBrainz {
     }
 }
 subscribe!(ListenBrainz, TrackStarted, {
-    async fn dispatch(&mut self, context: super::BackendContext<AdditionalTrackData>) -> Result<(), DispatchError> {
-        let track_data = Self::basic_track_metadata(&context.track)?;
-        let additional_info = Self::additional_info(&context.track, &context.player, self.client.get_program_info());
+    async fn dispatch(&mut self, context: super::DispatchContext<(super::ActivePlayerContext, AdditionalTrackData)>) -> Result<(), DispatchError> {
+        let track = &context.0.track;
+        let track_data = Self::basic_track_metadata(track)?;
+        let additional_info = Self::additional_info(track, &context.0.data, self.client.get_program_info());
         self.client.submit_playing_now(track_data, Some(additional_info)).await.map_err(Into::into)
     }
 });
 subscribe!(ListenBrainz, TrackEnded, {
-    async fn dispatch(&mut self, context: super::BackendContext<()>) -> Result<(), DispatchError> {
-        if !self.is_eligible_for_submission(&context).await { return Ok(()) }
-        let track_data = Self::basic_track_metadata(&context.track)?;
-        let additional_info = Self::additional_info(&context.track, &context.player, self.client.get_program_info());
-        let started_listening_at = context.listened.lock().await.started_at().ok_or(DispatchError::missing_required_data("listen start time"))?;
+    async fn dispatch(&mut self, context: super::DispatchContext<super::ActivePlayerContext>) -> Result<(), DispatchError> {
+        let track = &context.track;
+        if !self.is_eligible_for_submission(track).await { return Ok(()) }
+        let track_data = Self::basic_track_metadata(track)?;
+        let additional_info = Self::additional_info(track, &context.data, self.client.get_program_info());
+        let started_listening_at = track.listened.lock().await.started_at().ok_or(DispatchError::missing_required_data("listen start time"))?;
         self.client.submit_listen(track_data, started_listening_at, Some(additional_info)).await.map_err(Into::into)
     }
 });

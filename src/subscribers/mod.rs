@@ -780,26 +780,58 @@ pub mod uncensor {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ActivePlayerContext<T = ActiveTrackContext> {
+    pub data: Arc<osa_apple_music::ApplicationData>,
+    pub track: T,
+}
+impl<T> core::ops::Deref for ActivePlayerContext<T> {
+    type Target = osa_apple_music::ApplicationData;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+impl<T> AsRef<osa_apple_music::ApplicationData> for ActivePlayerContext<T> {
+    fn as_ref(&self) -> &osa_apple_music::ApplicationData {
+        &self.data
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveTrackContext {
+    pub data: Arc<DispatchableTrack>,
+    pub listened: Arc<Mutex<crate::listened::Listened>>,
+}
+impl core::ops::Deref for ActiveTrackContext {
+    type Target = DispatchableTrack;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+impl AsRef<DispatchableTrack> for ActiveTrackContext {
+    fn as_ref(&self) -> &DispatchableTrack {
+        &self.data
+    }
+}
 
 #[derive(Debug)]
-pub struct BackendContext<A> {
-    pub track: Arc<DispatchableTrack>,
-    pub player: Arc<osa_apple_music::ApplicationData>,
-    pub data: Arc<A>,
-    pub listened: Arc<Mutex<crate::listened::Listened>>,
-
+pub struct DispatchContext<A> {
     #[cfg(feature = "musicdb")]
     pub musicdb: Arc<Option<musicdb::MusicDB>>,
+    pub data: Arc<A>,
 }
-impl<A> Clone for BackendContext<A> {
+impl<A> core::ops::Deref for DispatchContext<A> {
+    type Target = A;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+impl<A> Clone for DispatchContext<A> {
     fn clone(&self) -> Self {
         Self {
-            track: self.track.clone(),
-            player: self.player.clone(),
-            data: self.data.clone(),
-            listened: self.listened.clone(),
             #[cfg(feature = "musicdb")]
             musicdb: self.musicdb.clone(),
+            data: self.data.clone(),
         }
     }
 }
@@ -846,9 +878,10 @@ pub use subscription::{Subscriber, subscribe};
 pub mod subscription {
     use crate::data_fetching::components::ComponentSolicitation;
 
-    use super::{error::DispatchError, BackendContext, TransientSendableUntypedRawBoxPointer};
+    use super::{error::DispatchError, TransientSendableUntypedRawBoxPointer};
 
-    type DefaultContext = BackendContext<()>;
+    #[allow(unused)]
+    type DefaultContext = ();
     type DefaultReturn = ();
 
     macro_rules! define {
@@ -882,6 +915,7 @@ pub mod subscription {
                 
                 pub trait TypeIdentity: core::fmt::Debug {
                     const IDENTITY: super::Identity;
+                    const SINGLETON: Self;
                     type DispatchContext: Send + Clone;
                     type DispatchReturn: Send;
                 }
@@ -890,6 +924,7 @@ pub mod subscription {
                     pub struct $name;
                     impl TypeIdentity for $name {
                         const IDENTITY: super::Identity = super::Identity::$name;
+                        const SINGLETON: Self = Self;
                         type DispatchContext = super::type_identity::context::$name;
                         type DispatchReturn = super::type_identity::returns::$name;
                     }
@@ -1041,11 +1076,11 @@ pub mod subscription {
     }
     
     define!($, [
-        { TrackStarted<crate::subscribers::BackendContext<crate::data_fetching::AdditionalTrackData>> },
-        { TrackEnded },
-        { ProgressJolt },
+        { TrackStarted<crate::subscribers::DispatchContext<(crate::subscribers::ActivePlayerContext, crate::data_fetching::AdditionalTrackData)>> },
+        { TrackEnded<crate::subscribers::DispatchContext<crate::subscribers::ActivePlayerContext>> },
+        { ProgressJolt<crate::subscribers::DispatchContext<crate::subscribers::ActivePlayerContext>> },
         { PlayerStatusUpdate<crate::subscribers::DispatchedPlayerStatus> },
-        { ImminentSubscriberTermination<crate::subscribers::SubscriberTerminationCause> }
+        { ImminentSubscriberTermination<crate::subscribers::SubscriberTerminationCause> },
     ], {
         async fn get_solicitation(&self, event: self::Identity) -> Option<ComponentSolicitation>;
         #[allow(private_interfaces)]
@@ -1138,39 +1173,9 @@ impl Backends {
         outputs
     }
 
-    pub async fn dispatch_track_started(&self, context: BackendContext<crate::data_fetching::AdditionalTrackData>) {
-        type Variant = subscription::type_identity::TrackStarted;
-        for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
-            error.handle(identity.get_name(), &Variant {});
-        }
-    }
-
-    pub async fn dispatch_track_ended(&self, context: BackendContext<()>) {
-        type Variant = subscription::type_identity::TrackEnded;
-        for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
-            error.handle(identity.get_name(), &Variant {});
-        }
-    }
-
-    pub async fn dispatch_current_progress(&self, context: BackendContext<()>) {
-        type Variant = subscription::type_identity::ProgressJolt;
-        for (identity, error) in self.dispatch::<Variant>(context).await.into_errors_iter() {
-            error.handle(identity.get_name(), &Variant {});
-        }
-    }
-
-    pub async fn dispatch_status(&self, status: DispatchedPlayerStatus) {
-        type Variant = subscription::type_identity::PlayerStatusUpdate;
-        for (identity, error) in self.dispatch::<Variant>(status).await.into_errors_iter() {
-            error.handle(identity.get_name(), &Variant {});
-        }
-    }
-
-    pub async fn dispatch_imminent_program_termination(&self, signal: tokio::signal::unix::SignalKind) {
-        type Variant = subscription::type_identity::ImminentSubscriberTermination;
-        let cause = SubscriberTerminationCause::from(signal);
-        for (identity, error) in self.dispatch::<Variant>(cause).await.into_errors_iter() {
-            error.handle(identity.get_name(), &Variant {});
+    pub async fn dispatch_handled<T: subscription::TypeIdentity>(&self, context: T::DispatchContext) {
+        for (identity, error) in self.dispatch::<T>(context).await.into_errors_iter() {
+            error.handle(identity.get_name(), &T::SINGLETON);
         }
     }
 

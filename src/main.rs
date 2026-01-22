@@ -15,7 +15,7 @@ use core::time::Duration;
 use std::process::ExitCode;
 
 use config::{ConfigPathChoice, ConfigRetrievalError};
-use subscribers::{subscription, BackendContext, DispatchableTrack};
+use subscribers::{subscription, DispatchContext, DispatchableTrack};
 use tokio::sync::Mutex;
 use tracing::Instrument;
 use listened::Listened;
@@ -195,7 +195,7 @@ async fn main() -> ExitCode {
                 let (cleared_lockfile, session_finished, ()) = tokio::join!(
                     ActiveProcessLockfile::clear(),
                     context.session.finish(db_pool),
-                    context.backends.dispatch_imminent_program_termination(signal)
+                    context.backends.dispatch_handled::<subscription::type_identity::ImminentSubscriberTermination>(signal.into())
                 );
 
                 if let Err(error) = session_finished { tracing::error!(?error, "failed to finalize session in database"); }
@@ -344,12 +344,12 @@ async fn main() -> ExitCode {
 
     ExitCode::SUCCESS
 }
+
 #[derive(Debug)]
 struct PollingContext {
     terminating: Terminating,
     backends: subscribers::Backends,
-    pub last_track: Option<Arc<DispatchableTrack>>,
-    pub listened: Arc<Mutex<Listened>>,
+    pub last_track: Option<subscribers::ActiveTrackContext>,
     artwork_manager: Arc<data_fetching::components::artwork::ArtworkManager>,
     
     #[cfg(feature = "musicdb")]
@@ -431,7 +431,6 @@ impl PollingContext {
             terminating,
             backends,
             last_track: None,
-            listened: Arc::new(Mutex::new(Listened::new())),
             artwork_manager: Arc::new(artwork_manager),
             #[cfg(feature = "musicdb")]
             musicdb,
@@ -453,11 +452,26 @@ impl PollingContext {
     pub fn is_terminating(&self) -> bool {
         self.terminating.load(core::sync::atomic::Ordering::Relaxed)
     }
+
+    async fn dispatch_track_end(&self, player: Arc<osa_apple_music::application::ApplicationData>, track: subscribers::ActiveTrackContext) {
+        track.listened.lock().await.flush_current();
+        self.backends.dispatch_handled::<subscription::type_identity::TrackEnded>(DispatchContext {
+            #[cfg(feature = "musicdb")]
+            musicdb: self.musicdb.clone(),
+            data: Arc::new(subscribers::ActivePlayerContext {
+                data: player.clone(),
+                track,
+            }),
+        }).await;
+    }
 }
+
 
 #[expect(clippy::significant_drop_tightening, reason = "concurrent execution of this function is undesirable")]
 #[tracing::instrument(skip(context), level = "trace")]
 async fn proc_once(context: Arc<Mutex<PollingContext>>) {
+    use subscription::type_identity as E;
+
     let mut guard = context.lock().await;
     let context = &mut *guard;
 
@@ -470,7 +484,7 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
             if !context.player_open { return; }
             tracing::debug!("player was closed; dispatching event");
             context.player_open = false;
-            context.backends.dispatch_status(subscribers::DispatchedPlayerStatus::Closed).await;
+            context.backends.dispatch_handled::<E::PlayerStatusUpdate>(subscribers::DispatchedPlayerStatus::Closed).await;
             return;
         },
         Err(err) => {
@@ -494,25 +508,13 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
     };
 
     context.session.osa_fetches_player += 1;
-    context.backends.dispatch_status(player.state.into()).await;
+    context.backends.dispatch_handled::<E::PlayerStatusUpdate>(player.state.into()).await;
 
     use osa_apple_music::application::PlayerState;
     match player.state {
         PlayerState::Stopped => {
-            context.listened.lock().await.flush_current();
-            
-            if let Some(previous) = context.last_track.clone() {
-                let listened = context.listened.clone();
-                context.listened = Arc::new(Mutex::new(Listened::new()));
-                context.last_track = None;
-                context.backends.dispatch_track_ended(BackendContext {
-                    listened,
-                    track: previous,
-                    player: player.clone(),
-                    data: ().into(),
-                    #[cfg(feature = "musicdb")]
-                    musicdb: context.musicdb.clone()
-                }).await;
+            if let Some(last_track) = context.last_track.take() {
+                context.dispatch_track_end(player.clone(), last_track).await;
             }
         }
         PlayerState::Paused => {},
@@ -566,15 +568,8 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                     context.artwork_manager.clone()
                 );
 
-                let additional_data = if let Some(previous) = context.last_track.clone() {
-                    let pending_dispatch = context.backends.dispatch_track_ended(BackendContext {
-                        player: player.clone(),
-                        track: previous,
-                        listened: context.listened.clone(),
-                        data: ().into(),
-                        #[cfg(feature = "musicdb")]
-                        musicdb: context.musicdb.clone()
-                    }).instrument(tracing::trace_span!("song end dispatch"));
+                let additional_data = if let Some(previous) = context.last_track.take() {
+                    let pending_dispatch = context.dispatch_track_end(player.clone(), previous);
 
                     async move { 
                         // Run song-end dispatch concurrently while we fetch the additional data for the next
@@ -590,15 +585,21 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                 let track_start = player.position.or_else(|| track_playable_range.as_ref().map(|r| r.start)).unwrap_or(0.);
                 let listened = Listened::new_with_current(track_start);
                 let listened = Arc::new(Mutex::new(listened));
-                context.listened = listened.clone();
+
+                let track = subscribers::ActiveTrackContext {
+                    data: track.clone(),
+                    listened: listened.clone(),
+                };
+
                 context.last_track = Some(track.clone());
-                context.backends.dispatch_track_started(BackendContext {
-                    player, listened, track,
-                    data: Arc::new(additional_data),
+                context.backends.dispatch_handled::<E::TrackStarted>(DispatchContext {
                     #[cfg(feature = "musicdb")]
-                    musicdb: context.musicdb.clone()
+                    musicdb: context.musicdb.clone(),
+                    data: Arc::new((subscribers::ActivePlayerContext { data: player.clone(), track }, additional_data)),
                 }).await;
             } else if let Some(position) = player.position {
+                let track = context.last_track.clone().unwrap();
+
                 {
                     use subscribers::subscription::type_identity::TrackStarted;
                     use subscribers::BackendIdentitySet;
@@ -608,26 +609,26 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                     let backends = context.backends.get_many(*requesting_redispatch);
 
                     let solicitation = context.backends.get_solicitations_from(backends.clone(), subscription::Identity::TrackStarted).await; // why clone needed :(
-                    let additional_data_pending = data_fetching::AdditionalTrackData::from_solicitation(solicitation, track.as_ref(),
+                    let additional_data = data_fetching::AdditionalTrackData::from_solicitation(solicitation, track.as_ref(),
                         #[cfg(feature = "musicdb")]
                         context.musicdb.as_ref().as_ref(),
                         context.artwork_manager.clone()
                     ).await;
-
-                    context.backends.dispatch_to::<TrackStarted>(backends, BackendContext {
-                        track: track.clone(),
-                        player: player.clone(),
-                        data: additional_data_pending.into(),
-                        listened: context.listened.clone(),
+                    
+                    context.backends.dispatch_to::<TrackStarted>(backends, DispatchContext {
                         #[cfg(feature = "musicdb")]
-                        musicdb: context.musicdb.clone()
+                        musicdb: context.musicdb.clone(),
+                        data: Arc::new((subscribers::ActivePlayerContext {
+                            data: player.clone(),
+                            track: track.clone(),
+                        }, additional_data)),
                     }).await;
 
                     *requesting_redispatch = BackendIdentitySet::default();
                 }
 
 
-                let mut listened = context.listened.lock().await;
+                let mut listened = track.listened.lock().await;
                 match listened.current.as_ref() {
                     None => listened.set_new_current(position),
                     Some(current) => {
@@ -637,13 +638,13 @@ async fn proc_once(context: Arc<Mutex<PollingContext>>) {
                             listened.flush_current();
                             listened.set_new_current(position);
                             drop(listened); // give up lock
-                            context.backends.dispatch_current_progress(BackendContext {
-                                track: track.clone(),
-                                player: player.clone(),
-                                data: ().into(),
-                                listened: context.listened.clone(),
+                            context.backends.dispatch::<E::ProgressJolt>(DispatchContext {
                                 #[cfg(feature = "musicdb")]
-                                musicdb: context.musicdb.clone()
+                                musicdb: context.musicdb.clone(),
+                                data: Arc::new(subscribers::ActivePlayerContext {
+                                    data: player.clone(),
+                                    track
+                                }),
                             }).await;
                         }
                     }
