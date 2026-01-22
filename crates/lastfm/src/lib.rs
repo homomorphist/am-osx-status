@@ -79,8 +79,15 @@ impl<'a> Client<auth::state::Authorized> {
 
     async fn dispatch_authorized<'b: 'a>(&'b self, mut request: ApiRequest<'a>) -> ::core::result::Result<reqwest::Response, reqwest::Error> {
         request.parameters.add("sk".to_string(), MaybeOwnedString::Borrowed(self.session_key().as_ref()));
+        request.parameters.add("method".to_string(), MaybeOwnedString::Borrowed(request.endpoint));
+        request.parameters.add("api_key".to_string(), MaybeOwnedString::Borrowed(self.identity.get_key()));
         request.parameters.add("api_sig".to_string(), MaybeOwnedString::Owned(request.parameters.sign(self.session_key(), &self.identity).to_string()));
-        self.dispatch_unauthorized(request).await
+        request.parameters.add("format".to_string(), MaybeOwnedString::Borrowed("json"));
+        let request = self.net.request(request.method, crate::API_URL)
+            .header("User-Agent", &self.identity.user_agent)
+            .form(&request.parameters)
+            .build()?;
+        self.net.execute(request).await
     }
 
     pub async fn scrobble(&self, scrobbles: &[scrobble::Scrobble<'_>]) -> Result<scrobble::response::ScrobbleServerResponse<'_>> {
