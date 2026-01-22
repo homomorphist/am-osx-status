@@ -74,16 +74,21 @@ pub mod token_validity {
     }
 }
 
-
-
-
-
 struct InternalSharedListenPack<'a> {
     track: submit_listens::BasicTrackMetadata<'a>,
     timestamp: Option<chrono::DateTime<chrono::Utc>>,
     extra: Option<submit_listens::additional_info::AdditionalInfo<'a>>
 }
 
+fn was_tls_abort_error(error: &reqwest::Error) -> bool {
+    // Ideally, we would recursively check and downcast the `Error::source()`
+    // until we get to `security_framework::base::Error` which would provide us a `code`, but
+    // unfortunately the `Error::source` of `native_tls::Error` doesn't actually return the
+    // `security_framework::base::Error`, but rather the *source* of that error, which is `None`,
+    // meaning we can't reach it. Our only option to check the value is to use the properly forwarded
+    // formatting implementations.
+    format!("{error:?}").contains("code: -9806")
+}
 
 // TODO: add authorization type-state like lastfm
 // TODO: ratelimit middleware?
@@ -127,14 +132,27 @@ impl<PS: AsRef<str>> Client<PS> {
     }
 
     async fn submit_listen_payloads(&self, variant: submit_listens::ListenType, payloads: &[submit_listens::ListeningPayload<'_>]) -> Result<(reqwest::StatusCode, String), reqwest::Error> {
-        let body = submit_listens::RawBody {
+        let body = bytes::Bytes::from(submit_listens::RawBody {
             listen_type: variant,
             payload: payloads
-        }.to_json();
+        }.to_json());
 
         // TODO: Make use of the defined payload limits in the constants file.
-        
-        let response = self.net.post(format!("{API_ROOT}/submit-listens")).body(body).send().await?;
+
+        let mut tls_retries = 0_usize;
+        let response = loop {
+            let response = self.net.post(format!("{API_ROOT}/submit-listens")).body(body.clone()).send().await;
+
+            if let Err(ref error) = response {
+                if was_tls_abort_error(error) && tls_retries < 3 {
+                    tls_retries += 1;
+                    continue;
+                }
+            }
+            
+            break response?;
+        };
+
         Ok((response.status(), response.text().await?))
     }
 
